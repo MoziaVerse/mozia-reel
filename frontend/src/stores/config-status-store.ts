@@ -15,16 +15,22 @@ export interface ConfigIssue {
 async function getConfigStatus(): Promise<{ issues: ConfigIssue[]; availableMediaTypes: string[] }> {
   const issues: ConfigIssue[] = [];
 
-  const [{ providers }, { providers: customProviders }, configRes] = await Promise.all([
+  const [{ providers }, { providers: customProviders }, configRes, matrix] = await Promise.all([
     API.getProviders(),
     API.listCustomProviders(),
     API.getSystemConfig(),
+    API.getMatrixOverview().catch(() => ({ enabled: false })),
   ]);
+
+  // 托管态下用户没有任何可配置项：模型由平台上架、密钥由平台下发。
+  // 此时把"未配置 xx 供应商"报成待办只会误导 —— 那是平台还没上架该类模型，
+  // 不是用户漏配了什么。
+  const managed = matrix.enabled === true;
 
   const settings = configRes.settings;
 
   // 1. Check anthropic key
-  if (!settings.anthropic_api_key?.is_set) {
+  if (!managed && !settings.anthropic_api_key?.is_set) {
     issues.push({
       key: "anthropic",
       tab: "agent",
@@ -53,21 +59,21 @@ async function getConfigStatus(): Promise<{ issues: ConfigIssue[]; availableMedi
     );
   };
 
-  if (!hasMediaType("video")) {
+  if (!managed && !hasMediaType("video")) {
     issues.push({
       key: "no-video-provider",
       tab: "providers",
       label: "video_provider_not_configured",
     });
   }
-  if (!hasMediaType("image")) {
+  if (!managed && !hasMediaType("image")) {
     issues.push({
       key: "no-image-provider",
       tab: "providers",
       label: "image_provider_not_configured",
     });
   }
-  if (!hasMediaType("text")) {
+  if (!managed && !hasMediaType("text")) {
     issues.push({
       key: "no-text-provider",
       tab: "providers",

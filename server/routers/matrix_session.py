@@ -22,6 +22,7 @@ from lib.matrix_session import (
     cookie_secure,
     exchange_ticket,
     issue_session_cookie,
+    seed_agent_credential_for_gateway,
     seed_gateway_provider,
     session_ttl_seconds,
 )
@@ -82,6 +83,9 @@ async def init_session(
         await ensure_tenant_db()
         async with safe_session_factory() as tenant_session:
             await seed_gateway_provider(tenant_session, gateway=gateway, api_key=api_key)
+            # Agent 编排走同一把 key（网关支持 Anthropic 格式的 /v1/messages）。
+            # 不配的话设置页会一直挂"智能体未配置"的红点，而用户无从填写。
+            await seed_agent_credential_for_gateway(tenant_session, gateway=gateway, api_key=api_key)
 
     # 新租户首次握手：拉起它自己的生成 worker，否则它提交的任务没人处理。
     supervisor = getattr(request.app.state, "worker_supervisor", None)

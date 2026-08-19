@@ -281,7 +281,9 @@ export function SystemConfigPage() {
             matrixLoading ? (
               <MatrixSectionLoading />
             ) : matrixOverview?.enabled ? (
-              <div className="mx-auto max-w-4xl px-8 py-8">
+              // 与 ProviderSection 同样铺满：这一页是清单式内容，
+              // 居中窄栏会在宽屏上把侧栏与内容拉出一大片空白。
+              <div className="px-6 py-6">
                 <MatrixGatewaySection overview={matrixOverview} />
               </div>
             ) : (

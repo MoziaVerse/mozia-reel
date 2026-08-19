@@ -52,7 +52,7 @@ def matrix_web_url() -> str:
 
 
 def external_client_id() -> str:
-    return os.environ.get("EXTERNAL_CLIENT_ID", "arcreel").strip()
+    return os.environ.get("EXTERNAL_CLIENT_ID", "mozia-reel").strip()
 
 
 def matrix_launch_url() -> str:
@@ -220,6 +220,62 @@ async def _discover_gateway_models(*, base_url: str, api_key: str) -> list[dict]
     return corrected
 
 
+AGENT_CREDENTIAL_DISPLAY_NAME = "Matrix 网关"
+
+
+async def seed_agent_credential(session, *, gateway: str, api_key: str, text_model: str | None) -> None:
+    """把网关凭据配成 Agent 的 Anthropic 端点。
+
+    网关支持 Anthropic 格式的 /v1/messages（已实测），所以 Agent 编排可以直接
+    走同一把 key。不 seed 的话设置页会一直挂着"智能体未配置 API Key"的告警，
+    而用户在托管态下根本没有可填的东西 —— 那个红点只会让人以为是自己漏配了。
+    """
+    from lib.db.repositories.agent_credential_repo import AgentCredentialRepository
+
+    repo = AgentCredentialRepository(session)
+    existing = next(
+        (c for c in await repo.list_for_user() if c.display_name == AGENT_CREDENTIAL_DISPLAY_NAME),
+        None,
+    )
+    # Anthropic SDK 要的是不带 /v1 的根地址，它自己会拼 /v1/messages。
+    base = gateway.strip().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[: -len("/v1")]
+
+    if existing is not None:
+        if existing.base_url != base or existing.api_key != api_key:
+            await repo.update(existing.id, base_url=base, api_key=api_key)
+            await session.commit()
+        return
+
+    cred = await repo.create(
+        preset_id="__custom__",
+        display_name=AGENT_CREDENTIAL_DISPLAY_NAME,
+        base_url=base,
+        api_key=api_key,
+        # 各档统一指向网关上的文本模型：中转站不认 claude-* 的型号名，
+        # 留空会让 SDK 用默认 claude 型号打过去，必然 404。
+        model=text_model,
+        haiku_model=text_model,
+        sonnet_model=text_model,
+        opus_model=text_model,
+        subagent_model=text_model,
+    )
+    await repo.set_active(cred.id)
+    await session.commit()
+    logger.info("Agent 凭据已配置 (cred_id=%s, model=%s)", cred.id, text_model)
+
+
+def pick_text_model(models: list[dict]) -> str | None:
+    """从发现结果里挑一个文本模型给 Agent 用。
+
+    取排序后的第一个而不是"最强的那个"：中转站上的型号名没有统一的强弱标记，
+    猜错不如给个确定的默认值，用户可在设置页改。
+    """
+    text_ids = sorted(m["model_id"] for m in models if m.get("endpoint") == "openai-chat")
+    return text_ids[0] if text_ids else None
+
+
 async def seed_gateway_provider(session, *, gateway: str, api_key: str) -> None:
     """把握手拿到的网关凭据写成全局唯一的 custom_provider。
 
@@ -252,3 +308,25 @@ async def seed_gateway_provider(session, *, gateway: str, api_key: str) -> None:
     )
     await session.commit()
     logger.info("网关供应商已创建 (provider_id=%s, models=%d)", provider.id, len(models))
+
+
+async def seed_agent_credential_for_gateway(session, *, gateway: str, api_key: str) -> None:
+    """便捷入口：读回该租户已 seed 的模型清单，挑一个文本模型配给 Agent。"""
+    from lib.db.repositories.custom_provider_repo import CustomProviderRepository
+
+    repo = CustomProviderRepository(session)
+    provider = next(
+        (p for p in await repo.list_providers() if p.display_name == GATEWAY_PROVIDER_DISPLAY_NAME),
+        None,
+    )
+    text_model = None
+    if provider is not None:
+        text_model = next(
+            (
+                m.model_id
+                for m in sorted(await repo.list_models(provider.id), key=lambda x: x.model_id)
+                if m.endpoint == "openai-chat" and m.is_enabled
+            ),
+            None,
+        )
+    await seed_agent_credential(session, gateway=gateway, api_key=api_key, text_model=text_model)
