@@ -100,6 +100,16 @@ class TestSessionGate:
         reached, status = asyncio.run(_probe(path, API))
         assert (reached, status) == (True, 200)
 
+    def test_sibling_endpoints_are_not_public(self):
+        """白名单必须精确到换票端点本身。
+
+        同前缀下还有 overview 这类读租户数据的端点；按前缀整段放行会让它们
+        匿名可达 —— AUTH_ENABLED=false 时 FastAPI 层的依赖也不拦，这道门禁是
+        唯一的访问控制。
+        """
+        reached, status = asyncio.run(_probe("/api/v1/matrix-session/overview", API))
+        assert (reached, status) == (False, 401)
+
     def test_api_without_session_is_401(self):
         reached, status = asyncio.run(_probe("/api/v1/projects", API))
         assert (reached, status) == (False, 401)

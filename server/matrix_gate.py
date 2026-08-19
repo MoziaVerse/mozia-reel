@@ -24,9 +24,12 @@ from lib.matrix_session import (
 logger = logging.getLogger(__name__)
 
 # 无需会话即可访问。握手页与换票端点必须公开——它们正是"拿到会话"的前提。
+# ⚠️ 只放握手本身，不要放整个 /api/v1/matrix-session/ 前缀：同一前缀下还有
+# overview 这类读取租户数据的端点，整段放行会让它们匿名可达（AUTH_ENABLED=false
+# 时 FastAPI 层的依赖也不拦，这道门禁是唯一的访问控制）。
 _PUBLIC_PREFIXES = (
     "/handoff",
-    "/api/v1/matrix-session/",
+    "/api/v1/matrix-session/init",
     "/health",
     "/skill.md",
 )
