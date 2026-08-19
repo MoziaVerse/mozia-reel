@@ -14,7 +14,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from lib.db import get_async_session
+from lib.db import ensure_tenant_db, get_async_session, safe_session_factory
+from lib.tenant_context import is_valid_tenant, tenant_scope
 from lib.matrix_session import (
     SESSION_COOKIE_NAME,
     MatrixHandoffError,
@@ -64,9 +65,21 @@ async def init_session(
             {"error": "handoff_incomplete", "message": "matrix 未返回网关凭据"}, status_code=502
         )
 
-    await seed_gateway_provider(session, gateway=gateway, api_key=api_key)
-
     sso_sub = user.get("ssoSub") or user.get("id") or ""
+    if not is_valid_tenant(sso_sub):
+        logger.error("matrix 返回的 ssoSub 不能作为租户标识: %r", sso_sub)
+        return JSONResponse(
+            {"error": "invalid_tenant", "message": "身份标识非法"}, status_code=502
+        )
+
+    # 切到该租户后再建库与 seed —— 否则会写到部署级默认库上。
+    # 注意 seed 用的 session 是请求依赖注入的，绑在**切换前**的 engine 上，
+    # 所以这里不能复用它，要在租户上下文里重新开。
+    with tenant_scope(sso_sub):
+        await ensure_tenant_db()
+        async with safe_session_factory() as tenant_session:
+            await seed_gateway_provider(tenant_session, gateway=gateway, api_key=api_key)
+
     cookie = issue_session_cookie(sso_sub=sso_sub, username=user.get("username"))
     response.set_cookie(
         SESSION_COOKIE_NAME,

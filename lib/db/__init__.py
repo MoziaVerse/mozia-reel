@@ -62,8 +62,37 @@ async def init_db() -> None:
             command.stamp(cfg, base)
         command.upgrade(cfg, "head")
 
-    await asyncio.get_event_loop().run_in_executor(None, _run_alembic)
+    # ⚠️ 必须把当前 Context 复制进 executor 线程：alembic 的 env.py 走
+    # get_database_url() → app_data_dir() → ContextVar 取租户，而
+    # run_in_executor 起的线程**不继承** ContextVar，直接跑会把租户库的迁移
+    # 打到部署级默认库上 —— 建错库不报错，是静默的跨租户污染。
+    import contextvars
+
+    ctx = contextvars.copy_context()
+    await asyncio.get_event_loop().run_in_executor(None, lambda: ctx.run(_run_alembic))
     _log.info("Database schema is up to date")
+
+
+_initialized_tenants: set[str | None] = set()
+
+
+async def ensure_tenant_db() -> None:
+    """确保当前租户的库已建表（幂等，每租户只跑一次迁移）。
+
+    新租户第一次握手时它的 SQLite 还不存在，任何查询都会撞 no such table。
+    挂在握手链路上而不是 lifespan：启动时根本不知道会有哪些租户。
+    """
+    from lib.tenant_context import current_tenant
+
+    tenant = current_tenant()
+    if tenant in _initialized_tenants:
+        return
+    await init_db()
+    _initialized_tenants.add(tenant)
+
+
+def _reset_tenant_db_cache_for_tests() -> None:
+    _initialized_tenants.clear()
 
 
 async def close_db() -> None:
@@ -83,6 +112,7 @@ __all__ = [
     "async_engine",
     "async_session_factory",
     "close_db",
+    "ensure_tenant_db",
     "get_async_session",
     "get_database_url",
     "init_db",

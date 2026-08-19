@@ -179,9 +179,11 @@ def resolve_vertex_credentials_path(project_root: Path | None = None) -> Path | 
     ``project_root / "vertex_keys"``).
     """
     if project_root is None:
-        from lib.app_data_dir import app_data_dir
+        # 部署级路径：vertex 凭据不随租户分裂，用 base 而不是 app_data_dir()
+        # （后者在租户模式下是 <base>/tenants/<sub>，.parent 会漂到 tenants/）
+        from lib.app_data_dir import base_data_dir
 
-        credentials_dir = app_data_dir().parent / "vertex_keys"
+        credentials_dir = base_data_dir().parent / "vertex_keys"
     else:
         credentials_dir = Path(project_root) / "vertex_keys"
     preferred = credentials_dir / "vertex_credentials.json"

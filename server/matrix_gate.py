@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 
+from lib.tenant_context import set_current_tenant
 from lib.matrix_session import (
     SESSION_COOKIE_NAME,
     matrix_backend_url,
@@ -74,7 +75,12 @@ class MatrixSessionGate:
             return
 
         raw_headers = scope.get("headers") or []
-        if verify_session_cookie(_cookie_value(raw_headers, SESSION_COOKIE_NAME)):
+        payload = verify_session_cookie(_cookie_value(raw_headers, SESSION_COOKIE_NAME))
+        if payload:
+            # 租户 = ssoSub，由服务端从签名 cookie 解出，前端伪造不了。
+            # 设在这里而不是路由层：ContextVar 沿本请求的整个调用链生效，
+            # app_data_dir / DB engine / ProjectManager 会自动指向该租户的数据。
+            set_current_tenant(payload.get("sub"))
             await self.app(scope, receive, send)
             return
 

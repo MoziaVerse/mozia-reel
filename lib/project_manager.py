@@ -3474,18 +3474,24 @@ class ProjectManager:
         return overview_dict
 
 
-_project_manager: ProjectManager | None = None
+# 按租户缓存。改造前是单个全局实例，但 app_data_dir() 现在随租户变化，
+# 缓存单例会把第一个访问者的项目根固定给所有人 —— 那是直接的跨租户串数据。
+# 这个函数有 200 处调用点，改成按租户分流后它们全部自动获得隔离，无需逐个传参。
+_project_managers: dict[str | None, ProjectManager] = {}
 
 
 def get_project_manager() -> ProjectManager:
-    """返回懒加载的全局 ProjectManager 单例（标准项目根目录）。"""
-    global _project_manager
-    if _project_manager is None:
-        _project_manager = ProjectManager(app_data_dir())
-    return _project_manager
+    """返回**当前租户**的 ProjectManager（懒加载并按租户缓存）。"""
+    from lib.tenant_context import current_tenant
+
+    tenant = current_tenant()
+    pm = _project_managers.get(tenant)
+    if pm is None:
+        pm = ProjectManager(app_data_dir())
+        _project_managers[tenant] = pm
+    return pm
 
 
 def _reset_project_manager_for_tests() -> None:
-    """清空缓存的单例，供测试在不同 app_data_dir 场景间重置。"""
-    global _project_manager
-    _project_manager = None
+    """清空缓存，供测试在不同 app_data_dir / 租户场景间重置。"""
+    _project_managers.clear()

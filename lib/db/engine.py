@@ -72,12 +72,82 @@ def _create_engine():
     return engine
 
 
-async_engine = _create_engine()
+# ── 租户感知的 engine / session factory ──────────────────────────
+#
+# 31 个模块直接 `from lib.db import async_session_factory` 之类，import 时就把
+# 对象绑死了 —— 想按租户切库，要么改这 31 处，要么让这几个名字本身变成代理。
+# 选后者：它们的用法只有"调用"（`async_session_factory()`）和"取属性"
+# （`async_engine.sync_engine`），代理能完整覆盖，改动收敛在本文件内。
 
-async_session_factory = async_sessionmaker(
-    async_engine,
-    expire_on_commit=False,
-)
+_engines: dict[str | None, object] = {}
+_factories: dict[str | None, async_sessionmaker] = {}
+
+
+def _tenant_key() -> str | None:
+    """当前租户；DATABASE_URL 显式配置时恒为 None。
+
+    显式配了 DATABASE_URL 意味着指向一个外部库（PostgreSQL 等），此时
+    app_data_dir() 不参与选库，按租户分裂 engine 只会建出一堆连同一个库的
+    连接池 —— 反而掩盖了"这套部署还没做租户隔离"的事实。
+    """
+    if os.environ.get("DATABASE_URL", "").strip():
+        return None
+    from lib.tenant_context import current_tenant
+
+    return current_tenant()
+
+
+def get_engine():
+    """当前租户的 engine（按租户缓存）。"""
+    key = _tenant_key()
+    engine = _engines.get(key)
+    if engine is None:
+        engine = _create_engine()
+        _engines[key] = engine
+    return engine
+
+
+def get_session_factory() -> async_sessionmaker:
+    """当前租户的 session factory（按租户缓存）。"""
+    key = _tenant_key()
+    factory = _factories.get(key)
+    if factory is None:
+        factory = async_sessionmaker(get_engine(), expire_on_commit=False)
+        _factories[key] = factory
+    return factory
+
+
+def all_engines() -> list:
+    """已建立的全部 engine，供 dispose 一类的全局操作遍历。"""
+    return list(_engines.values())
+
+
+class _TenantEngineProxy:
+    """把属性访问转发到当前租户的 engine。
+
+    存在的理由：`async_engine.connect()` / `.sync_engine` / `.dispose()` 这些
+    调用散布在 31 个模块里，代理让它们无需改写就跟着租户走。
+    """
+
+    def __getattr__(self, name: str):
+        return getattr(get_engine(), name)
+
+    def __repr__(self) -> str:
+        return f"<TenantEngineProxy tenant={_tenant_key()!r}>"
+
+
+class _TenantSessionFactoryProxy:
+    """调用时返回当前租户的 AsyncSession。"""
+
+    def __call__(self, *args, **kwargs) -> AsyncSession:
+        return get_session_factory()(*args, **kwargs)
+
+    def __repr__(self) -> str:
+        return f"<TenantSessionFactoryProxy tenant={_tenant_key()!r}>"
+
+
+async_engine = _TenantEngineProxy()
+async_session_factory = _TenantSessionFactoryProxy()
 
 
 class _SafeSessionFactory:
@@ -125,7 +195,9 @@ def dispose_pool() -> None:
     to a now-closed loop, causing "Future attached to a different loop".
     Call this before ``asyncio.run()`` in sync wrappers.
     """
-    async_engine.sync_engine.dispose()
+    # 遍历全部租户的 engine：只 dispose 当前租户会给其它租户留下绑在旧 loop 上的连接。
+    for engine in all_engines():
+        engine.sync_engine.dispose()
 
 
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:

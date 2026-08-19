@@ -19,7 +19,7 @@ from pydantic import AfterValidator, BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
-from lib.app_data_dir import app_data_dir
+from lib.app_data_dir import base_data_dir
 from lib.backend_assembly.specs import get_provider_spec
 from lib.config.registry import PROVIDER_REGISTRY, model_audio_switch_controllable, model_has_audio_track
 from lib.config.repository import mask_secret
@@ -655,7 +655,7 @@ async def upload_vertex_credential(
     repo = CredentialRepository(session)
     cred = await repo.create(provider="gemini-vertex", name=name)
 
-    dest = app_data_dir().parent / "vertex_keys" / f"vertex_cred_{cred.id}.json"
+    dest = base_data_dir().parent / "vertex_keys" / f"vertex_cred_{cred.id}.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = dest.with_suffix(".tmp")
     tmp_path.write_bytes(contents)
