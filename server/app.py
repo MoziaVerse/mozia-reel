@@ -43,6 +43,7 @@ from lib.source_loader.migration import migrate_project_source_encoding
 from server.auth import ensure_auth_password, get_current_user
 from server.dependencies import require_project_migration_ok
 from server.error_handlers import register_error_handlers
+from server.matrix_gate import MatrixSessionGate
 from server.routers import (
     agent_chat,
     agent_config,
@@ -74,6 +75,7 @@ from server.routers import (
     versions,
 )
 from server.routers import auth as auth_router
+from server.routers import matrix_session as matrix_session_router
 from server.services.project_events import ProjectEventService
 
 
@@ -637,6 +639,10 @@ app.include_router(onboarding.router, prefix="/api/v1", dependencies=[Depends(ge
 # 公开端点：匿名可达。登录入口是拿 token 的前提，静态媒体经 <img src> / <video src> 加载。
 app.include_router(auth_router.public_router, prefix="/api/v1", tags=["认证"])
 app.include_router(files.public_router, prefix="/api/v1", tags=["文件管理"])
+# Matrix 握手：落地页与换票端点必须匿名可达 —— 它们正是"拿到会话"的前提。
+# /handoff 不带 /api/v1 前缀（用户直接在地址栏落地），换票端点走 API 前缀。
+app.include_router(matrix_session_router.public_router, prefix="/api/v1", tags=["Matrix 握手"])
+app.include_router(matrix_session_router.page_router, include_in_schema=False)
 
 # 自带认证端点：成因都是浏览器直发请求带不了 Authorization header，
 # 端点内自行校验凭证（SSE 用 CurrentUserFlexible 收 ?token=，导出用短时效下载 token）。
@@ -716,6 +722,9 @@ class SPAShellNoCacheMiddleware:
 
 
 app.add_middleware(SPAShellNoCacheMiddleware)
+
+# 放在最后 add = 最外层 = 最先执行：未握手的请求不该进到任何业务逻辑。
+app.add_middleware(MatrixSessionGate)
 
 
 # 前端构建产物：SPA 静态文件服务。fallback 仅对 GET/HEAD 生效，写请求误入页面路径不再返回页面。

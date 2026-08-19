@@ -1,0 +1,46 @@
+# ArcReel on Matrix —— 独立 SaaS 形态（非 per-user 容器实例）
+#
+# ⚠️ 阶段一为**单租户内核**：本实例的所有 matrix 用户共享同一批项目数据。
+#    仅供内部试用，多租户隔离完成前不要对外开放。
+#    见 matrix 仓库 docs/arcreel-onboarding-plan.md 待办 T-1。
+#
+# 与上游 deploy/docker-compose.yml 的区别：
+#   - 自建镜像（含 matrix 握手 overlay），不用 ghcr 官方镜像
+#   - 关掉 ArcReel 自带 auth，访问控制交给 MatrixSessionGate 中间件
+#   - 不挂 ./.env 进容器：凭据走 env_file，容器内不需要可写 .env
+#     （上游挂 .env 是为了首启把自动生成的密码回写，AUTH_ENABLED=false 后这条路径不走）
+
+services:
+  arcreel:
+    image: arcreel-matrix:latest
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    ports:
+      - "1241:1241"
+    env_file: .env
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    # Agent Bash 沙箱 (bwrap) 需要：
+    # 1) 非特权 user namespace → 放开 docker 默认 seccomp/apparmor profile
+    # 2) bwrap 嵌套出的 net namespace 内配置 loopback → 需要 NET_ADMIN
+    # 宿主前置条件（测试服 .21 Ubuntu 22.04 已实测满足，无需改）：
+    #   kernel.apparmor_restrict_unprivileged_userns 不存在或为 0   ← 24.04 默认为 1，容器内绕不过
+    #   kernel.unprivileged_userns_clone = 1
+    #   user.max_user_namespaces > 0
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./data/projects:/app/projects
+      - ./data/logs:/app/logs
+      - ./data/claude:/root/.claude
+    restart: unless-stopped
+    healthcheck:
+      # /health 在 MatrixSessionGate 的公开白名单里，未握手也能探活
+      test: ["CMD", "curl", "-f", "http://localhost:1241/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
