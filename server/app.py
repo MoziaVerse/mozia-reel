@@ -421,14 +421,20 @@ async def lifespan(app: FastAPI):
     assistant.assistant_service.session_manager.start_patrol()
 
     logger.info("启动 GenerationWorker...")
-    worker = create_generation_worker()
-    app.state.generation_worker = worker
-    # 注入 in-process cancel 回调必须在 worker.start() 之前，
-    # 否则有窗口期 callback 为 None、cancel running 信号丢失（违反 ADR 0006 秒级响应）。
-    from lib.generation_queue import get_generation_queue
+    # 每个租户一份 worker：DB 按租户分裂后，单个 worker 只看得见默认库，
+    # 租户的任务会永远 pending 且不报错。详见 lib/worker_supervisor.py。
+    from lib.worker_supervisor import WorkerSupervisor, discover_tenants
 
-    get_generation_queue().set_worker_cancel_callback(worker.request_cancel)
-    await worker.start()
+    supervisor = WorkerSupervisor(create_generation_worker)
+    app.state.worker_supervisor = supervisor
+    # 默认（无租户）worker 始终在：未接入 matrix 的部署全靠它。
+    await supervisor.ensure_started(None)
+    # 已存在的租户在启动时就拉起来，否则重启前排队的任务要等用户下次握手
+    # 才会被处理 —— 表现成"任务卡住"且无迹可循。
+    existing = discover_tenants()
+    if existing:
+        logger.info("发现 %d 个已有租户，逐个启动 worker", len(existing))
+        await supervisor.start_existing_tenants(existing)
     logger.info("GenerationWorker 已启动")
 
     logger.info("启动 ProjectEventService...")
@@ -445,21 +451,15 @@ async def lifespan(app: FastAPI):
         logger.info("正在停止 ProjectEventService...")
         await project_event_service.shutdown()
         logger.info("ProjectEventService 已停止")
-    worker = getattr(app.state, "generation_worker", None)
-    if worker:
+    supervisor = getattr(app.state, "worker_supervisor", None)
+    if supervisor:
         logger.info("正在停止 GenerationWorker...")
-        from lib.generation_queue import get_generation_queue
-
         # 先 stop（内部 drain inflight + 退出主循环）：期间 cancel API 仍可发起，
         # callback 仍可用，避免重新部署窗口期 cancel 信号被丢弃。
         # 依赖 worker.stop() 内部已 await _wait_inflight_completion——若后续重构
         # stop 拆掉 drain 步骤，需同时回访这里的顺序假设。
-        # try/finally 保证 callback 清理必达：worker.stop 抛错时 _worker_cancel_callback
-        # 仍能清空，避免污染后续生命周期/测试。
-        try:
-            await worker.stop()
-        finally:
-            get_generation_queue().set_worker_cancel_callback(None)
+        # callback 的清理跟着各租户 queue 走，见 WorkerSupervisor.stop_all。
+        await supervisor.stop_all()
         logger.info("GenerationWorker 已停止")
     await shutdown_http_client()
     await close_db()

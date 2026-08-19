@@ -564,9 +564,15 @@ async def _invalidate_caches(request: Request) -> None:
     from server.services.generation_context import invalidate_backend_cache
 
     invalidate_backend_cache()
-    worker = getattr(request.app.state, "generation_worker", None)
-    if worker:
-        await worker.reload_limits()
+    # 限流配置存在当前租户库里，只需刷新该租户自己的 worker。
+    # 刷全部租户是错的：会拿这个租户的配置去覆盖别人的容量表。
+    supervisor = getattr(request.app.state, "worker_supervisor", None)
+    if supervisor is not None:
+        from lib.tenant_context import current_tenant
+
+        worker = supervisor.get(current_tenant())
+        if worker:
+            await worker.reload_limits()
 
 
 # ---------------------------------------------------------------------------

@@ -41,6 +41,7 @@ class InitBody(BaseModel):
 @public_router.post("/matrix-session/init")
 async def init_session(
     body: InitBody,
+    request: Request,
     response: Response,
     session: AsyncSession = Depends(get_async_session),
 ):
@@ -79,6 +80,11 @@ async def init_session(
         await ensure_tenant_db()
         async with safe_session_factory() as tenant_session:
             await seed_gateway_provider(tenant_session, gateway=gateway, api_key=api_key)
+
+    # 新租户首次握手：拉起它自己的生成 worker，否则它提交的任务没人处理。
+    supervisor = getattr(request.app.state, "worker_supervisor", None)
+    if supervisor is not None:
+        await supervisor.ensure_started(sso_sub)
 
     cookie = issue_session_cookie(sso_sub=sso_sub, username=user.get("username"))
     response.set_cookie(

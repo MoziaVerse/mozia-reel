@@ -269,7 +269,6 @@ TASK_WORKER_HEARTBEAT_SEC = 3.0
 TASK_POLL_INTERVAL_SEC = 1.0
 
 _QUEUE_LOCK = threading.Lock()
-_QUEUE_INSTANCE: GenerationQueue | None = None
 
 
 WorkerCancelCallback = Callable[[str], bool]
@@ -642,15 +641,32 @@ class GenerationQueue:
             return await repo.get_worker_lease(name=name)
 
 
+# 按租户缓存。GenerationQueue 不只是无状态包装 —— 它持有
+# _worker_cancel_callback，指向某个 worker 实例。多租户下共用一个实例会让
+# 后启动的 worker 覆盖掉前一个的 callback，cancel 信号从此发给错误的 worker，
+# 且不会报错（表现成"点了取消没反应"）。
+_QUEUE_INSTANCES: dict[str | None, GenerationQueue] = {}
+
+
 def get_generation_queue() -> GenerationQueue:
-    global _QUEUE_INSTANCE
-    if _QUEUE_INSTANCE is not None:
-        return _QUEUE_INSTANCE
+    """返回**当前租户**的队列（懒加载并按租户缓存）。"""
+    from lib.tenant_context import current_tenant
+
+    tenant = current_tenant()
+    instance = _QUEUE_INSTANCES.get(tenant)
+    if instance is not None:
+        return instance
 
     with _QUEUE_LOCK:
-        if _QUEUE_INSTANCE is None:
-            _QUEUE_INSTANCE = GenerationQueue()
-        return _QUEUE_INSTANCE
+        instance = _QUEUE_INSTANCES.get(tenant)
+        if instance is None:
+            instance = GenerationQueue()
+            _QUEUE_INSTANCES[tenant] = instance
+        return instance
+
+
+def _reset_generation_queues_for_tests() -> None:
+    _QUEUE_INSTANCES.clear()
 
 
 def read_queue_poll_interval() -> float:

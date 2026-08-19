@@ -115,3 +115,117 @@ class TestDerivedResourcesFollowTenant:
             assert "alice-secret" in pm.list_projects()
         with tenant_scope("bob"):
             assert "alice-secret" not in get_project_manager().list_projects()
+
+
+class _FakeWorker:
+    """记录启停与所处租户的 worker 替身。"""
+
+    instances: list["_FakeWorker"] = []
+
+    def __init__(self):
+        from lib.tenant_context import current_tenant
+
+        self.started_under = None
+        self.stopped = False
+        self.constructed_under = current_tenant()
+        _FakeWorker.instances.append(self)
+
+    async def start(self):
+        from lib.tenant_context import current_tenant
+
+        self.started_under = current_tenant()
+
+    async def stop(self):
+        self.stopped = True
+
+    def request_cancel(self, *a, **kw):
+        return None
+
+
+class TestWorkerSupervisor:
+    @pytest.fixture(autouse=True)
+    def _clear(self):
+        _FakeWorker.instances.clear()
+        yield
+        _FakeWorker.instances.clear()
+
+    def test_worker_starts_under_its_tenant(self):
+        """worker 必须在租户上下文里构造并启动——否则它绑的是默认库的队列，
+        租户任务永远 pending 且不报错。"""
+        import asyncio
+
+        from lib.worker_supervisor import WorkerSupervisor
+
+        sup = WorkerSupervisor(_FakeWorker)
+        asyncio.run(sup.ensure_started("alice"))
+        w = _FakeWorker.instances[-1]
+        assert w.constructed_under == "alice"
+        assert w.started_under == "alice"
+
+    def test_each_tenant_gets_own_worker(self):
+        import asyncio
+
+        from lib.worker_supervisor import WorkerSupervisor
+
+        async def scenario():
+            sup = WorkerSupervisor(_FakeWorker)
+            await sup.ensure_started("alice")
+            await sup.ensure_started("bob")
+            return sup
+
+        sup = asyncio.run(scenario())
+        assert sup.get("alice") is not sup.get("bob")
+        assert len(sup.all_workers()) == 2
+
+    def test_ensure_started_is_idempotent(self):
+        import asyncio
+
+        from lib.worker_supervisor import WorkerSupervisor
+
+        async def scenario():
+            sup = WorkerSupervisor(_FakeWorker)
+            a = await sup.ensure_started("alice")
+            b = await sup.ensure_started("alice")
+            return a, b
+
+        a, b = asyncio.run(scenario())
+        assert a is b
+        assert len(_FakeWorker.instances) == 1
+
+    def test_rejects_invalid_tenant(self):
+        import asyncio
+
+        from lib.worker_supervisor import WorkerSupervisor
+
+        sup = WorkerSupervisor(_FakeWorker)
+        with pytest.raises(ValueError):
+            asyncio.run(sup.ensure_started("../evil"))
+
+    def test_stop_all_stops_every_tenant(self):
+        import asyncio
+
+        from lib.worker_supervisor import WorkerSupervisor
+
+        async def scenario():
+            sup = WorkerSupervisor(_FakeWorker)
+            await sup.ensure_started("alice")
+            await sup.ensure_started("bob")
+            await sup.stop_all()
+            return sup
+
+        sup = asyncio.run(scenario())
+        assert all(w.stopped for w in _FakeWorker.instances)
+        assert sup.all_workers() == []
+
+    def test_discover_tenants_lists_existing_dirs(self):
+        """重启后要能把已有租户的 worker 拉起来，靠的就是这个枚举。"""
+        from lib.app_data_dir import base_data_dir
+        from lib.worker_supervisor import discover_tenants
+
+        root = base_data_dir() / "tenants"
+        (root / "alice").mkdir(parents=True, exist_ok=True)
+        (root / "bob").mkdir(parents=True, exist_ok=True)
+        (root / "..bad").mkdir(parents=True, exist_ok=True)
+        found = discover_tenants()
+        assert "alice" in found and "bob" in found
+        assert "..bad" not in found  # 非法目录名不能被当成租户
