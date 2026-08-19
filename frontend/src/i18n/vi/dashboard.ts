@@ -1,6 +1,18 @@
 import type enDashboard from "@/i18n/en/dashboard";
 
 export default {
+  matrix_connected: "Đã kết nối dịch vụ mô hình Matrix",
+  matrix_disconnected: "Chưa kết nối",
+  matrix_connected_hint: "Mô hình, khóa và thanh toán đều do nền tảng Matrix cung cấp, không cần cấu hình tại đây.",
+  matrix_disconnected_hint: "Hãy mở lại ứng dụng từ kho ứng dụng Matrix để hoàn tất kết nối.",
+  matrix_open_console: "Bảng điều khiển Matrix",
+  matrix_media_text: "Mô hình văn bản",
+  matrix_media_image: "Mô hình hình ảnh",
+  matrix_media_video: "Mô hình video",
+  matrix_media_audio: "Mô hình giọng nói",
+  matrix_models_title: "Mô hình khả dụng",
+  matrix_models_hint: "Do nền tảng quản lý và cập nhật; không thể thêm hoặc xóa tại đây.",
+  matrix_models_empty: "Chưa có mô hình khả dụng. Thử lại sau hoặc liên hệ quản trị viên.",
   'app_title': '[[brand]]',
   'projects': 'Dự án',
   'create_project': 'Tạo dự án',

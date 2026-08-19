@@ -65,6 +65,7 @@ import type {
   NarrationStep1Draft,
   ReferenceStep1Draft,
   VideoCapabilities,
+  MatrixOverview,
 } from "@/types";
 import type { GenerationRoute } from "@/utils/generation-mode";
 import type { GridCapability, GridGeneration } from "@/types/grid";
@@ -2636,6 +2637,15 @@ class API {
       method: "POST",
       body: JSON.stringify(data),
     });
+  }
+
+  // ==================== Matrix 托管态 ====================
+
+  /**
+   * 托管态总览。enabled=false 表示这是独立部署，设置页应回到原来的供应商配置界面。
+   */
+  static async getMatrixOverview(): Promise<MatrixOverview> {
+    return this.request("/matrix-session/overview");
   }
 
   // ==================== 自定义供应商 API ====================

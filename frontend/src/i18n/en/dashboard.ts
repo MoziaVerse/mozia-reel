@@ -1,5 +1,17 @@
 
 export default {
+  matrix_connected: "Connected to Matrix model service",
+  matrix_disconnected: "Not connected",
+  matrix_connected_hint: "Models, credentials and billing are provided by the Matrix platform. Nothing to configure here.",
+  matrix_disconnected_hint: "Reopen this app from the Matrix app store to finish connecting.",
+  matrix_open_console: "Matrix console",
+  matrix_media_text: "Text models",
+  matrix_media_image: "Image models",
+  matrix_media_video: "Video models",
+  matrix_media_audio: "Speech models",
+  matrix_models_title: "Available models",
+  matrix_models_hint: "Curated by the platform and updated with it; cannot be added or removed here.",
+  matrix_models_empty: "No models available yet. Retry later or contact the platform admin.",
   'app_title': '[[brand]]',
   'projects': 'Projects',
   'create_project': 'Create Project',

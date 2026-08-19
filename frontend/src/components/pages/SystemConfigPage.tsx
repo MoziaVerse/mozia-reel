@@ -23,6 +23,11 @@ import { MediaModelSection } from "./settings/MediaModelSection";
 import { ProviderSection } from "./ProviderSection";
 import { UsageStatsSection } from "./settings/UsageStatsSection";
 import {
+  MatrixGatewaySection,
+  MatrixSectionLoading,
+  useMatrixOverview,
+} from "./settings/MatrixGatewaySection";
+import {
   SUPPORTED_LANGUAGES,
   LANGUAGE_DISPLAY_LABELS,
   type SupportedLanguage,
@@ -88,6 +93,9 @@ export function SystemConfigPage() {
   const { t, i18n } = useTranslation(["common", "dashboard"]);
   const [location, navigate] = useLocation();
   const search = useSearch();
+
+  // 托管态下「模型服务」是只读的：网关与模型都由 Matrix 下发，没有可配置项。
+  const { overview: matrixOverview, loading: matrixLoading } = useMatrixOverview();
 
   const activeSection = useMemo((): SettingsSection => {
     const section = new URLSearchParams(search).get("section");
@@ -270,7 +278,15 @@ export function SystemConfigPage() {
             can truly hug the viewport edge (and sidebar can sticky-top across full height). */}
         <main className="min-w-0 flex-1 overflow-y-auto">
           {activeSection === "providers" ? (
-            <ProviderSection />
+            matrixLoading ? (
+              <MatrixSectionLoading />
+            ) : matrixOverview?.enabled ? (
+              <div className="mx-auto max-w-4xl px-8 py-8">
+                <MatrixGatewaySection overview={matrixOverview} />
+              </div>
+            ) : (
+              <ProviderSection />
+            )
           ) : (
             <div className="mx-auto max-w-4xl px-8 py-8">
               {/* Quick alert for config issues */}

@@ -28,7 +28,9 @@ from lib.matrix_session import (
 
 logger = logging.getLogger(__name__)
 
-# 换票端点，挂在 /api/v1 下。
+# 需要登录态的端点（如托管态总览），挂在 /api/v1 下并由 app 侧加认证依赖。
+router = APIRouter()
+# 换票端点，挂在 /api/v1 下，必须匿名可达。
 public_router = APIRouter()
 # 落地页，用户在地址栏直接落到 /handoff，不带 API 前缀。
 page_router = APIRouter()
@@ -146,6 +148,74 @@ _HANDOFF_HTML = """<!doctype html>
 })();
 </script></body></html>
 """
+
+
+@router.get("/matrix-session/overview")
+async def session_overview(
+    session: AsyncSession = Depends(get_async_session),
+):
+    """设置页用的托管态总览。
+
+    Matrix 形态下用户没有"配置供应商"这回事 —— 网关是平台发的、模型是平台
+    上架的、计费在平台侧。所以这里只回可展示的事实，不回任何可编辑项：
+    前端据此渲染只读卡片，而不是一个填了也没用的表单。
+
+    非 Matrix 部署返回 enabled=false，前端退回原来的供应商配置界面。
+    """
+    from lib.custom_provider.endpoints import endpoint_to_media_type
+    from lib.db.repositories.custom_provider_repo import CustomProviderRepository
+    from lib.matrix_capabilities import matrix_mode_enabled
+    from lib.matrix_session import (
+        GATEWAY_PROVIDER_DISPLAY_NAME,
+        matrix_web_url,
+    )
+
+    if not matrix_mode_enabled():
+        return {"enabled": False}
+
+    repo = CustomProviderRepository(session)
+    provider = next(
+        (p for p in await repo.list_providers() if p.display_name == GATEWAY_PROVIDER_DISPLAY_NAME),
+        None,
+    )
+
+    media_counts: dict[str, int] = {"text": 0, "image": 0, "video": 0, "audio": 0}
+    models: list[dict] = []
+    if provider is not None:
+        for m in await repo.list_models(provider.id):
+            if not m.is_enabled:
+                continue
+            try:
+                media = endpoint_to_media_type(m.endpoint)
+            except (KeyError, ValueError):
+                continue
+            media_counts[media] = media_counts.get(media, 0) + 1
+            models.append(
+                {
+                    "model_id": m.model_id,
+                    "display_name": m.display_name,
+                    "media_type": media,
+                }
+            )
+    models.sort(key=lambda x: (x["media_type"], x["model_id"]))
+
+    return {
+        "enabled": True,
+        "connected": provider is not None,
+        # 只回主机名：网关地址不是秘密，但也没有让用户看到完整 URL 的必要，
+        # 而 api_key 一律不出服务端。
+        "gateway_host": _host_only(provider.base_url) if provider else None,
+        "media_counts": media_counts,
+        "models": models,
+        "matrix_web_url": matrix_web_url(),
+    }
+
+
+def _host_only(url: str) -> str:
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(url if "://" in url else f"//{url}")
+    return parsed.netloc or url
 
 
 @page_router.get("/handoff", include_in_schema=False)

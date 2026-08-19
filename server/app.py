@@ -648,6 +648,13 @@ app.include_router(files.public_router, prefix="/api/v1", tags=["文件管理"])
 # Matrix 握手：落地页与换票端点必须匿名可达 —— 它们正是"拿到会话"的前提。
 # /handoff 不带 /api/v1 前缀（用户直接在地址栏落地），换票端点走 API 前缀。
 app.include_router(matrix_session_router.public_router, prefix="/api/v1", tags=["Matrix 握手"])
+# overview 需要登录态（读的是该租户自己的网关与模型），因此走受保护路由。
+app.include_router(
+    matrix_session_router.router,
+    prefix="/api/v1",
+    dependencies=[Depends(get_current_user)],
+    tags=["Matrix 握手"],
+)
 app.include_router(matrix_session_router.page_router, include_in_schema=False)
 
 # 自带认证端点：成因都是浏览器直发请求带不了 Authorization header，

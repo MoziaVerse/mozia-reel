@@ -1,6 +1,18 @@
 import type enDashboard from '../en/dashboard';
 
 export default {
+  matrix_connected: "已连接 Matrix 模型服务",
+  matrix_disconnected: "尚未连接",
+  matrix_connected_hint: "模型、密钥与计费均由 Matrix 平台统一提供，无需在此配置。",
+  matrix_disconnected_hint: "请回到 Matrix 应用市场重新打开本应用以完成连接。",
+  matrix_open_console: "Matrix 控制台",
+  matrix_media_text: "文本模型",
+  matrix_media_image: "图像模型",
+  matrix_media_video: "视频模型",
+  matrix_media_audio: "语音模型",
+  matrix_models_title: "可用模型",
+  matrix_models_hint: "由平台统一上架，随平台更新，不支持在此增删。",
+  matrix_models_empty: "暂无可用模型，请稍后重试或联系平台管理员。",
   'app_title': '[[brand]]',
   'projects': '项目',
   'create_project': '创建项目',
