@@ -220,6 +220,62 @@ async def _discover_gateway_models(*, base_url: str, api_key: str) -> list[dict]
     return corrected
 
 
+# 各媒体类型的默认模型 setting key。细分档位（i2v/r2v/t2i/i2i/simple/complex）
+# 刻意留空：它们的读取路径都会回落到这里的主默认值，预填反而会把"用户没选过"
+# 和"用户选了同一个"混为一谈，日后想调主默认时细分档位会悄悄拦住。
+_DEFAULT_BACKEND_KEYS = {
+    "text": "default_text_backend",
+    "image": "default_image_backend",
+    "video": "default_video_backend",
+    "audio": "default_audio_backend",
+}
+
+
+async def seed_default_backends(session, *, provider_id: int) -> dict[str, str]:
+    """把各媒体类型的默认模型配好，让用户登录即可用。
+
+    不配的话四个 default_*_backend 全是空串，生成入口会以"未配置模型"拒绝执行 ——
+    而用户在托管态下并不知道要自己去设置页点一遍。这是"开箱即用"的关键一步。
+
+    只在**当前为空**时写入：用户手动改过的选择不能被下次握手冲掉。
+    """
+    from lib.config.service import ConfigService
+    from lib.custom_provider import make_provider_id
+    from lib.custom_provider.endpoints import endpoint_to_media_type
+    from lib.db.repositories.custom_provider_repo import CustomProviderRepository
+
+    repo = CustomProviderRepository(session)
+    svc = ConfigService(session)
+    pid = make_provider_id(provider_id)
+
+    by_media: dict[str, list[str]] = {}
+    for model in await repo.list_models(provider_id):
+        if not model.is_enabled:
+            continue
+        try:
+            media = endpoint_to_media_type(model.endpoint)
+        except (KeyError, ValueError):
+            continue
+        by_media.setdefault(media, []).append(model.model_id)
+
+    applied: dict[str, str] = {}
+    for media, key in _DEFAULT_BACKEND_KEYS.items():
+        model_ids = sorted(by_media.get(media, []))
+        if not model_ids:
+            continue
+        current = (await svc.get_setting(key, "")).strip()
+        if current:
+            continue  # 用户已有选择，不覆盖
+        option = f"{pid}/{model_ids[0]}"
+        await svc.set_setting(key, option)
+        applied[media] = option
+
+    if applied:
+        await session.commit()
+        logger.info("默认模型已配置: %s", applied)
+    return applied
+
+
 AGENT_CREDENTIAL_DISPLAY_NAME = "Matrix 网关"
 
 
@@ -296,6 +352,9 @@ async def seed_gateway_provider(session, *, gateway: str, api_key: str) -> None:
             await repo.update_provider(existing.id, base_url=gateway, api_key=api_key)
             await session.commit()
             logger.info("网关供应商凭据已更新 (provider_id=%s)", existing.id)
+        # 已有供应商也要补默认值：早期握手过、但那时还没有这段逻辑的租户，
+        # 以及平台后来才上架某类模型的情况，都靠这里补齐。
+        await seed_default_backends(session, provider_id=existing.id)
         return
 
     models = await _discover_gateway_models(base_url=gateway, api_key=api_key)
@@ -308,6 +367,7 @@ async def seed_gateway_provider(session, *, gateway: str, api_key: str) -> None:
     )
     await session.commit()
     logger.info("网关供应商已创建 (provider_id=%s, models=%d)", provider.id, len(models))
+    await seed_default_backends(session, provider_id=provider.id)
 
 
 async def seed_agent_credential_for_gateway(session, *, gateway: str, api_key: str) -> None:
