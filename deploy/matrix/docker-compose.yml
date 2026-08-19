@@ -16,11 +16,22 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
+      # 这台构建机出网慢：实测 deb.debian.org 50KB/s vs 阿里 620KB/s（12×），
+      # pypi.org 40KB/s vs 阿里 208KB/s（5×）。Dockerfile 里默认空值不启用，
+      # 只有这里显式传了才走镜像源。
+      args:
+        APT_MIRROR: mirrors.aliyun.com
+        PIP_INDEX: https://mirrors.aliyun.com/pypi/simple/
+        NPM_REGISTRY: https://registry.npmmirror.com
     ports:
       - "1241:1241"
     env_file: .env
     environment:
       TZ: ${TZ:-Asia/Shanghai}
+    # matrix backend 跑在宿主上（非容器），容器内的 127.0.0.1 指向自己。
+    # 用 host-gateway 才能让 MATRIX_BACKEND_URL 指得到宿主的 :3257。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # Agent Bash 沙箱 (bwrap) 需要：
     # 1) 非特权 user namespace → 放开 docker 默认 seccomp/apparmor profile
     # 2) bwrap 嵌套出的 net namespace 内配置 loopback → 需要 NET_ADMIN

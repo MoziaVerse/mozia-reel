@@ -11,6 +11,11 @@ WORKDIR /build/frontend
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
 
+# 可选镜像源：默认空 = 走官方源，行为与上游一致。
+# 出网慢的构建机传 --build-arg NPM_REGISTRY=... 提速，不影响其它人。
+ARG NPM_REGISTRY=""
+RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi
+
 # 先复制依赖文件，利用缓存（corepack 按 packageManager 字段自动下载对应 pnpm）
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
@@ -25,6 +30,13 @@ RUN pnpm build
 FROM python:3.12-slim AS production
 
 # 安装系统依赖
+# 同上：默认空 = deb.debian.org。python:3.12-slim (trixie) 用 deb822 格式的
+# /etc/apt/sources.list.d/debian.sources，不是老的 sources.list。
+ARG APT_MIRROR=""
+RUN if [ -n "$APT_MIRROR" ]; then \
+      sed -i "s|deb.debian.org|$APT_MIRROR|g; s|security.debian.org|$APT_MIRROR|g" \
+        /etc/apt/sources.list.d/debian.sources; \
+    fi
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
@@ -50,6 +62,9 @@ ENV TZ=Asia/Shanghai
 
 # 先复制依赖和包元数据文件，利用缓存
 COPY pyproject.toml uv.lock README.md ./
+# 同上：默认空 = pypi.org
+ARG PIP_INDEX=""
+ENV UV_DEFAULT_INDEX=${PIP_INDEX}
 RUN uv sync --no-dev --no-install-project
 
 # 复制应用代码
