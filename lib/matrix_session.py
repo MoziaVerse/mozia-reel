@@ -55,6 +55,16 @@ def external_client_id() -> str:
     return os.environ.get("EXTERNAL_CLIENT_ID", "arcreel").strip()
 
 
+def matrix_launch_url() -> str:
+    """未握手的浏览器该被送去哪。
+
+    送 matrix 的 launch 中继页而不是站点首页：中继页会自己处理"未登录先登录、
+    已登录直接 mint ticket 跳回来"，形成闭环。送首页的话用户跳过去就没有回来的
+    路了——得自己想起来去应用市场找卡片。
+    """
+    return f"{matrix_web_url()}/launch/{external_client_id()}"
+
+
 def session_ttl_seconds() -> int:
     raw = os.environ.get("SESSION_TTL_SECONDS", "").strip()
     try:

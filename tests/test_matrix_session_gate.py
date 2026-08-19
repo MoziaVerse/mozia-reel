@@ -104,9 +104,34 @@ class TestSessionGate:
         reached, status = asyncio.run(_probe("/api/v1/projects", API))
         assert (reached, status) == (False, 401)
 
-    def test_navigation_without_session_redirects(self):
-        reached, status = asyncio.run(_probe("/", NAV))
-        assert (reached, status) == (False, 302)
+    def test_navigation_without_session_redirects_to_launch_relay(self, monkeypatch):
+        """必须指向 launch 中继页，不能是 matrix 首页。
+
+        首页没有"回到本站"的路径，用户跳过去就断了——得自己想起来去应用市场
+        找卡片。中继页则会自己走完 登录 → mint ticket → 跳回 /handoff。
+        """
+        monkeypatch.setenv("MATRIX_WEB_URL", "http://matrix.example")
+        monkeypatch.setenv("EXTERNAL_CLIENT_ID", "arcreel")
+        sent: list[dict] = []
+
+        async def send(message):
+            sent.append(message)
+
+        async def receive():
+            return {"type": "http.request"}
+
+        async def downstream(scope, receive, send):  # pragma: no cover - 不该被走到
+            raise AssertionError("无会话的导航不该进到下游")
+
+        asyncio.run(
+            MatrixSessionGate(downstream)(
+                {"type": "http", "path": "/", "headers": NAV}, receive, send
+            )
+        )
+        start = next(m for m in sent if m["type"] == "http.response.start")
+        location = dict(start["headers"])[b"location"].decode()
+        assert start["status"] == 302
+        assert location == "http://matrix.example/launch/arcreel"
 
     def test_static_asset_passes(self):
         """静态资源不敏感；拦它只会让 SPA 外壳半截加载失败。"""

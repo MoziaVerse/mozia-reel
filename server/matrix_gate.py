@@ -16,7 +16,7 @@ import logging
 from lib.matrix_session import (
     SESSION_COOKIE_NAME,
     matrix_backend_url,
-    matrix_web_url,
+    matrix_launch_url,
     verify_session_cookie,
 )
 
@@ -91,15 +91,15 @@ class MatrixSessionGate:
         await self._unauthorized(send)
 
     async def _redirect_to_matrix(self, send) -> None:
-        # 只能送回 matrix 站点让用户重新点应用卡片：换票入口是 POST /external/launch，
-        # 浏览器导航过不去；且 landing_url 由 external_client 表写死（防开放重定向），
-        # 这里也无从拼一个带回跳的地址。
+        # 送 matrix 的 launch 中继页（/launch/<clientId>）：它会处理"未登录先登录、
+        # 已登录直接 mint ticket 跳回本站 /handoff"，用户直接访问本站域名也能进来。
+        # 早先送的是 matrix 首页，结果是"跳过去就没有回来的路"。
         await send(
             {
                 "type": "http.response.start",
                 "status": 302,
                 "headers": [
-                    (b"location", matrix_web_url().encode("utf-8")),
+                    (b"location", matrix_launch_url().encode("utf-8")),
                     (b"cache-control", b"no-store"),
                 ],
             }
