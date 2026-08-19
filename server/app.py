@@ -420,6 +420,12 @@ async def lifespan(app: FastAPI):
     await assistant.assistant_service.startup(in_docker=is_docker, sandbox_enabled=sandbox_enabled)
     assistant.assistant_service.session_manager.start_patrol()
 
+    # 参考素材外链托管：默认走网关的 /v1/sd/upload。没有它的话，需要参考图的
+    # 模型会在提交时报"未配置外链托管"，而不是静默丢掉参考图。
+    from lib.reference_image_hosting import set_uploader, uploader_from_env
+
+    set_uploader(uploader_from_env())
+
     logger.info("启动 GenerationWorker...")
     # 每个租户一份 worker：DB 按租户分裂后，单个 worker 只看得见默认库，
     # 租户的任务会永远 pending 且不报错。详见 lib/worker_supervisor.py。

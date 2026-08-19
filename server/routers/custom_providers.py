@@ -600,9 +600,20 @@ async def list_providers(
 # /endpoints 必须先于 /{provider_id} 注册，否则 FastAPI 会把字符串 "endpoints" 当作 provider_id。
 @router.get("/endpoints", response_model=EndpointCatalogResponse)
 async def list_endpoint_catalog() -> EndpointCatalogResponse:
-    """暴露 ENDPOINT_REGISTRY 作为前端单一真相源：渲染下拉、显示路径与分组都派生自此返回值。"""
+    """暴露 ENDPOINT_REGISTRY 作为前端单一真相源：渲染下拉、显示路径与分组都派生自此返回值。
+
+    Matrix 托管形态下只保留网关实际提供的那几条 —— 厂商原生路径打到中转网关上
+    会返回 HTML 首页而不是 API 响应，露在下拉里只会让人选中后在生成时才失败。
+    """
+    from lib.matrix_capabilities import visible_endpoint_keys
+
+    visible = set(visible_endpoint_keys(ENDPOINT_REGISTRY.keys()))
     return EndpointCatalogResponse(
-        endpoints=[EndpointDescriptor(**endpoint_spec_to_dict(spec)) for spec in ENDPOINT_REGISTRY.values()],
+        endpoints=[
+            EndpointDescriptor(**endpoint_spec_to_dict(spec))
+            for key, spec in ENDPOINT_REGISTRY.items()
+            if key in visible
+        ],
     )
 
 

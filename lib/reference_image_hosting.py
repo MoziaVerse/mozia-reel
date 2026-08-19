@@ -23,9 +23,13 @@ MiniMax H3 的服务端本身既收 multipart 直传、也收 JSON + 公网 URL
 from __future__ import annotations
 
 import logging
+import mimetypes
 import os
+import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -73,14 +77,88 @@ async def upload_reference_images(paths: list[Path]) -> list[str]:
     return urls
 
 
-def uploader_from_env() -> ReferenceImageUploader | None:
-    """按环境变量选择实现。当前没有内置实现，恒为 None。
+async def _gateway_credentials() -> tuple[str, str]:
+    """取当前租户的网关 base_url 与 key。
 
-    保留这个入口是为了让接线位置明确：T-2 方案定下来后，在这里按
-    ``ARCREEL_REFERENCE_HOSTING`` 分派即可，调用方一行不用改。
+    每次调用都现读而不是启动时缓存：凭据是 per-tenant 的，且会随握手刷新。
+    """
+    from lib.db import safe_session_factory
+    from lib.db.repositories.custom_provider_repo import CustomProviderRepository
+    from lib.matrix_session import GATEWAY_PROVIDER_DISPLAY_NAME
+
+    async with safe_session_factory() as session:
+        repo = CustomProviderRepository(session)
+        provider = next(
+            (p for p in await repo.list_providers() if p.display_name == GATEWAY_PROVIDER_DISPLAY_NAME),
+            None,
+        )
+    if provider is None or not provider.base_url or not provider.api_key:
+        raise ReferenceHostingNotConfigured("尚未完成 Matrix 握手，拿不到网关凭据")
+    return provider.base_url, provider.api_key
+
+
+def _upload_endpoint(base_url: str) -> str:
+    """拼出 ``/v1/sd/upload``。
+
+    provider 里存的 base_url 可能带 /v1 也可能不带（OpenAI SDK 侧由
+    ensure_openai_base_url 兜底），两种都要能拼对，否则会打到 /v1/v1/...。
+    """
+    stripped = base_url.strip().rstrip("/")
+    if re.search(r"/v\d+$", stripped):
+        return f"{stripped}/sd/upload"
+    return f"{stripped}/v1/sd/upload"
+
+
+async def _upload_via_gateway(paths: list[Path]) -> list[str]:
+    """走网关的 /v1/sd/upload 把本地素材换成公网直链。
+
+    为什么是它而不是自建图床：这是平台已经提供的统一入口，所有调用方共用，
+    走用户自己的 key、计费口径一致。实测返回的直链公网可读、无重定向，
+    上游能直接拉取。
+    """
+    base_url, api_key = await _gateway_credentials()
+    endpoint = _upload_endpoint(base_url)
+
+    urls: list[str] = []
+    async with httpx.AsyncClient(timeout=_UPLOAD_TIMEOUT_SEC) as client:
+        for path in paths:
+            if not path.is_file():
+                raise RuntimeError(f"参考素材不可读: {path.name}")
+            content = path.read_bytes()
+            mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            response = await client.post(
+                endpoint,
+                headers={"Authorization": f"Bearer {api_key}"},
+                files={"file": (path.name, content, mime_type)},
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"素材上传失败 HTTP {response.status_code}: {response.text[:200]}"
+                )
+            payload = response.json()
+            url = payload.get("file_url") if isinstance(payload, dict) else None
+            if not isinstance(url, str) or not url.startswith("https://"):
+                # 上游要求 https 且不能重定向；拿到别的形态就地报错，
+                # 比让它一路走到生成阶段再失败好查得多。
+                raise RuntimeError(f"素材上传未返回 https 直链: {str(payload)[:200]}")
+            urls.append(url)
+    return urls
+
+
+# 单个文件的上传超时。参考视频上限 100 MiB，出网慢时几十秒并不异常。
+_UPLOAD_TIMEOUT_SEC = 120.0
+
+
+def uploader_from_env() -> ReferenceImageUploader | None:
+    """按环境变量选择实现。
+
+    默认走网关的 sd/upload；显式设 ``none`` 可关掉（单机自用、不接 matrix 时
+    没有网关可用）。
     """
     mode = os.environ.get("ARCREEL_REFERENCE_HOSTING", "").strip().lower()
-    if not mode or mode == "none":
+    if mode == "none":
         return None
-    logger.warning("未知的参考图托管方式 %r，按未配置处理", mode)
-    return None
+    if mode in ("", "gateway"):
+        return _upload_via_gateway
+    logger.warning("未知的参考图托管方式 %r，按网关方式处理", mode)
+    return _upload_via_gateway

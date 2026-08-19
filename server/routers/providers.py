@@ -373,8 +373,14 @@ async def list_providers(
     _t: Translator,
     svc: Annotated[ConfigService, Depends(get_config_service)],
 ) -> ProvidersListResponse:
-    """返回所有供应商及其状态。"""
-    statuses = await svc.get_all_providers_status()
+    """返回所有供应商及其状态。
+
+    Matrix 托管形态下隐藏内置供应商：它们都要求用户自备厂商 key，而这里的用户
+    只有一把平台网关的 key，填了也用不了。模型统一走已 seed 好的网关自定义供应商。
+    """
+    from lib.matrix_capabilities import builtin_provider_visible
+
+    statuses = [s for s in await svc.get_all_providers_status() if builtin_provider_visible(s.name)]
     providers = []
     for s in statuses:
         meta = PROVIDER_REGISTRY.get(s.name)
