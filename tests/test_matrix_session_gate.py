@@ -148,3 +148,42 @@ class TestSessionGate:
         monkeypatch.setenv("MATRIX_BACKEND_URL", "")
         reached, status = asyncio.run(_probe("/api/v1/projects", API))
         assert (reached, status) == (True, 200)
+
+
+class TestHandoffEndpointIsNotOpen:
+    """换票端点在 auth 豁免清单里，这里给出它并非不设防的正面断言。
+
+    对应 tests/test_auth_coverage.py::PUBLIC_OPERATIONS 的约定：豁免的每一条
+    都要另有断言证明其保护来自别处。它的保护是 matrix 用共享密钥签发的
+    60s HMAC ticket —— 端点本身不认 cookie，也不认任何自带凭据。
+    """
+
+    def test_rejects_empty_ticket(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from server.routers import matrix_session
+
+        app = FastAPI()
+        app.include_router(matrix_session.public_router, prefix="/api/v1")
+        client = TestClient(app)
+        assert client.post("/api/v1/matrix-session/init", json={"ticket": "   "}).status_code == 400
+
+    def test_rejects_forged_ticket(self, monkeypatch):
+        """伪造的 ticket 必须被 matrix 拒绝，且不会种下任何会话 cookie。"""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from lib import matrix_session as ms
+        from server.routers import matrix_session
+
+        async def _reject(ticket: str):
+            raise ms.MatrixHandoffError("ticket 无效", 401, "invalid_ticket")
+
+        monkeypatch.setattr(matrix_session, "exchange_ticket", _reject)
+        app = FastAPI()
+        app.include_router(matrix_session.public_router, prefix="/api/v1")
+        client = TestClient(app)
+        resp = client.post("/api/v1/matrix-session/init", json={"ticket": "forged"})
+        assert resp.status_code == 401
+        assert SESSION_COOKIE_NAME not in resp.cookies

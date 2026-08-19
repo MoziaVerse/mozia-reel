@@ -302,8 +302,10 @@ ENDPOINT_REGISTRY: dict[str, EndpointSpec] = {
         request_method="POST",
         request_path_template="/v1/videos",
         build_backend=_build_openai_video,
-        # OpenAI Sora input_reference 为单张首帧图。
-        video_max_reference_images=1,
+        # 不在 endpoint 上写死上限：这条 endpoint 上既有真 Sora（单张首帧图，上限 1），
+        # 也有经中转网关过来的 MiniMax H3（上限 9）。写死会让 Sora 也声称支持 9 张。
+        # 与 minimax-video 同样的处理：按 model 读 backend 声明的 caps，不构造 client。
+        video_caps_for_model=OpenAIVideoBackend.video_capabilities_for_model,
     ),
     "newapi-video": EndpointSpec(
         key="newapi-video",

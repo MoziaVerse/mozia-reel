@@ -27,6 +27,10 @@ PUBLIC_OPERATIONS = frozenset(
         "POST /api/v1/auth/token",
         "GET /api/v1/files/{project_name}/{path}",
         "GET /api/v1/global-assets/{asset_type}/{filename}",
+        # matrix 握手换票：与 auth/token 同性质，是"拿到会话"的前提，必须匿名可达。
+        # 并非不设防 —— 它只接受 matrix 用共享密钥签发的 60s HMAC ticket，
+        # 正面断言见 tests/test_matrix_session_gate.py::TestHandoffEndpointIsNotOpen。
+        "POST /api/v1/matrix-session/init",
     }
 )
 

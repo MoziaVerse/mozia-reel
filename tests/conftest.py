@@ -366,7 +366,10 @@ async def generation_queue():
 
     factory = async_sessionmaker(engine, expire_on_commit=False)
     queue = generation_queue_module.GenerationQueue(session_factory=factory)
-    generation_queue_module._QUEUE_INSTANCE = queue
+    # 队列单例已改为按租户缓存（见 lib/generation_queue.py）。用例不设租户，
+    # 对应 None 这一格；写回旧的 _QUEUE_INSTANCE 会变成没人读的孤儿属性，
+    # get_generation_queue() 照样返回真实队列，表现成 "no such table: tasks"。
+    generation_queue_module._QUEUE_INSTANCES[None] = queue
     yield queue
-    generation_queue_module._QUEUE_INSTANCE = None
+    generation_queue_module._QUEUE_INSTANCES.clear()
     await engine.dispose()

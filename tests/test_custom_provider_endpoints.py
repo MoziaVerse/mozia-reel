@@ -79,7 +79,10 @@ class TestRegistry:
         ):
             assert ENDPOINT_REGISTRY[key].video_max_reference_images is None
         # 既有显式 int 保留，行为零变化
-        assert ENDPOINT_REGISTRY["openai-video"].video_max_reference_images == 1
+        # openai-video 不再声明固定 cap：这条 endpoint 上既有真 Sora（上限 1），
+        # 也有经中转网关过来的 MiniMax H3（上限 9），改为按 model 读 backend caps
+        # （与 minimax-video 同机制）。写死一个数会让其中一方的能力被错报。
+        assert ENDPOINT_REGISTRY["openai-video"].video_max_reference_images is None
         assert ENDPOINT_REGISTRY["newapi-video"].video_max_reference_images == 0
 
     def test_video_caps_declaration_bindings(self):
@@ -98,9 +101,10 @@ class TestRegistry:
             "kling-video",
         ):
             assert ENDPOINT_REGISTRY[key].video_caps_for_model is not None
-        # 显式 int 的 video endpoint 不应再绑 caps 函数
-        for key in ("openai-video", "newapi-video"):
-            assert ENDPOINT_REGISTRY[key].video_caps_for_model is None
+        # openai-video 改为容量异质（Sora 1 / 中转过来的 MiniMax H3 9），
+        # 因此也绑 caps 函数；newapi-video 仍是单一形态，保持显式 int。
+        assert ENDPOINT_REGISTRY["openai-video"].video_caps_for_model is not None
+        assert ENDPOINT_REGISTRY["newapi-video"].video_caps_for_model is None
 
     def test_dashscope_caps_fn_reads_per_model_limit_without_client(self):
         """dashscope-async-video 的 caps_fn 是纯函数：按 model_id 返回真实参考图上限

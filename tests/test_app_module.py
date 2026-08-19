@@ -50,7 +50,11 @@ class TestAppModule:
 
         async with app_module.lifespan(app):
             assert worker.started
-            assert hasattr(app.state, "generation_worker")
+            # worker 现在由 WorkerSupervisor 按租户管理（DB 已按租户分裂，
+            # 单个进程级 worker 只看得见默认库）。未接入 matrix 时只有
+            # 默认租户 None 这一份，行为与改造前等价。
+            assert hasattr(app.state, "worker_supervisor")
+            assert app.state.worker_supervisor.get(None) is worker
 
         assert worker.stopped
 
@@ -63,6 +67,8 @@ class TestAppModule:
 
         # 用一个会在 stop() 时记录 callback 状态的 fake worker
         callback_during_stop: list[bool] = []
+        # 队列也按租户缓存；未设租户时取到的就是默认租户（None）那一份，
+        # 与 lifespan 里 supervisor.ensure_started(None) 绑定的是同一个。
         queue = get_generation_queue()
 
         class _OrderCheckingWorker:

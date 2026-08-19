@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from pathlib import Path
+from types import SimpleNamespace
+
+import httpx
 
 from lib.aspect_size import VIDEO_TIER_SHORT_EDGE, parse_aspect_ratio, resolution_to_short_edge
+from lib.reference_image_hosting import upload_reference_images
 from lib.logging_utils import format_kwargs_for_log
 from lib.openai_shared import OPENAI_RETRYABLE_ERRORS, create_openai_client
 from lib.providers import PROVIDER_OPENAI
@@ -43,6 +48,13 @@ _SORA_SIZES_1080P: tuple[str, ...] = ("1080x1920", "1920x1080")
 # 向后兼容的并集导出（外部/测试引用「全部合法档」）。
 _SORA_LEGAL_SIZES: tuple[str, ...] = _SORA_SIZES_720P + _SORA_SIZES_1080P
 _SORA_1080P_MIN_SHORT = 1080
+_CUSTOM_SIZE_RE = re.compile(r"^\s*(\d+)\s*[xX×*]\s*(\d+)\s*$")
+
+# H3 走 OpenAI 兼容网关的 /v1/videos，但请求形态与 Sora 不同：参考图要 JSON 里的
+# 公网 URL 数组，不是 SDK 的 multipart 文件槽。按 model id 判定而不是按 endpoint：
+# 同一个 endpoint 上既有真 Sora 也有中转过来的 H3。
+def _is_minimax_h3(model: str) -> bool:
+    return "minimax-h3" in (model or "").lower()
 
 
 def _video_status(video: object) -> ProviderJobStatus:
@@ -89,6 +101,14 @@ def _resolve_size(model: str, resolution: str | None, aspect_ratio: str) -> str:
     sora-2（base）或缺分辨率时落 720p（缺分辨率默认 720P，不擅自升 1080p 以免超额计费）。size 必传以锁定
     比例，绝不出现「不传 size → 上游默认比例」。其它比例（1:1/21:9 等）sora 无对应档，吸附后告警。
     """
+    # 显式的「宽×高」原样下发 —— **仅对 H3**：它的 parse_size 接受 32 的倍数、
+    # 面积 ≤1344×768，档位吸附会把用户指定的分辨率改掉。
+    # Sora 必须继续走吸附：它只认固定档，透传自定义值会被上游拒绝，
+    # 这也是上游 test_custom_resolution_value_ignored_uses_legal_size 锁的行为。
+    if _is_minimax_h3(model) and resolution is not None:
+        if match := _CUSTOM_SIZE_RE.match(resolution):
+            return f"{match.group(1)}x{match.group(2)}"
+
     aw, ah = parse_aspect_ratio(aspect_ratio)
     target = aw / ah
     is_pro = "pro" in model.lower()
@@ -122,7 +142,7 @@ def _resolve_size(model: str, resolution: str | None, aspect_ratio: str) -> str:
             aspect_ratio,
             chosen,
         )
-    # 后置不变量：只返回 sora 合法档全集内的尺寸，防止未来改档逻辑时静默产出非法 size。
+    # 档位路径的后置不变量：只返回 sora 合法档全集内的尺寸（自定义像素已在上面提前返回）。
     assert chosen in _SORA_LEGAL_SIZES, f"_resolve_size produced illegal sora size: {chosen}"
     return chosen
 
@@ -132,6 +152,9 @@ class OpenAIVideoBackend(ProviderJobIdPersistenceMixin):
 
     def __init__(self, *, api_key: str | None = None, model: str | None = None, base_url: str | None = None):
         self._client = create_openai_client(api_key=api_key, base_url=base_url)
+        # H3 分支绕开 SDK 自己发请求，需要原始凭据与地址。
+        self._api_key = api_key
+        self._base_url = (base_url or "").strip().rstrip("/")
         self._model = model or DEFAULT_MODEL
 
     @property
@@ -147,9 +170,13 @@ class OpenAIVideoBackend(ProviderJobIdPersistenceMixin):
         """按 model_id 纯计算 caps —— 不构造 SDK client（无需 api_key）。
 
         Sora input_reference 为单张首帧图，参考图上限为 1；首帧与参考共享该单槽位。
-        当前全系模型能力一致，不按 model_id 分支；instance property 委托至此，
-        保持 backend 为单一真相源。
+        经中转网关过来的 MiniMax H3 走同一个 endpoint 但契约不同，上限是 9
+        （见 mozia-h3-api 的 request_images）。所以这里必须按 model_id 分支，
+        不能在 endpoint 上写死一个数 —— 写死会让真 Sora 也声称支持 9 张。
+        instance property 委托至此，保持 backend 为单一真相源。
         """
+        if _is_minimax_h3(model):
+            return VideoCapabilities(max_reference_images=9)
         return VideoCapabilities(max_reference_images=1)
 
     @property
@@ -166,22 +193,29 @@ class OpenAIVideoBackend(ProviderJobIdPersistenceMixin):
         kwargs["size"] = _resolve_size(self._model, request.resolution, request.aspect_ratio)
 
         # 收集所有参考图：start_image + reference_images
-        refs = []
+        ref_paths: list[Path] = []
         if request.start_image and Path(request.start_image).exists():
-            refs.append(_encode_start_image(Path(request.start_image)))
+            ref_paths.append(Path(request.start_image))
         if request.reference_images:
             for ref_path in request.reference_images:
                 p = Path(ref_path) if not isinstance(ref_path, Path) else ref_path
                 if p.exists():
-                    refs.append(_encode_start_image(p))
-        if refs:
+                    ref_paths.append(p)
+
+        is_h3 = _is_minimax_h3(self._model)
+        if ref_paths and is_h3:
+            # H3 经中转网关时只认 JSON 里的公网 https URL：网关会把 body 反序列化
+            # 成 Go 结构体再重建，multipart 的文件部分会被丢弃（实测）。
+            kwargs["images"] = await upload_reference_images(ref_paths)
+        elif ref_paths:
+            refs = [_encode_start_image(path) for path in ref_paths]
             # 单张图时保持 tuple 格式（API 兼容），多张时用 list
             kwargs["input_reference"] = refs[0] if len(refs) == 1 else refs
 
         logger.info("OpenAI 视频生成开始: model=%s, seconds=%s", self._model, kwargs["seconds"])
         logger.info("调用 %s 视频 SDK kwargs=%s", self.name, format_kwargs_for_log(kwargs))
 
-        video = await self._create_video(**kwargs)
+        video = await (self._create_h3_video(**kwargs) if is_h3 else self._create_video(**kwargs))
         # submit 成功立即持久化 job_id；持久化失败抛 → finally mark_failed。
         # 非 worker 路径（grid / 直生 / 测试）request.task_id 为 None，统一点内跳过持久化。
         await self._persist_provider_job_id(request, video.id, provider=PROVIDER_OPENAI)
@@ -241,6 +275,44 @@ class OpenAIVideoBackend(ProviderJobIdPersistenceMixin):
     async def _create_video(self, **kwargs):
         """仅创建视频任务（带重试）；轮询交由 _poll_until_complete 自管。"""
         return await self._client.videos.create(**kwargs)
+
+    # ⚠️ 240s 而不是常见的 60s：H3 的 /v1/videos **提交是同步的** —— 服务端收到
+    # 请求后要下载素材 → ffmpeg 归一 → 上传 ComfyUI，做完才返回 task_id。
+    # 超时的后果不是"提交失败"：调用方 abort 后服务端仍会跑完并提交任务，
+    # 用户被扣了费、片子照出，调用方却永远拿不到 task_id 收不到产物。
+    # Canvas 踩过同一个坑，那边也是提到 240s 才稳。
+    _H3_SUBMIT_TIMEOUT_SEC = 240.0
+
+    @with_retry_async(retryable_errors=(httpx.NetworkError, httpx.TimeoutException))
+    async def _create_h3_video(self, **kwargs):
+        """以 H3 要求的 JSON 合同提交，绕开 Sora SDK 固定的 multipart 编码。"""
+        if not self._base_url or not self._api_key:
+            raise RuntimeError("MiniMax H3 需要显式的 base_url 与 API key")
+        payload = {
+            "prompt": kwargs["prompt"],
+            "model": kwargs["model"],
+            "seconds": kwargs["seconds"],
+            "size": kwargs["size"],
+        }
+        if kwargs.get("images"):
+            payload["images"] = kwargs["images"]
+        async with httpx.AsyncClient(timeout=self._H3_SUBMIT_TIMEOUT_SEC) as client:
+            response = await client.post(
+                f"{self._base_url}/videos",
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            body = response.json()
+        # 中转网关对 id 字段的写法不统一，两种都收。
+        task_id = (body.get("id") or body.get("task_id")) if isinstance(body, dict) else None
+        if not isinstance(task_id, str) or not task_id:
+            raise RuntimeError(f"MiniMax H3 响应里没有 task id: {str(body)[:200]}")
+        # 后续轮询/下载复用 Sora 那条路径，只需要一个带 .id 的对象。
+        return SimpleNamespace(id=task_id)
 
     async def _poll_until_complete(self, video_id: str, duration_seconds: int):
         """轮询任务直到状态归一到终态。
