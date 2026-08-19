@@ -67,7 +67,7 @@ function SectionCard({ kicker, title, description, children, footer }: SectionCa
       className="overflow-hidden rounded-[12px] border border-hairline"
       style={{
         background:
-          "linear-gradient(180deg, oklch(0.20 0.012 270 / 0.55), oklch(0.16 0.010 265 / 0.55))",
+          "linear-gradient(180deg, light-dark(oklch(0.97 0.004 260 / 0.55), oklch(0.18 0.02 260 / 0.55)), light-dark(oklch(0.99 0.004 260 / 0.55), oklch(0.14 0.02 260 / 0.55)))",
         boxShadow:
           "inset 0 1px 0 oklch(1 0 0 / 0.03), 0 18px 40px -28px oklch(0 0 0 / 0.5)",
       }}
@@ -85,7 +85,7 @@ function SectionCard({ kicker, title, description, children, footer }: SectionCa
       </header>
       <div className="px-5 py-4">{children}</div>
       {footer ? (
-        <footer className="border-t border-hairline-soft bg-[oklch(0.16_0.010_265_/_0.5)] px-5 py-3">
+        <footer className="border-t border-hairline-soft bg-[light-dark(oklch(0.995_0.004_260_/_0.5),oklch(0.16_0.010_265_/_0.5))] px-5 py-3">
           {footer}
         </footer>
       ) : null}
@@ -580,7 +580,7 @@ export function ProjectSettingsPage() {
       style={
         {
           background:
-            "radial-gradient(900px 480px at 8% -10%, oklch(0.32 0.05 295 / 0.22), transparent 55%), radial-gradient(800px 460px at 100% 110%, oklch(0.26 0.04 260 / 0.22), transparent 55%), linear-gradient(180deg, var(--color-bg-grad-a), var(--color-bg-grad-b))",
+            "radial-gradient(900px 480px at 8% -10%, light-dark(oklch(0.88 0.02 262 / 0.22), oklch(0.32 0.05 262 / 0.22)), transparent 55%), radial-gradient(800px 460px at 100% 110%, light-dark(oklch(0.91 0.016 260 / 0.22), oklch(0.26 0.04 260 / 0.22)), transparent 55%), linear-gradient(180deg, var(--color-bg-grad-a), var(--color-bg-grad-b))",
         }
       }
     >
@@ -589,7 +589,7 @@ export function ProjectSettingsPage() {
         className="sticky top-0 z-30 shrink-0"
         style={{
           background:
-            "linear-gradient(180deg, oklch(0.20 0.011 265 / 0.55), oklch(0.15 0.010 265 / 0.45))",
+            "linear-gradient(180deg, light-dark(oklch(0.97 0.004 260 / 0.55), oklch(0.18 0.02 260 / 0.55)), light-dark(oklch(0.99 0.004 260 / 0.45), oklch(0.13 0.02 260 / 0.45)))",
           backdropFilter: "blur(28px) saturate(1.5)",
           WebkitBackdropFilter: "blur(28px) saturate(1.5)",
           borderBottom: "1px solid var(--color-hairline)",
@@ -948,7 +948,7 @@ export function ProjectSettingsPage() {
         className="shrink-0"
         style={{
           background:
-            "linear-gradient(180deg, oklch(0.18 0.011 265 / 0.65), oklch(0.14 0.009 265 / 0.85))",
+            "linear-gradient(180deg, light-dark(oklch(0.995 0.004 260 / 0.65), oklch(0.16 0.02 260 / 0.65)), light-dark(oklch(0.985 0.004 260 / 0.85), oklch(0.12 0.02 260 / 0.85)))",
           backdropFilter: "blur(20px) saturate(1.3)",
           WebkitBackdropFilter: "blur(20px) saturate(1.3)",
           borderTop: "1px solid var(--color-hairline)",

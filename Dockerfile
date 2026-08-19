@@ -20,8 +20,30 @@ RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
-# 复制前端源码并构建
+# 复制前端源码
 COPY frontend/ ./
+
+# 品牌（下游发行版白牌化）。默认空 = 保持上游 ArcReel 品牌，构建行为与上游一致。
+# 值写进 .env.production 而不是 ENV，是因为 Vite 的 envPrefix 过滤只对 .env 文件
+# 与 process.env 二者都生效，写文件这条路径不依赖 Vite 版本间的差异。
+# ⚠️ 这里只改产品显示名；NOTICE §7(b) 要求的 "Powered by ArcReel" 署名句与仓库
+#    链接在 AboutSection.tsx 内逐字硬编码，不走品牌占位，任何发行版都不得移除。
+ARG VITE_BRAND_NAME=""
+ARG VITE_BRAND_TAGLINE=""
+ARG VITE_BRAND_DESCRIPTION=""
+# AGPL §13：本运行版本对应源码的公开地址，修改版必须传。空 = 指向上游仓库。
+ARG VITE_SOURCE_URL=""
+RUN : > .env.production && \
+    if [ -n "$VITE_BRAND_NAME" ]; then \
+      echo "VITE_BRAND_NAME=\"$VITE_BRAND_NAME\"" >> .env.production; fi && \
+    if [ -n "$VITE_BRAND_TAGLINE" ]; then \
+      echo "VITE_BRAND_TAGLINE=\"$VITE_BRAND_TAGLINE\"" >> .env.production; fi && \
+    if [ -n "$VITE_BRAND_DESCRIPTION" ]; then \
+      echo "VITE_BRAND_DESCRIPTION=\"$VITE_BRAND_DESCRIPTION\"" >> .env.production; fi && \
+    if [ -n "$VITE_SOURCE_URL" ]; then \
+      echo "VITE_SOURCE_URL=\"$VITE_SOURCE_URL\"" >> .env.production; fi && \
+    cat .env.production
+
 RUN pnpm build
 
 # ============================================================

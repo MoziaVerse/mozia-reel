@@ -206,7 +206,7 @@ export function VoiceSampleButton({
         disabled={disabled}
         title={audioConfigured ? t("voice_sample_action") : t("voice_sample_not_configured_hint")}
         aria-label={audioConfigured ? t("voice_sample_action") : t("voice_sample_not_configured_hint")}
-        className="focus-ring inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-[oklch(1_0_0_/_0.05)] disabled:cursor-not-allowed disabled:opacity-40"
+        className="focus-ring inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-[light-dark(oklch(0.2_0.02_260_/_0.05),oklch(1_0_0_/_0.05))] disabled:cursor-not-allowed disabled:opacity-40"
         style={{ color: "var(--color-text-3)" }}
       >
         <Mic className="h-3 w-3" aria-hidden="true" />
@@ -235,7 +235,7 @@ export function VoiceSampleButton({
           {!voicesLoading && !voicesConfigured ? (
             <p
               className="mt-4 rounded-lg px-3 py-2 text-[12.5px]"
-              style={{ background: "oklch(0.22 0.012 265 / 0.5)", color: "var(--color-text-3)" }}
+              style={{ background: "light-dark(oklch(0.95 0.008 260 / 0.5), oklch(0.2 0.025 260 / 0.5))", color: "var(--color-text-3)" }}
             >
               {t("voice_sample_not_configured_hint")}
             </p>
@@ -255,7 +255,7 @@ export function VoiceSampleButton({
                 disabled={voicesLoading || voices.length === 0 || generating || confirming}
                 className="focus-ring mt-1.5 w-full rounded-lg px-3 py-2 text-[13px] outline-none transition-[border-color,box-shadow] disabled:cursor-not-allowed disabled:opacity-60"
                 style={{
-                  background: "oklch(0.20 0.011 265 / 0.6)",
+                  background: "light-dark(oklch(0.97 0.004 260 / 0.6), oklch(0.18 0.02 260 / 0.6))",
                   border: "1px solid var(--color-hairline)",
                   color: "var(--color-text)",
                 }}
@@ -294,7 +294,7 @@ export function VoiceSampleButton({
                 disabled={generating || confirming}
                 className="focus-ring mt-1.5 w-full resize-none rounded-lg px-3 py-2 text-[13px] leading-[1.55] outline-none transition-[border-color,box-shadow] disabled:cursor-not-allowed disabled:opacity-60"
                 style={{
-                  background: "oklch(0.20 0.011 265 / 0.6)",
+                  background: "light-dark(oklch(0.97 0.004 260 / 0.6), oklch(0.18 0.02 260 / 0.6))",
                   border: "1px solid var(--color-hairline)",
                   color: "var(--color-text)",
                 }}
@@ -313,7 +313,7 @@ export function VoiceSampleButton({
                 <div
                   className="mt-3 flex items-center gap-2 rounded-lg px-2.5 py-1.5"
                   style={{
-                    background: "oklch(0.20 0.011 265 / 0.6)",
+                    background: "light-dark(oklch(0.97 0.004 260 / 0.6), oklch(0.18 0.02 260 / 0.6))",
                     border: "1px solid var(--color-hairline)",
                   }}
                 >
@@ -361,7 +361,7 @@ export function VoiceSampleButton({
               type="button"
               onClick={close}
               disabled={generating || confirming}
-              className="focus-ring rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors hover:bg-[oklch(1_0_0_/_0.05)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="focus-ring rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors hover:bg-[light-dark(oklch(0.2_0.02_260_/_0.05),oklch(1_0_0_/_0.05))] disabled:cursor-not-allowed disabled:opacity-50"
               style={{ color: "var(--color-text-2)" }}
             >
               {t("common:cancel")}
@@ -393,7 +393,7 @@ export function VoiceSampleButton({
               }
               className="focus-ring inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-transform disabled:cursor-not-allowed disabled:opacity-50"
               style={{
-                color: "oklch(0.14 0 0)",
+                color: "var(--color-accent-fg)",
                 background: "linear-gradient(135deg, var(--color-accent-2), var(--color-accent))",
                 boxShadow:
                   "inset 0 1px 0 oklch(1 0 0 / 0.35), 0 6px 18px -4px var(--color-accent-glow), 0 0 0 1px var(--color-accent-soft)",

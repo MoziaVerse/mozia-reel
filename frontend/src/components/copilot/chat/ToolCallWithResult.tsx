@@ -95,7 +95,7 @@ export function ToolCallWithResult({ block }: ToolCallWithResultProps) {
       }
     : {
         border: "1px solid var(--color-hairline-soft)",
-        background: "oklch(0.21 0.012 265 / 0.5)",
+        background: "light-dark(oklch(0.97 0.008 260 / 0.5), oklch(0.19 0.025 260 / 0.5))",
       };
 
   const labelColor = isError ? "var(--color-danger)" : "var(--color-warn)";
@@ -125,7 +125,7 @@ export function ToolCallWithResult({ block }: ToolCallWithResultProps) {
         aria-controls={detailsId}
         className="flex w-full items-center justify-between px-2.5 py-1.5 text-left transition-colors"
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = "oklch(1 0 0 / 0.04)";
+          e.currentTarget.style.background = "light-dark(oklch(0.2 0.02 260 / 0.04), oklch(1 0 0 / 0.04))";
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.background = "transparent";
@@ -170,7 +170,7 @@ export function ToolCallWithResult({ block }: ToolCallWithResultProps) {
           {/* Tool Input */}
           <div
             className="px-2.5 py-2"
-            style={{ background: "oklch(0.16 0.010 265 / 0.5)" }}
+            style={{ background: "light-dark(oklch(0.99 0.004 260 / 0.5), oklch(0.14 0.02 260 / 0.5))" }}
           >
             <div
               className="mb-1 text-[10px] uppercase tracking-wide"
@@ -196,7 +196,7 @@ export function ToolCallWithResult({ block }: ToolCallWithResultProps) {
                   : "1px solid var(--color-hairline-soft)",
                 background: isError
                   ? "oklch(0.70 0.18 25 / 0.08)"
-                  : "oklch(0.16 0.010 265 / 0.5)",
+                  : "light-dark(oklch(0.99 0.004 260 / 0.5), oklch(0.14 0.02 260 / 0.5))",
               }}
             >
               <div
@@ -242,7 +242,7 @@ function TodoWriteCompact({ block }: Readonly<{ block: ContentBlock }>) {
       className="my-1.5 min-w-0 overflow-hidden rounded-lg"
       style={{
         border: "1px solid var(--color-hairline-soft)",
-        background: "oklch(0.21 0.012 265 / 0.5)",
+        background: "light-dark(oklch(0.97 0.008 260 / 0.5), oklch(0.19 0.025 260 / 0.5))",
       }}
     >
       <div className="flex items-center justify-between px-2.5 py-1.5">

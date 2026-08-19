@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ExternalLink, Info, Loader2, Play, RefreshCcw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { API } from "@/api";
+import { SOURCE_URL } from "@/branding";
 import { StreamMarkdown } from "@/components/copilot/StreamMarkdown";
 import { CARD_STYLE, GHOST_BTN_LG_CLS } from "@/components/ui/darkroom-tokens";
 import { useOnboardingStore } from "@/stores/onboarding-store";
@@ -295,6 +296,18 @@ export function AboutSection() {
               className="break-all text-accent-2 transition-colors hover:text-accent"
             >
               https://github.com/ArcReel/ArcReel
+            </a>
+          </p>
+          {/* AGPL §13：本运行版本对应源码的获取入口 */}
+          <p>
+            {t("about_source_label")} —{" "}
+            <a
+              href={SOURCE_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="break-all text-accent-2 transition-colors hover:text-accent"
+            >
+              {SOURCE_URL}
             </a>
           </p>
         </div>

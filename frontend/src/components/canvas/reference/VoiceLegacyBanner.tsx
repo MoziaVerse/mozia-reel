@@ -108,7 +108,7 @@ export function VoiceLegacyBanner({
         type="button"
         onClick={onDismiss}
         aria-label={dismissLabel}
-        className="focus-ring grid h-5 w-5 shrink-0 place-items-center rounded text-[var(--color-text-3)] hover:bg-[oklch(1_0_0_/_0.06)]"
+        className="focus-ring grid h-5 w-5 shrink-0 place-items-center rounded text-[var(--color-text-3)] hover:bg-[light-dark(oklch(0.2_0.02_260_/_0.06),oklch(1_0_0_/_0.06))]"
       >
         <X className="h-3.5 w-3.5" aria-hidden="true" />
       </button>

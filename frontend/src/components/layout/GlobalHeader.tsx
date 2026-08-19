@@ -1,5 +1,6 @@
 import { startTransition, useState, useEffect, useRef } from "react";
 import { errMsg, voidPromise } from "@/utils/async";
+import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { useLocation } from "wouter";
 import { ChevronLeft, Activity, Settings, Bell, Download, Loader2, Package } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -202,7 +203,7 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
           gridTemplateColumns: "minmax(0, 256px) 1fr auto",
           gap: 14,
           background:
-            "linear-gradient(180deg, oklch(0.21 0.011 265 / 0.85), oklch(0.19 0.010 265 / 0.75))",
+            "linear-gradient(180deg, light-dark(oklch(0.97 0.008 260 / 0.85), oklch(0.19 0.025 260 / 0.85)), light-dark(oklch(0.995 0.004 260 / 0.75), oklch(0.17 0.02 260 / 0.75)))",
           backdropFilter: "blur(16px) saturate(1.1)",
           WebkitBackdropFilter: "blur(16px) saturate(1.1)",
           borderBottom: "1px solid var(--color-hairline)",
@@ -255,7 +256,7 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
               }}
               onMouseEnter={(e) => {
                 if (!notificationDrawerOpen)
-                  e.currentTarget.style.background = "oklch(0.28 0.012 265 / 0.6)";
+                  e.currentTarget.style.background = "light-dark(oklch(0.91 0.012 260 / 0.6), oklch(0.26 0.03 260 / 0.6))";
               }}
               onMouseLeave={(e) => {
                 if (!notificationDrawerOpen) e.currentTarget.style.background = "transparent";
@@ -269,7 +270,7 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
                   className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold"
                   style={{
                     background: "var(--color-warn)",
-                    color: "oklch(0.14 0 0)",
+                    color: "var(--color-accent-fg)",
                   }}
                 >
                   {unreadNotificationCount > 9 ? "9+" : unreadNotificationCount}
@@ -293,7 +294,7 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
               style={{
                 background: usageDrawerOpen
                   ? "var(--color-accent-dim)"
-                  : "oklch(0.22 0.011 265 / 0.5)",
+                  : "light-dark(oklch(0.95 0.008 260 / 0.5), oklch(0.2 0.025 260 / 0.5))",
                 border: "1px solid var(--color-hairline-soft)",
                 color: "var(--color-text-2)",
               }}
@@ -356,7 +357,7 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
               }}
               onMouseEnter={(e) => {
                 if (!taskHudOpen)
-                  e.currentTarget.style.background = "oklch(0.28 0.012 265 / 0.6)";
+                  e.currentTarget.style.background = "light-dark(oklch(0.91 0.012 260 / 0.6), oklch(0.26 0.03 260 / 0.6))";
               }}
               onMouseLeave={(e) => {
                 if (!taskHudOpen) e.currentTarget.style.background = "transparent";
@@ -371,7 +372,7 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
               {runningCount > 0 && (
                 <span
                   className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold"
-                  style={{ background: "var(--color-accent)", color: "oklch(0.14 0 0)" }}
+                  style={{ background: "var(--color-accent)", color: "var(--color-accent-fg)" }}
                 >
                   {runningCount}
                 </span>
@@ -399,10 +400,10 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
               className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors focus-ring disabled:cursor-not-allowed disabled:opacity-50"
               style={{
                 background:
-                  "linear-gradient(180deg, oklch(0.82 0.09 295), oklch(0.72 0.09 295))",
+                  "linear-gradient(180deg, light-dark(oklch(0.51 0.2 255), oklch(0.78 0.15 255)), light-dark(oklch(0.55 0.2 255), oklch(0.7 0.18 255)))",
                 color: "oklch(0.15 0 0)",
                 boxShadow:
-                  "inset 0 1px 0 oklch(1 0 0 / 0.3), 0 0 0 1px oklch(0.55 0.10 295 / 0.4), 0 4px 14px -6px var(--color-accent-glow)",
+                  "inset 0 1px 0 oklch(1 0 0 / 0.3), 0 0 0 1px light-dark(oklch(0.625 0.2 255 / 0.4), oklch(0.55 0.14 255 / 0.4)), 0 4px 14px -6px var(--color-accent-glow)",
               }}
               title={
                 demoMode
@@ -443,7 +444,7 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
             className="grid h-[30px] w-[30px] place-items-center rounded-md transition-colors focus-ring"
             style={{ color: "var(--color-text-3)" }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = "oklch(0.28 0.012 265 / 0.6)";
+              e.currentTarget.style.background = "light-dark(oklch(0.91 0.012 260 / 0.6), oklch(0.26 0.03 260 / 0.6))";
               e.currentTarget.style.color = "var(--color-text)";
             }}
             onMouseLeave={(e) => {
@@ -455,6 +456,8 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
           >
             <Package className="h-4 w-4" />
           </button>
+
+          <ThemeToggle compact />
 
           {/* Settings */}
           <button
@@ -470,7 +473,7 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
             className="relative grid h-[30px] w-[30px] place-items-center rounded-md transition-colors focus-ring"
             style={{ color: "var(--color-text-3)" }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = "oklch(0.28 0.012 265 / 0.6)";
+              e.currentTarget.style.background = "light-dark(oklch(0.91 0.012 260 / 0.6), oklch(0.26 0.03 260 / 0.6))";
               e.currentTarget.style.color = "var(--color-text)";
             }}
             onMouseLeave={(e) => {

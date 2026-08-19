@@ -95,7 +95,7 @@ export function ExportScopeDialog({
               className="grid h-7 w-7 place-items-center rounded-lg"
               style={{
                 background:
-                  "linear-gradient(135deg, var(--color-accent-dim), oklch(0.76 0.09 295 / 0.05))",
+                  "linear-gradient(135deg, var(--color-accent-dim), light-dark(oklch(0.55 0.2 255 / 0.05), oklch(0.7 0.18 255 / 0.05)))",
                 border: "1px solid var(--color-accent-soft)",
                 color: "var(--color-accent-2)",
                 boxShadow: "0 8px 18px -8px var(--color-accent-glow)",
@@ -204,7 +204,7 @@ export function ExportScopeDialog({
                   onChange={(e) => setSelectedEpisode(Number(e.target.value))}
                   className="focus-ring w-full rounded-md px-2.5 py-1.5 text-[13px] outline-none"
                   style={{
-                    background: "oklch(0.16 0.010 265 / 0.6)",
+                    background: "light-dark(oklch(0.99 0.004 260 / 0.6), oklch(0.14 0.02 260 / 0.6))",
                     border: "1px solid var(--color-hairline)",
                     color: "var(--color-text)",
                   }}
@@ -231,7 +231,7 @@ export function ExportScopeDialog({
                 onChange={(event) => setNarrationDelivery(event.target.value as PresentationVariant)}
                 className="focus-ring w-full rounded-md px-2.5 py-1.5 text-[13px] outline-none"
                 style={{
-                  background: "oklch(0.16 0.010 265 / 0.6)",
+                  background: "light-dark(oklch(0.99 0.004 260 / 0.6), oklch(0.14 0.02 260 / 0.6))",
                   border: "1px solid var(--color-hairline)",
                   color: "var(--color-text)",
                 }}
@@ -251,7 +251,7 @@ export function ExportScopeDialog({
                 onChange={(e) => setJianyingVersion(e.target.value)}
                 className="focus-ring w-full rounded-md px-2.5 py-1.5 text-[13px] outline-none"
                 style={{
-                  background: "oklch(0.16 0.010 265 / 0.6)",
+                  background: "light-dark(oklch(0.99 0.004 260 / 0.6), oklch(0.14 0.02 260 / 0.6))",
                   border: "1px solid var(--color-hairline)",
                   color: "var(--color-text)",
                 }}
@@ -274,7 +274,7 @@ export function ExportScopeDialog({
                 placeholder={t("dashboard:draft_path_placeholder")}
                 className="focus-ring w-full rounded-md px-2.5 py-1.5 text-[13px] outline-none"
                 style={{
-                  background: "oklch(0.16 0.010 265 / 0.6)",
+                  background: "light-dark(oklch(0.99 0.004 260 / 0.6), oklch(0.14 0.02 260 / 0.6))",
                   border: "1px solid var(--color-hairline)",
                   color: "var(--color-text)",
                   fontFamily: "var(--font-mono)",
@@ -352,14 +352,14 @@ function ScopeOption({
       className="focus-ring group flex items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors"
       style={{
         border: "1px solid var(--color-hairline)",
-        background: "oklch(0.20 0.011 265 / 0.4)",
+        background: "light-dark(oklch(0.97 0.004 260 / 0.4), oklch(0.18 0.02 260 / 0.4))",
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.background = palette.hoverBg;
         e.currentTarget.style.borderColor = palette.hoverBorder;
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.background = "oklch(0.20 0.011 265 / 0.4)";
+        e.currentTarget.style.background = "light-dark(oklch(0.97 0.004 260 / 0.4), oklch(0.18 0.02 260 / 0.4))";
         e.currentTarget.style.borderColor = "var(--color-hairline)";
       }}
     >
@@ -367,7 +367,7 @@ function ScopeOption({
         aria-hidden
         className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-md"
         style={{
-          background: "oklch(0.16 0.010 265 / 0.6)",
+          background: "light-dark(oklch(0.99 0.004 260 / 0.6), oklch(0.14 0.02 260 / 0.6))",
           border: `1px solid ${palette.ring}`,
           color: palette.color,
         }}

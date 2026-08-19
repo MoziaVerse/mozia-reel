@@ -32,7 +32,7 @@ import type { ApiKeyInfo, CreateApiKeyResponse } from "@/types";
 
 const MODAL_STYLE: CSSProperties = {
   background:
-    "linear-gradient(180deg, oklch(0.21 0.012 270 / 0.96), oklch(0.16 0.010 265 / 0.96))",
+    "linear-gradient(180deg, light-dark(oklch(0.97 0.008 260 / 0.96), oklch(0.19 0.025 260 / 0.96)), light-dark(oklch(0.99 0.004 260 / 0.96), oklch(0.14 0.02 260 / 0.96)))",
 };
 
 // ---------------------------------------------------------------------------
@@ -142,7 +142,7 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
       className="fixed inset-0 z-50 flex items-center justify-center px-4"
       style={{
         background:
-          "radial-gradient(800px 500px at 50% 30%, oklch(0.30 0.04 295 / 0.20), transparent 60%), oklch(0 0 0 / 0.62)",
+          "radial-gradient(800px 500px at 50% 30%, light-dark(oklch(0.88 0.016 262 / 0.20), oklch(0.3 0.04 262 / 0.20)), transparent 60%), oklch(0 0 0 / 0.62)",
         backdropFilter: "blur(8px)",
         WebkitBackdropFilter: "blur(8px)",
       }}

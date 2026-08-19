@@ -36,7 +36,7 @@ const STEPS = [
 ] as const;
 
 const STEP_BADGE_GRADIENT =
-  "linear-gradient(180deg, oklch(0.30 0.05 295 / 0.65), oklch(0.20 0.02 280 / 0.65))";
+  "linear-gradient(180deg, light-dark(oklch(0.88 0.02 262 / 0.65), oklch(0.3 0.05 262 / 0.65)), light-dark(oklch(0.97 0.004 260 / 0.65), oklch(0.18 0.02 260 / 0.65)))";
 
 const STEP_BADGE_ACTIVE_STYLE: CSSProperties = {
   background: STEP_BADGE_GRADIENT,
@@ -50,13 +50,13 @@ const STEP_BADGE_DONE_STYLE: CSSProperties = {
 };
 
 const STEP_BADGE_INACTIVE_STYLE: CSSProperties = {
-  background: "oklch(0.16 0.010 265 / 0.55)",
+  background: "light-dark(oklch(0.99 0.004 260 / 0.55), oklch(0.14 0.02 260 / 0.55))",
 };
 
 const STEP_CONNECTOR_DONE_STYLE: CSSProperties = {
   height: 1,
   background:
-    "linear-gradient(90deg, var(--color-accent), oklch(0.55 0.06 295 / 0.4))",
+    "linear-gradient(90deg, var(--color-accent), light-dark(oklch(0.625 0.2 255 / 0.4), oklch(0.55 0.114 255 / 0.4)))",
 };
 
 const STEP_CONNECTOR_INACTIVE_STYLE: CSSProperties = {
@@ -354,7 +354,7 @@ export function CreateProjectModal() {
       className="fixed inset-0 z-50 flex items-center justify-center px-4"
       style={{
         background:
-          "radial-gradient(900px 480px at 12% -10%, oklch(0.32 0.05 295 / 0.30), transparent 55%), radial-gradient(800px 460px at 100% 110%, oklch(0.26 0.04 260 / 0.28), transparent 55%), oklch(0 0 0 / 0.62)",
+          "radial-gradient(900px 480px at 12% -10%, light-dark(oklch(0.88 0.02 262 / 0.30), oklch(0.32 0.05 262 / 0.30)), transparent 55%), radial-gradient(800px 460px at 100% 110%, light-dark(oklch(0.91 0.016 260 / 0.28), oklch(0.26 0.04 260 / 0.28)), transparent 55%), oklch(0 0 0 / 0.62)",
         backdropFilter: "blur(12px) saturate(1.1)",
         WebkitBackdropFilter: "blur(12px) saturate(1.1)",
       }}
@@ -372,10 +372,12 @@ export function CreateProjectModal() {
         role="dialog"
         aria-modal="true"
         aria-labelledby="create-project-title"
-        className="relative w-full max-w-3xl overflow-hidden rounded-[14px] border border-hairline bg-bg-grad-a/95 shadow-[0_40px_100px_-30px_oklch(0_0_0_/_0.85)] backdrop-blur-md max-h-[92vh] flex flex-col"
+        className="relative w-full max-w-3xl overflow-hidden rounded-[14px] border border-hairline bg-bg-grad-a/95 shadow-[0_40px_100px_-30px_light-dark(oklch(0.2_0.03_260_/_0.28),oklch(0_0_0_/_0.85))] backdrop-blur-md max-h-[92vh] flex flex-col"
         style={{
+          // 深色沿用上亮下暗的渐变作纵深；浅色取 matrix 卡片的平色近白——
+          // 浅底上的同类渐变只会让整块显脏，分层交给边框与步骤带的底色。
           background:
-            "linear-gradient(180deg, oklch(0.20 0.012 270 / 0.95), oklch(0.16 0.010 265 / 0.95))",
+            "linear-gradient(180deg, light-dark(oklch(0.995 0.001 250), oklch(0.18 0.02 260 / 0.95)), light-dark(oklch(0.995 0.001 250), oklch(0.14 0.02 260 / 0.95)))",
         }}
       >
         {/* Hero header */}
@@ -425,7 +427,7 @@ export function CreateProjectModal() {
         </div>
 
         {/* Step indicator strip */}
-        <div className="shrink-0 border-y border-hairline-soft bg-[oklch(0.16_0.010_265_/_0.55)] px-6">
+        <div className="shrink-0 border-y border-hairline-soft bg-[light-dark(oklch(0.975_0.004_260),oklch(0.14_0.02_260_/_0.55))] px-6">
           <StepIndicator current={step} />
         </div>
 

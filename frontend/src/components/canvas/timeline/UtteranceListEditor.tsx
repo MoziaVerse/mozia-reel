@@ -243,7 +243,7 @@ export function UtteranceListEditor({ utterances, onChange, disabled = false }: 
           type="button"
           disabled={disabled}
           onClick={() => add("dialogue")}
-          className="focus-ring inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] text-text-3 transition-colors hover:bg-[oklch(1_0_0_/_0.05)] hover:text-text disabled:opacity-50"
+          className="focus-ring inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] text-text-3 transition-colors hover:bg-[light-dark(oklch(0.2_0.02_260_/_0.05),oklch(1_0_0_/_0.05))] hover:text-text disabled:opacity-50"
         >
           <Plus className="h-3 w-3" />
           {t("utterance_add_dialogue")}
@@ -252,7 +252,7 @@ export function UtteranceListEditor({ utterances, onChange, disabled = false }: 
           type="button"
           disabled={disabled}
           onClick={() => add("voiceover")}
-          className="focus-ring inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] text-text-3 transition-colors hover:bg-[oklch(1_0_0_/_0.05)] hover:text-text disabled:opacity-50"
+          className="focus-ring inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] text-text-3 transition-colors hover:bg-[light-dark(oklch(0.2_0.02_260_/_0.05),oklch(1_0_0_/_0.05))] hover:text-text disabled:opacity-50"
         >
           <Plus className="h-3 w-3" />
           {t("utterance_add_voiceover")}

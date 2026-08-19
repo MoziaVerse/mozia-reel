@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useConfigStatusStore } from "@/stores/config-status-store";
+import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { ONBOARDING_ANCHORS } from "@/onboarding/anchors";
 import { AgentConfigTab } from "./AgentConfigTab";
 import { ApiKeysTab } from "./ApiKeysTab";
@@ -131,7 +132,7 @@ export function SystemConfigPage() {
       style={
         {
           background:
-            "radial-gradient(900px 480px at 8% -10%, oklch(0.32 0.05 295 / 0.22), transparent 55%), radial-gradient(800px 460px at 100% 110%, oklch(0.26 0.04 260 / 0.22), transparent 55%), linear-gradient(180deg, var(--color-bg-grad-a), var(--color-bg-grad-b))",
+            "radial-gradient(900px 480px at 8% -10%, light-dark(oklch(0.88 0.02 262 / 0.22), oklch(0.32 0.05 262 / 0.22)), transparent 55%), radial-gradient(800px 460px at 100% 110%, light-dark(oklch(0.91 0.016 260 / 0.22), oklch(0.26 0.04 260 / 0.22)), transparent 55%), linear-gradient(180deg, var(--color-bg-grad-a), var(--color-bg-grad-b))",
         }
       }
     >
@@ -140,7 +141,7 @@ export function SystemConfigPage() {
         className="shrink-0 sticky top-0 z-30"
         style={{
           background:
-            "linear-gradient(180deg, oklch(0.20 0.011 265 / 0.55), oklch(0.15 0.010 265 / 0.45))",
+            "linear-gradient(180deg, light-dark(oklch(0.97 0.004 260 / 0.55), oklch(0.18 0.02 260 / 0.55)), light-dark(oklch(0.99 0.004 260 / 0.45), oklch(0.13 0.02 260 / 0.45)))",
           backdropFilter: "blur(28px) saturate(1.5)",
           WebkitBackdropFilter: "blur(28px) saturate(1.5)",
           borderBottom: "1px solid var(--color-hairline)",
@@ -178,6 +179,7 @@ export function SystemConfigPage() {
               </span>
             </h1>
           </div>
+          <ThemeToggle />
           <button
             type="button"
             onClick={cycleLang}
@@ -199,7 +201,7 @@ export function SystemConfigPage() {
         <nav
           aria-label={t("common:settings")}
           className="w-[220px] shrink-0 overflow-y-auto border-r border-hairline-soft px-3 py-5"
-          style={{ background: "oklch(0.16 0.010 265 / 0.45)" }}
+          style={{ background: "light-dark(oklch(0.99 0.004 260 / 0.45), oklch(0.14 0.02 260 / 0.45))" }}
         >
           {SECTION_GROUPS.map((group, gi) => (
             <div key={group.kicker} className={gi > 0 ? "mt-5" : undefined}>

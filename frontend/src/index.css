@@ -2,92 +2,237 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-@theme {
-    /* 工作台基础色 — oklch 系 */
-    --color-bg: oklch(0.168 0.009 265);
-    --color-bg-grad-a: oklch(0.182 0.011 270);
-    --color-bg-grad-b: oklch(0.148 0.009 260);
-    --color-surface-2: oklch(0.250 0.012 265);
+/* ────────────────────────────────────────────────────────────────────
+ * 主题色板 —— 对齐 Matrix 平台（matrix/src/app.css）。
+ *
+ * 结构与 matrix 同构：`@theme inline` 只做「语义名 → 变量」的引用，具体
+ * 色值放 `:root`（浅色）与 `.dark`（深色）两套，切换主题即换整套变量，
+ * 组件侧无需感知当前主题。
+ *
+ * 命名沿用本项目既有语义，与 matrix 的 shadcn 变量对应关系：
+ *   --color-bg          ← matrix --background
+ *   --color-bg-grad-a   ← matrix --card / --popover（面板层）
+ *   --color-surface-2   ← matrix --accent（悬停/次级层）
+ *   --color-hairline    ← matrix --border
+ *   --color-text        ← matrix --foreground
+ *   --color-text-3      ← matrix --muted-foreground
+ *   --color-accent      ← matrix --primary（注意：matrix 的 --accent 是
+ *                         悬停底色，不是强调色，两边同名不同义）
+ *
+ * ⚠️ 组件内散落的一次性色值（阴影、悬停底、渐变）用 CSS 的 light-dark()
+ *    就地给出两套值，不再新增语义变量——那些是视觉细节，不是语义层。
+ *    light-dark() 依赖 color-scheme，见本文件末尾 html/.dark 的声明。
+ * ──────────────────────────────────────────────────────────────────── */
+
+@theme inline {
+    /* 工作台基础色 */
+    --color-bg: var(--bg);
+    --color-bg-grad-a: var(--bg-grad-a);
+    --color-bg-grad-b: var(--bg-grad-b);
+    --color-surface-2: var(--surface-2);
 
     /* 描边 */
-    --color-hairline: oklch(0.40 0.012 265 / 0.35);
-    --color-hairline-strong: oklch(0.45 0.014 265 / 0.55);
-    --color-hairline-soft: oklch(0.40 0.012 265 / 0.18);
+    --color-hairline: var(--hairline);
+    --color-hairline-strong: var(--hairline-strong);
+    --color-hairline-soft: var(--hairline-soft);
 
     /* 文字四档 */
-    --color-text: oklch(0.975 0.004 265);
-    --color-text-2: oklch(0.820 0.008 265);
-    --color-text-3: oklch(0.640 0.010 265);
-    --color-text-4: oklch(0.490 0.010 265);
+    --color-text: var(--text);
+    --color-text-2: var(--text-2);
+    --color-text-3: var(--text-3);
+    --color-text-4: var(--text-4);
 
-    /* Accent — 紫色 */
-    --color-accent: oklch(0.76 0.09 295);
-    --color-accent-2: oklch(0.88 0.05 295);
-    --color-accent-soft: oklch(0.76 0.09 295 / 0.22);
-    --color-accent-dim: oklch(0.76 0.09 295 / 0.12);
-    --color-accent-glow: oklch(0.76 0.09 295 / 0.35);
+    /* Accent */
+    --color-accent: var(--accent);
+    --color-accent-2: var(--accent-2);
+    --color-accent-soft: var(--accent-soft);
+    --color-accent-dim: var(--accent-dim);
+    --color-accent-glow: var(--accent-glow);
+    --color-accent-fg: var(--accent-fg);
 
     /* 状态色 */
-    --color-good: oklch(0.78 0.10 155);
-    --color-warn: oklch(0.80 0.12 70);
-    --color-danger: oklch(0.70 0.18 25);
+    --color-good: var(--good);
+    --color-warn: var(--warn);
+    --color-danger: var(--danger);
 
-    /* 暖色调 — 警告 / stale / 暖系强调（琥珀） */
-    --color-warm: oklch(0.85 0.13 75);
-    --color-warm-bright: oklch(0.92 0.13 75);
-    --color-warm-fade: oklch(0.85 0.13 75 / 0.5);
-    --color-warm-soft: oklch(0.30 0.10 75 / 0.16);
-    --color-warm-tint: oklch(0.30 0.10 75 / 0.25);
-    --color-warm-tint-faint: oklch(0.30 0.10 75 / 0.05);
-    --color-warm-ring: oklch(0.45 0.13 75 / 0.40);
-    --color-warm-glow: oklch(0.45 0.13 75 / 0.45);
+    /* 暖色调 — 警告 / stale / 暖系强调 */
+    --color-warm: var(--warm);
+    --color-warm-bright: var(--warm-bright);
+    --color-warm-fade: var(--warm-fade);
+    --color-warm-soft: var(--warm-soft);
+    --color-warm-tint: var(--warm-tint);
+    --color-warm-tint-faint: var(--warm-tint-faint);
+    --color-warm-ring: var(--warm-ring);
+    --color-warm-glow: var(--warm-glow);
 
     /* 危险色（高亮变体） — 用于覆盖/删除等有损动作 CTA */
-    --color-danger-2: oklch(0.85 0.10 25);
-    --color-danger-bright: oklch(0.92 0.10 25);
-    --color-danger-soft: oklch(0.30 0.10 25 / 0.16);
-    --color-danger-ring: oklch(0.45 0.18 25 / 0.40);
-    --color-danger-glow: oklch(0.45 0.18 25 / 0.45);
+    --color-danger-2: var(--danger-2);
+    --color-danger-bright: var(--danger-bright);
+    --color-danger-soft: var(--danger-soft);
+    --color-danger-ring: var(--danger-ring);
+    --color-danger-glow: var(--danger-glow);
 
-    /* 字体 — 设计稿统一使用 Inter，display 仅在字号/字重上做区分 */
-    --font-sans: "Inter", "Noto Sans SC", system-ui, sans-serif;
-    --font-display: "Inter", "Noto Sans SC", system-ui, sans-serif;
+    /* 字体 — Sora 为 matrix 的品牌字，中文回落 Noto Sans SC */
+    --font-sans: "Sora", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
+    --font-display: "Sora", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
     --font-mono: "JetBrains Mono", "Fira Code", "Noto Sans Mono", ui-monospace, monospace;
-    /* 衬线 — 仅项目大厅 (Darkroom) 用于编辑式电影感大标题 */
-    --font-editorial: "Instrument Serif", "Songti SC", "Noto Serif SC", Georgia, serif;
+    /* editorial — 大标题。matrix 用 Sora 重字重而非衬线，此处同口径 */
+    --font-editorial: "Sora", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
+
+    /* 圆角 — matrix --radius: 0.625rem 及其派生档 */
+    --radius-sm: 0.375rem;
+    --radius-md: 0.5rem;
+    --radius-lg: 0.625rem;
+    --radius-xl: 0.875rem;
 
     /* 阴影 */
-    --shadow-glow: 0 0 0 1px oklch(0.76 0.09 295 / 0.28), 0 18px 40px oklch(0 0 0 / 0.45);
+    --shadow-glow: var(--glow-ring);
 
     /* ---- Legacy aliases — 旧组件继续可用，逐步迁移 ---- */
-    --color-ink-950: oklch(0.148 0.009 260);
-    --color-ink-900: oklch(0.168 0.009 265);
-    --color-ink-850: oklch(0.182 0.011 270);
-    --color-ink-800: oklch(0.250 0.012 265);
-    --color-ink-700: oklch(0.310 0.013 265);
-    --color-neon-500: oklch(0.76 0.09 295);
-    --color-neon-400: oklch(0.82 0.07 295);
-    --color-neon-300: oklch(0.88 0.05 295);
-    --color-amberx-500: oklch(0.78 0.13 70);
-    --color-amberx-400: oklch(0.84 0.10 70);
-    --color-amberx-300: oklch(0.90 0.08 75);
+    --color-ink-950: var(--ink-950);
+    --color-ink-900: var(--ink-900);
+    --color-ink-850: var(--ink-850);
+    --color-ink-800: var(--ink-800);
+    --color-ink-700: var(--ink-700);
+    --color-neon-500: var(--accent);
+    --color-neon-400: var(--neon-400);
+    --color-neon-300: var(--accent-2);
+    --color-amberx-500: var(--warm);
+    --color-amberx-400: var(--amberx-400);
+    --color-amberx-300: var(--warm-bright);
 
     /* studio-* 旧别名映射 */
-    --color-studio-bg: var(--color-bg);
-    --color-studio-panel: var(--color-bg-grad-a);
-    --color-studio-border: var(--color-hairline);
-    --color-accent-start: var(--color-accent);
-    --color-accent-end: var(--color-accent-2);
+    --color-studio-bg: var(--bg);
+    --color-studio-panel: var(--bg-grad-a);
+    --color-studio-border: var(--hairline);
+    --color-accent-start: var(--accent);
+    --color-accent-end: var(--accent-2);
+}
+
+/* ── 浅色（matrix :root）──────────────────────────────────────────── */
+:root {
+    --bg: oklch(0.985 0.002 250);
+    --bg-grad-a: oklch(0.995 0.001 250);
+    --bg-grad-b: oklch(0.97 0.004 255);
+    --surface-2: oklch(0.93 0.025 255);
+
+    --hairline: oklch(0.9 0.01 255);
+    --hairline-strong: oklch(0.84 0.014 255);
+    --hairline-soft: oklch(0.94 0.008 255);
+
+    --text: oklch(0.13 0.028 260);
+    --text-2: oklch(0.30 0.025 260);
+    --text-3: oklch(0.50 0.02 260);
+    --text-4: oklch(0.62 0.015 258);
+
+    --accent: oklch(0.55 0.20 255);
+    --accent-2: oklch(0.62 0.17 255);
+    --accent-soft: oklch(0.55 0.20 255 / 0.22);
+    --accent-dim: oklch(0.55 0.20 255 / 0.10);
+    --accent-glow: oklch(0.55 0.20 255 / 0.25);
+    --accent-fg: oklch(0.99 0 0);
+
+    /* ⚠️ 浅色下「更强调」= 更深，与深色下的方向相反：*-bright 变体在这里
+     * 取比基色更低的亮度。数值按近白底 4.5:1 对比度下限选取，暖色尤其容易
+     * 不足——琥珀色在 L≥0.62 时在白底上只有约 3:1。 */
+    --good: oklch(0.52 0.15 175);
+    --warn: oklch(0.55 0.14 65);
+    --danger: oklch(0.577 0.245 27.325);
+
+    --warm: oklch(0.55 0.14 65);
+    --warm-bright: oklch(0.43 0.12 65);
+    --warm-fade: oklch(0.55 0.14 65 / 0.5);
+    --warm-soft: oklch(0.85 0.07 65 / 0.45);
+    --warm-tint: oklch(0.90 0.06 65 / 0.6);
+    --warm-tint-faint: oklch(0.90 0.06 65 / 0.25);
+    --warm-ring: oklch(0.75 0.11 65 / 0.55);
+    --warm-glow: oklch(0.70 0.12 65 / 0.35);
+
+    --danger-2: oklch(0.55 0.20 25);
+    --danger-bright: oklch(0.48 0.20 25);
+    --danger-soft: oklch(0.88 0.07 25 / 0.5);
+    --danger-ring: oklch(0.75 0.15 25 / 0.5);
+    --danger-glow: oklch(0.65 0.18 25 / 0.3);
+
+    --glow-ring: 0 0 0 1px oklch(0.55 0.20 255 / 0.22), 0 18px 40px oklch(0.2 0.03 260 / 0.14);
+
+    --ink-950: oklch(0.97 0.004 255);
+    --ink-900: oklch(0.985 0.002 250);
+    --ink-850: oklch(0.995 0.001 250);
+    --ink-800: oklch(0.95 0.01 255);
+    --ink-700: oklch(0.91 0.014 255);
+    --neon-400: oklch(0.58 0.19 255);
+    --amberx-400: oklch(0.56 0.135 65);
+}
+
+/* ── 深色（matrix .dark）─────────────────────────────────────────── */
+.dark {
+    --bg: oklch(0.11 0.02 260);
+    --bg-grad-a: oklch(0.16 0.02 260);
+    --bg-grad-b: oklch(0.13 0.02 260);
+    --surface-2: oklch(0.22 0.03 260);
+
+    --hairline: oklch(0.98 0.01 255 / 0.12);
+    --hairline-strong: oklch(0.98 0.01 255 / 0.22);
+    --hairline-soft: oklch(0.98 0.01 255 / 0.07);
+
+    --text: oklch(0.95 0.01 250);
+    --text-2: oklch(0.82 0.015 255);
+    --text-3: oklch(0.65 0.02 255);
+    --text-4: oklch(0.52 0.02 258);
+
+    --accent: oklch(0.70 0.18 255);
+    --accent-2: oklch(0.80 0.13 255);
+    --accent-soft: oklch(0.70 0.18 255 / 0.22);
+    --accent-dim: oklch(0.70 0.18 255 / 0.12);
+    --accent-glow: oklch(0.70 0.18 255 / 0.35);
+    --accent-fg: oklch(0.10 0.02 260);
+
+    --good: oklch(0.65 0.17 175);
+    --warn: oklch(0.75 0.15 65);
+    --danger: oklch(0.704 0.191 22.216);
+
+    --warm: oklch(0.75 0.15 65);
+    --warm-bright: oklch(0.86 0.13 65);
+    --warm-fade: oklch(0.75 0.15 65 / 0.5);
+    --warm-soft: oklch(0.30 0.09 65 / 0.16);
+    --warm-tint: oklch(0.30 0.09 65 / 0.25);
+    --warm-tint-faint: oklch(0.30 0.09 65 / 0.05);
+    --warm-ring: oklch(0.45 0.12 65 / 0.40);
+    --warm-glow: oklch(0.45 0.12 65 / 0.45);
+
+    --danger-2: oklch(0.75 0.18 25);
+    --danger-bright: oklch(0.86 0.13 25);
+    --danger-soft: oklch(0.30 0.10 25 / 0.16);
+    --danger-ring: oklch(0.45 0.18 25 / 0.40);
+    --danger-glow: oklch(0.45 0.18 25 / 0.45);
+
+    --glow-ring: 0 0 0 1px oklch(0.70 0.18 255 / 0.28), 0 18px 40px oklch(0 0 0 / 0.45);
+
+    --ink-950: oklch(0.11 0.02 260);
+    --ink-900: oklch(0.13 0.02 260);
+    --ink-850: oklch(0.16 0.02 260);
+    --ink-800: oklch(0.20 0.025 260);
+    --ink-700: oklch(0.26 0.03 260);
+    --neon-400: oklch(0.75 0.16 255);
+    --amberx-400: oklch(0.81 0.14 65);
 }
 
 /* 全局 body 背景 — radial+linear 复合梯度 */
-html { color-scheme: dark; }
+/* color-scheme 同时是 light-dark() 的判定依据与原生控件（滚动条、表单、
+ * 日期选择器）的配色依据，必须与 .dark 类保持同步。 */
+html { color-scheme: light; }
+html.dark { color-scheme: dark; }
 
 body {
+    /* matrix 的 --gradient-hero-* 同款：底色近纯，两角各一层极淡的冷光。
+     * 比原先的紫色光晕收敛，与 matrix 扁平克制的观感一致。 */
     background:
-        radial-gradient(1000px 500px at 8% -10%, oklch(0.32 0.05 295 / 0.28), transparent 55%),
-        radial-gradient(900px 500px at 98% 110%, oklch(0.26 0.04 260 / 0.25), transparent 55%),
-        linear-gradient(180deg, var(--color-bg-grad-a), var(--color-bg-grad-b));
+        radial-gradient(1100px 520px at 8% -10%,
+            light-dark(oklch(0.96 0.03 255 / 0.9), oklch(0.13 0.03 260 / 0.9)), transparent 60%),
+        radial-gradient(900px 500px at 98% 110%,
+            light-dark(oklch(0.96 0.02 290 / 0.75), oklch(0.13 0.025 290 / 0.75)), transparent 60%),
+        var(--color-bg);
     background-attachment: fixed;
     color: var(--color-text);
     font-family: var(--font-sans);
@@ -121,13 +266,13 @@ body {
 /* 滚动条 */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb {
-    background: oklch(0.42 0.010 265 / 0.35);
+    background: light-dark(oklch(0.2 0.02 260 / 0.18), oklch(0.98 0.01 255 / 0.14));
     border-radius: 10px;
     border: 2px solid transparent;
     background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-    background: oklch(0.55 0.012 265 / 0.55);
+    background: light-dark(oklch(0.2 0.02 260 / 0.32), oklch(0.98 0.01 255 / 0.26));
     border: 2px solid transparent;
     background-clip: padding-box;
 }
@@ -160,13 +305,13 @@ body {
 
 /* 玻璃面板 — GlassModal / GlassPopover 的内容容器样式 */
 .arc-glass-panel {
-    background: linear-gradient(180deg, oklch(0.21 0.012 265 / 0.96), oklch(0.18 0.010 265 / 0.96));
+    /* matrix 的 popover 是实色卡片 + 细边，不做玻璃拟态。这里取其色值，
+     * 只留一层很轻的 blur 让底部内容不至于生硬透出。 */
+    background: light-dark(oklch(0.995 0.001 250 / 0.97), oklch(0.16 0.02 260 / 0.97));
     border: 1px solid var(--color-hairline);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-    box-shadow:
-        0 24px 60px -12px oklch(0 0 0 / 0.6),
-        inset 0 1px 0 oklch(1 0 0 / 0.05);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    box-shadow: 0 16px 48px -16px light-dark(oklch(0.2 0.03 260 / 0.18), oklch(0 0 0 / 0.55));
 }
 
 /* 顶部 hairline 渐变线（accent 默认 / warm 用 data-tone="warm"） */
@@ -189,19 +334,19 @@ body {
 }
 .arc-close-btn:hover {
     color: var(--color-text);
-    background: oklch(1 0 0 / 0.05);
+    background: light-dark(oklch(0.2 0.02 260 / 0.06), oklch(1 0 0 / 0.05));
 }
 
 /* 玻璃次按钮（Cancel / 普通操作） */
 .arc-btn-secondary {
     color: var(--color-text-3);
     border: 1px solid var(--color-hairline);
-    background: oklch(0.22 0.011 265 / 0.5);
+    background: light-dark(oklch(0.95 0.01 255 / 0.7), oklch(0.20 0.025 260 / 0.6));
     transition: color 150ms, background 150ms, border-color 150ms;
 }
 .arc-btn-secondary:hover:not(:disabled) {
     color: var(--color-text);
-    background: oklch(0.26 0.013 265 / 0.7);
+    background: light-dark(oklch(0.91 0.014 255 / 0.9), oklch(0.24 0.03 260 / 0.85));
     border-color: var(--color-hairline-strong);
 }
 .arc-btn-secondary:disabled {
@@ -211,7 +356,7 @@ body {
 
 /* 主按钮 CTA — accent 默认，warm/danger 用 data-tone */
 .arc-btn-primary {
-    color: oklch(0.14 0 0);
+    color: var(--color-accent-fg);
     background: linear-gradient(135deg, var(--color-accent-2), var(--color-accent));
     box-shadow:
         inset 0 1px 0 oklch(1 0 0 / 0.35),

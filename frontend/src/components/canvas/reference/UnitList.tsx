@@ -36,7 +36,7 @@ export function UnitList({ units, selectedId, onSelect, onAdd, dirtyMap, statusM
   }, [units, query]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden border-r border-[var(--color-hairline)] bg-[linear-gradient(180deg,oklch(0.19_0.011_265_/_0.5),oklch(0.17_0.010_265_/_0.35))]">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden border-r border-[var(--color-hairline)] bg-[linear-gradient(180deg,light-dark(oklch(0.97_0.004_260_/_0.5),oklch(0.19_0.011_265_/_0.5)),light-dark(oklch(0.995_0.004_260_/_0.35),oklch(0.17_0.010_265_/_0.35)))]">
       <div className="flex items-center gap-2 px-3 pt-3 pb-2">
         <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-4)]">
           {t("reference_unit_list_title")}
@@ -48,7 +48,7 @@ export function UnitList({ units, selectedId, onSelect, onAdd, dirtyMap, statusM
         <button
           type="button"
           onClick={onAdd}
-          className="focus-ring inline-flex items-center gap-1 rounded border border-[var(--color-hairline-soft)] bg-[oklch(0.24_0.012_265_/_0.5)] px-2 py-0.5 text-[11px] text-[var(--color-text-3)] hover:text-[var(--color-text)]"
+          className="focus-ring inline-flex items-center gap-1 rounded border border-[var(--color-hairline-soft)] bg-[light-dark(oklch(0.91_0.006_260_/_0.5),oklch(0.24_0.012_265_/_0.5))] px-2 py-0.5 text-[11px] text-[var(--color-text-3)] hover:text-[var(--color-text)]"
         >
           <Plus className="h-3 w-3" aria-hidden="true" />
           {t("reference_unit_new")}
@@ -56,7 +56,7 @@ export function UnitList({ units, selectedId, onSelect, onAdd, dirtyMap, statusM
       </div>
 
       <div className="px-3 pb-2">
-        <label className="flex items-center gap-1.5 rounded-md border border-[var(--color-hairline-soft)] bg-[oklch(0.20_0.011_265_/_0.55)] px-2 py-1.5">
+        <label className="flex items-center gap-1.5 rounded-md border border-[var(--color-hairline-soft)] bg-[light-dark(oklch(0.95_0.004_260_/_0.55),oklch(0.20_0.011_265_/_0.55))] px-2 py-1.5">
           <Search className="h-3 w-3 text-[var(--color-text-4)]" aria-hidden="true" />
           <input
             type="search"
@@ -104,8 +104,8 @@ export function UnitList({ units, selectedId, onSelect, onAdd, dirtyMap, statusM
                 }}
                 className={`focus-ring relative mb-1 cursor-pointer rounded-lg p-2.5 text-sm transition-colors ${
                   selected
-                    ? "border border-[var(--color-accent-soft)] bg-[linear-gradient(180deg,oklch(0.26_0.018_290_/_0.5),oklch(0.22_0.015_280_/_0.35))]"
-                    : "border border-transparent hover:bg-[oklch(0.22_0.011_265_/_0.4)]"
+                    ? "border border-[var(--color-accent-soft)] bg-[linear-gradient(180deg,light-dark(oklch(0.91_0.008_260_/_0.5),oklch(0.26_0.018_290_/_0.5)),light-dark(oklch(0.93_0.008_260_/_0.35),oklch(0.22_0.015_280_/_0.35)))]"
+                    : "border border-transparent hover:bg-[light-dark(oklch(0.93_0.004_260_/_0.4),oklch(0.22_0.011_265_/_0.4))]"
                 }`}
               >
                 {selected && (
@@ -118,8 +118,8 @@ export function UnitList({ units, selectedId, onSelect, onAdd, dirtyMap, statusM
                   <span
                     className={`rounded px-1.5 py-0.5 font-mono text-[11px] font-bold tracking-wider ${
                       selected
-                        ? "text-[oklch(0.14_0_0)] [background:linear-gradient(180deg,var(--color-accent-2),var(--color-accent))]"
-                        : "bg-[oklch(0.22_0.011_265_/_0.6)] text-[var(--color-text-3)]"
+                        ? "text-[var(--color-accent-fg)] [background:linear-gradient(180deg,var(--color-accent-2),var(--color-accent))]"
+                        : "bg-[light-dark(oklch(0.93_0.004_260_/_0.6),oklch(0.22_0.011_265_/_0.6))] text-[var(--color-text-3)]"
                     }`}
                     translate="no"
                   >

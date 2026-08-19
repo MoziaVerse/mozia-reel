@@ -257,7 +257,7 @@ function MessageEditor({
                 onClick={() => removeImage(id)}
                 className="focus-ring absolute -right-1 -top-1 grid h-4 w-4 place-items-center rounded-full transition-colors hover:bg-[var(--color-danger)] disabled:cursor-not-allowed disabled:opacity-50"
                 style={{
-                  background: "oklch(0.14 0.008 265)",
+                  background: "light-dark(oklch(0.985 0.004 260), oklch(0.12 0.02 260))",
                   color: "var(--color-text-2)",
                   border: "1px solid var(--color-hairline)",
                 }}
@@ -330,7 +330,7 @@ function MessageEditor({
         }}
         className="focus-ring w-full resize-none rounded-md px-2 py-1.5 text-[12.5px] leading-[1.55] disabled:opacity-60"
         style={{
-          background: "oklch(0.17 0.01 260 / 0.6)",
+          background: "light-dark(oklch(0.995 0.004 260 / 0.6), oklch(0.15 0.02 260 / 0.6))",
           border: "1px solid var(--color-hairline-soft)",
           color: "var(--color-text)",
         }}

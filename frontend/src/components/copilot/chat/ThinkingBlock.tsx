@@ -53,7 +53,7 @@ export function ThinkingBlock({ thinking, streaming }: ThinkingBlockProps) {
         aria-label={t("thinking_process_label")}
         className="flex w-full min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors"
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = "oklch(1 0 0 / 0.04)";
+          e.currentTarget.style.background = "light-dark(oklch(0.2 0.02 260 / 0.04), oklch(1 0 0 / 0.04))";
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.background = "transparent";

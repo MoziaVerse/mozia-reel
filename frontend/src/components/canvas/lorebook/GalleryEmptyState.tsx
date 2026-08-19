@@ -21,7 +21,7 @@ export function GalleryEmptyState({ icon, label, hint, onClick }: Props) {
       style={{
         border: "1px dashed var(--color-hairline)",
         background:
-          "radial-gradient(600px 280px at 50% -10%, var(--color-accent-dim), transparent 60%), oklch(0.18 0.010 265 / 0.35)",
+          "radial-gradient(600px 280px at 50% -10%, var(--color-accent-dim), transparent 60%), light-dark(oklch(0.995 0.004 260 / 0.35), oklch(0.16 0.02 260 / 0.35))",
       }}
       onMouseEnter={
         onClick
@@ -54,7 +54,7 @@ export function GalleryEmptyState({ icon, label, hint, onClick }: Props) {
           className="grid h-14 w-14 place-items-center rounded-2xl"
           style={{
             background:
-              "linear-gradient(135deg, var(--color-accent-dim), oklch(0.76 0.09 295 / 0.04))",
+              "linear-gradient(135deg, var(--color-accent-dim), light-dark(oklch(0.55 0.2 255 / 0.04), oklch(0.7 0.18 255 / 0.04)))",
             border: "1px solid var(--color-accent-soft)",
             color: "var(--color-accent-2)",
             boxShadow: "0 12px 30px -10px var(--color-accent-glow)",
@@ -80,7 +80,7 @@ export function GalleryEmptyState({ icon, label, hint, onClick }: Props) {
           <span
             className="mt-1 inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-[11.5px] font-medium transition-transform group-hover:translate-y-[-1px]"
             style={{
-              color: "oklch(0.14 0 0)",
+              color: "var(--color-accent-fg)",
               background:
                 "linear-gradient(135deg, var(--color-accent-2), var(--color-accent))",
               boxShadow:

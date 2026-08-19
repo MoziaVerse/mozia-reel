@@ -20,9 +20,9 @@ interface EpisodeCardProps {
 const STATUS_COLOR: Record<string, string> = {
   completed: "oklch(0.74 0.08 155)",
   in_production: "var(--color-accent)",
-  scripted: "oklch(0.60 0.02 250)",
-  draft: "oklch(0.46 0.01 250)",
-  missing: "oklch(0.46 0.01 250)",
+  scripted: "oklch(0.58 0.03 260)",
+  draft: "oklch(0.44 0.03 260)",
+  missing: "oklch(0.44 0.03 260)",
 };
 
 const STATUS_LABEL_KEY: Record<string, string> = {
@@ -89,7 +89,7 @@ export function EpisodeCard({
         gridTemplateColumns: "auto 1fr auto",
         marginBottom: 3,
         background: active
-          ? "linear-gradient(180deg, oklch(0.26 0.018 290 / 0.55), oklch(0.22 0.015 280 / 0.4))"
+          ? "linear-gradient(180deg, light-dark(oklch(0.91 0.012 260 / 0.55), oklch(0.24 0.03 260 / 0.55)), light-dark(oklch(0.95 0.008 260 / 0.4), oklch(0.2 0.025 260 / 0.4)))"
           : "transparent",
         border: active ? "1px solid var(--color-accent-soft)" : "1px solid transparent",
         boxShadow: active
@@ -97,7 +97,7 @@ export function EpisodeCard({
           : "none",
       }}
       onMouseEnter={(e) => {
-        if (!active) e.currentTarget.style.background = "oklch(0.24 0.012 265 / 0.4)";
+        if (!active) e.currentTarget.style.background = "light-dark(oklch(0.93 0.008 260 / 0.4), oklch(0.22 0.025 260 / 0.4))";
       }}
       onMouseLeave={(e) => {
         if (!active) e.currentTarget.style.background = "transparent";
@@ -107,9 +107,9 @@ export function EpisodeCard({
         className="num grid h-[34px] w-[34px] shrink-0 place-items-center rounded-md text-[11px] font-bold leading-none"
         style={{
           background: active
-            ? "linear-gradient(135deg, var(--color-accent) 0%, oklch(0.45 0.12 285) 100%)"
-            : "linear-gradient(180deg, oklch(0.28 0.013 265), oklch(0.24 0.012 265))",
-          color: active ? "oklch(0.14 0 0)" : "var(--color-text-3)",
+            ? "linear-gradient(135deg, var(--color-accent) 0%, light-dark(oklch(0.675 0.2 255), oklch(0.45 0.18 255)) 100%)"
+            : "linear-gradient(180deg, light-dark(oklch(0.91 0.012 260), oklch(0.26 0.03 260)), light-dark(oklch(0.93 0.008 260), oklch(0.22 0.025 260)))",
+          color: active ? "var(--color-accent-fg)" : "var(--color-text-3)",
           boxShadow: active
             ? "inset 0 1px 0 oklch(1 0 0 / 0.25), 0 0 0 1px oklch(1 0 0 / 0.12), 0 2px 6px -2px var(--color-accent-glow)"
             : "inset 0 1px 0 oklch(1 0 0 / 0.04), inset 0 0 0 1px var(--color-hairline-soft)",
@@ -180,7 +180,7 @@ export function EpisodeCard({
         {showProgress && (
           <div
             className="mt-[5px] h-[2px] overflow-hidden rounded-[1px]"
-            style={{ background: "oklch(0.22 0.010 265)" }}
+            style={{ background: "light-dark(oklch(0.95 0.008 260), oklch(0.2 0.025 260))" }}
           >
             <div
               className="h-full"

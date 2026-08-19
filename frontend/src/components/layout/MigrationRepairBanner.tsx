@@ -54,7 +54,7 @@ export function MigrationRepairBanner() {
       <button
         type="button"
         onClick={handleRetry}
-        className="focus-ring shrink-0 rounded border px-2.5 py-1 text-[12px] text-[var(--color-text)] hover:bg-[oklch(1_0_0_/_0.06)]"
+        className="focus-ring shrink-0 rounded border px-2.5 py-1 text-[12px] text-[var(--color-text)] hover:bg-[light-dark(oklch(0.2_0.02_260_/_0.06),oklch(1_0_0_/_0.06))]"
         style={{ borderColor: "var(--color-warm-ring)" }}
       >
         {t("migration_repair_action")}

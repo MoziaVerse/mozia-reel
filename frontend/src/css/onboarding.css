@@ -14,7 +14,7 @@
 
 .driver-popover.arc-tour {
     /* 与 .arc-glass-panel 同源 */
-    background: linear-gradient(180deg, oklch(0.21 0.012 265 / 0.97), oklch(0.18 0.010 265 / 0.97));
+    background: linear-gradient(180deg, light-dark(oklch(0.97 0.008 260 / 0.97), oklch(0.18 0.025 260 / 0.97)), light-dark(oklch(0.995 0.004 260 / 0.97), oklch(0.15 0.02 260 / 0.97)));
     border: 1px solid var(--color-hairline);
     border-radius: 16px;
     backdrop-filter: blur(14px);
@@ -154,14 +154,14 @@
 .driver-popover.arc-tour .arc-tour-skip-btn {
     color: var(--color-text-3);
     border: 1px solid var(--color-hairline);
-    background: oklch(0.22 0.011 265 / 0.5);
+    background: light-dark(oklch(0.95 0.008 260 / 0.5), oklch(0.20 0.025 260 / 0.5));
     transition: color 150ms, background 150ms, border-color 150ms;
 }
 
 .driver-popover.arc-tour .driver-popover-prev-btn:hover,
 .driver-popover.arc-tour .arc-tour-skip-btn:hover {
     color: var(--color-text);
-    background: oklch(0.26 0.013 265 / 0.7);
+    background: light-dark(oklch(0.91 0.012 260 / 0.7), oklch(0.24 0.03 260 / 0.7));
     border-color: var(--color-hairline-strong);
 }
 
@@ -175,7 +175,7 @@
 /* 主按钮：继续 / 完成 —— 与 .arc-btn-primary 一致 */
 .driver-popover.arc-tour .driver-popover-next-btn,
 .driver-popover.arc-tour .driver-popover-done-btn {
-    color: oklch(0.14 0 0);
+    color: var(--color-accent-fg);
     border: none;
     font-weight: 600;
     background: linear-gradient(135deg, var(--color-accent-2), var(--color-accent));

@@ -16,7 +16,7 @@ const CONFIG: Record<ShotStatus, { color: string; bg: string; labelKey: string }
   },
   pending: {
     color: "var(--color-text-4)",
-    bg: "oklch(0.30 0.01 250 / 0.4)",
+    bg: "light-dark(oklch(0.88 0.012 260 / 0.4), oklch(0.28 0.03 260 / 0.4))",
     labelKey: "shot_status_pending",
   },
 };

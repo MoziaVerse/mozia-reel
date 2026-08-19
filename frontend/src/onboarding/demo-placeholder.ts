@@ -62,7 +62,7 @@ export function demoPlaceholder(seed: string, motif: DemoPlaceholderMotif): stri
     '<radialGradient id="g" cx="32%" cy="26%" r="92%">' +
     `<stop offset="0%" stop-color="oklch(0.46 0.11 ${hue})"/>` +
     `<stop offset="52%" stop-color="oklch(0.27 0.06 ${hue2})"/>` +
-    '<stop offset="100%" stop-color="oklch(0.15 0.02 265)"/>' +
+    '<stop offset="100%" stop-color="light-dark(oklch(0.99 0.004 260), oklch(0.13 0.02 260))"/>' +
     "</radialGradient>" +
     "</defs>" +
     '<rect width="100" height="100" fill="url(#g)"/>' +

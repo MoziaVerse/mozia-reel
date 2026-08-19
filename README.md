@@ -44,6 +44,16 @@
   <img src="docs/assets/hero-screenshot.png" alt="ArcReel 工作台" width="900">
 </p>
 
+> **关于本仓库 / About this fork**
+>
+> 这是 **MoziaReel** —— ArcReel 的修改版本，由第三方独立分发，**不是** ArcReel
+> 官方版本。许可证与上游一致（AGPL-3.0）。所做修改按 AGPL §7(c) 逐项列于
+> [MODIFICATIONS.md](MODIFICATIONS.md)；`frontend/public/` 下的 logo 与图标
+> 已替换为本发行版的标识，README 其余内容沿用上游。
+>
+> This is **MoziaReel**, a modified version of ArcReel distributed independently.
+> It is **not** an official ArcReel release. See [MODIFICATIONS.md](MODIFICATIONS.md).
+
 ## ArcReel 是什么
 
 ArcReel 是面向 AI 漫剧与小说改编、说书与旁白短视频、广告与带货短片的开源自托管工作台。它把内容分析、资产管理、分镜、媒体生成、费用追踪和导出组织成一条可审核、可中断恢复的生产流水线。

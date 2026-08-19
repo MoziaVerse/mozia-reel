@@ -106,7 +106,7 @@ export function EditableEpisodeTitle({
           disabled={!canSave}
           title={t("common:save")}
           aria-label={t("common:save")}
-          className="focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-[oklch(1_0_0_/_0.06)] disabled:opacity-40"
+          className="focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-[light-dark(oklch(0.2_0.02_260_/_0.06),oklch(1_0_0_/_0.06))] disabled:opacity-40"
           style={{ color: "var(--color-accent-2)" }}
         >
           <Check className="h-4 w-4" />
@@ -117,7 +117,7 @@ export function EditableEpisodeTitle({
           disabled={saving}
           title={t("common:cancel")}
           aria-label={t("common:cancel")}
-          className="focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-[oklch(1_0_0_/_0.06)] disabled:opacity-40"
+          className="focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-[light-dark(oklch(0.2_0.02_260_/_0.06),oklch(1_0_0_/_0.06))] disabled:opacity-40"
           style={{ color: "var(--color-text-3)" }}
         >
           <X className="h-4 w-4" />
@@ -136,7 +136,7 @@ export function EditableEpisodeTitle({
         onClick={enterEdit}
         title={t("edit_episode_title")}
         aria-label={t("edit_episode_title")}
-        className="focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--color-text-3)] opacity-0 transition-[opacity,background-color] hover:bg-[oklch(1_0_0_/_0.06)] hover:text-[var(--color-text)] focus-visible:opacity-100 group-hover:opacity-100"
+        className="focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--color-text-3)] opacity-0 transition-[opacity,background-color] hover:bg-[light-dark(oklch(0.2_0.02_260_/_0.06),oklch(1_0_0_/_0.06))] hover:text-[var(--color-text)] focus-visible:opacity-100 group-hover:opacity-100"
       >
         <Pencil className="h-3.5 w-3.5" />
       </button>

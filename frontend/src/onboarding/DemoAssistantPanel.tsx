@@ -46,7 +46,7 @@ export function DemoAssistantPanel() {
     <div
       data-onboarding={ONBOARDING_ANCHORS.workbenchAgent}
       className="relative isolate flex h-full flex-col"
-      style={{ background: "oklch(0.19 0.011 250 / 0.5)" }}
+      style={{ background: "light-dark(oklch(0.995 0.004 260 / 0.5), oklch(0.17 0.02 260 / 0.5))" }}
     >
       {/* 头部：与真实面板同款标识，不带会话切换/新建——演示里没有会话可管理 */}
       <div
@@ -57,7 +57,7 @@ export function DemoAssistantPanel() {
           className="grid h-6 w-6 shrink-0 place-items-center rounded-md"
           style={{
             background:
-              "linear-gradient(135deg, var(--color-accent), oklch(0.60 0.10 280))",
+              "linear-gradient(135deg, var(--color-accent), light-dark(oklch(0.6 0.2 255), oklch(0.6 0.18 255)))",
             color: "oklch(0.12 0 0)",
           }}
         >
@@ -84,7 +84,7 @@ export function DemoAssistantPanel() {
           className="flex items-end gap-2 rounded-lg px-3 py-2"
           style={{
             border: "1px solid var(--color-hairline)",
-            background: "oklch(0.20 0.012 265 / 0.7)",
+            background: "light-dark(oklch(0.97 0.004 260 / 0.7), oklch(0.18 0.02 260 / 0.7))",
           }}
         >
           <textarea
@@ -100,7 +100,7 @@ export function DemoAssistantPanel() {
             disabled
             className="shrink-0 rounded-md p-1.5 disabled:cursor-not-allowed disabled:opacity-30"
             style={{
-              color: "oklch(0.14 0 0)",
+              color: "var(--color-accent-fg)",
               background:
                 "linear-gradient(180deg, var(--color-accent-2), var(--color-accent))",
             }}

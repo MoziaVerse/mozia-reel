@@ -225,7 +225,7 @@ export function SourceFilesPage({ projectName }: SourceFilesPageProps) {
         className="sticky top-0 z-10 flex items-center gap-3 px-5 py-3"
         style={{
           background:
-            "linear-gradient(180deg, oklch(0.20 0.012 265 / 0.85), oklch(0.18 0.010 265 / 0.65))",
+            "linear-gradient(180deg, light-dark(oklch(0.97 0.004 260 / 0.85), oklch(0.18 0.02 260 / 0.85)), light-dark(oklch(0.995 0.004 260 / 0.65), oklch(0.16 0.02 260 / 0.65)))",
           backdropFilter: "blur(10px)",
           WebkitBackdropFilter: "blur(10px)",
           borderBottom: "1px solid var(--color-hairline-soft)",
@@ -271,7 +271,7 @@ export function SourceFilesPage({ projectName }: SourceFilesPageProps) {
           disabled={uploading}
           className="focus-ring inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-[11.5px] font-medium transition-transform hover:-translate-y-px disabled:translate-y-0 disabled:opacity-50"
           style={{
-            color: "oklch(0.14 0 0)",
+            color: "var(--color-accent-fg)",
             background:
               "linear-gradient(135deg, var(--color-accent-2), var(--color-accent))",
             boxShadow:
@@ -311,8 +311,8 @@ export function SourceFilesPage({ projectName }: SourceFilesPageProps) {
                 isDragging ? "var(--color-accent)" : "var(--color-hairline)"
               }`,
               background: isDragging
-                ? "radial-gradient(600px 280px at 50% -10%, var(--color-accent-soft), transparent 60%), oklch(0.20 0.011 265 / 0.45)"
-                : "radial-gradient(600px 280px at 50% -10%, var(--color-accent-dim), transparent 60%), oklch(0.18 0.010 265 / 0.35)",
+                ? "radial-gradient(600px 280px at 50% -10%, var(--color-accent-soft), transparent 60%), light-dark(oklch(0.97 0.004 260 / 0.45), oklch(0.18 0.02 260 / 0.45))"
+                : "radial-gradient(600px 280px at 50% -10%, var(--color-accent-dim), transparent 60%), light-dark(oklch(0.995 0.004 260 / 0.35), oklch(0.16 0.02 260 / 0.35))",
             }}
           >
             <span
@@ -329,7 +329,7 @@ export function SourceFilesPage({ projectName }: SourceFilesPageProps) {
                 className="grid h-14 w-14 place-items-center rounded-2xl"
                 style={{
                   background:
-                    "linear-gradient(135deg, var(--color-accent-dim), oklch(0.76 0.09 295 / 0.04))",
+                    "linear-gradient(135deg, var(--color-accent-dim), light-dark(oklch(0.55 0.2 255 / 0.04), oklch(0.7 0.18 255 / 0.04)))",
                   border: "1px solid var(--color-accent-soft)",
                   color: "var(--color-accent-2)",
                   boxShadow: "0 12px 30px -10px var(--color-accent-glow)",
@@ -360,7 +360,7 @@ export function SourceFilesPage({ projectName }: SourceFilesPageProps) {
               <span
                 className="mt-1 inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-[11.5px] font-medium transition-transform group-hover:translate-y-[-1px]"
                 style={{
-                  color: "oklch(0.14 0 0)",
+                  color: "var(--color-accent-fg)",
                   background:
                     "linear-gradient(135deg, var(--color-accent-2), var(--color-accent))",
                   boxShadow:
@@ -389,7 +389,7 @@ export function SourceFilesPage({ projectName }: SourceFilesPageProps) {
                 isDragging ? "var(--color-accent-soft)" : "var(--color-hairline-soft)"
               }`,
               background:
-                "linear-gradient(180deg, oklch(0.22 0.012 265 / 0.5), oklch(0.19 0.010 265 / 0.35))",
+                "linear-gradient(180deg, light-dark(oklch(0.95 0.008 260 / 0.5), oklch(0.2 0.025 260 / 0.5)), light-dark(oklch(0.995 0.004 260 / 0.35), oklch(0.17 0.02 260 / 0.35)))",
               boxShadow:
                 "inset 0 1px 0 oklch(1 0 0 / 0.04), 0 8px 24px -10px oklch(0 0 0 / 0.5)",
               transition: "border-color .12s ease",
@@ -438,7 +438,7 @@ export function SourceFilesPage({ projectName }: SourceFilesPageProps) {
                       idx === 0 ? "none" : "1px solid var(--color-hairline-soft)",
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "oklch(0.24 0.012 265 / 0.45)";
+                    e.currentTarget.style.background = "light-dark(oklch(0.93 0.008 260 / 0.45), oklch(0.22 0.025 260 / 0.45))";
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.background = "transparent";
@@ -455,7 +455,7 @@ export function SourceFilesPage({ projectName }: SourceFilesPageProps) {
                     className="grid h-9 w-9 shrink-0 place-items-center rounded-lg"
                     style={{
                       background:
-                        "linear-gradient(135deg, var(--color-accent-dim), oklch(0.76 0.09 295 / 0.05))",
+                        "linear-gradient(135deg, var(--color-accent-dim), light-dark(oklch(0.55 0.2 255 / 0.05), oklch(0.7 0.18 255 / 0.05)))",
                       border: "1px solid var(--color-accent-soft)",
                       color: "var(--color-accent-2)",
                     }}
@@ -495,7 +495,7 @@ export function SourceFilesPage({ projectName }: SourceFilesPageProps) {
                     style={{
                       color: "var(--color-text-3)",
                       border: "1px solid var(--color-hairline)",
-                      background: "oklch(0.22 0.011 265 / 0.5)",
+                      background: "light-dark(oklch(0.95 0.008 260 / 0.5), oklch(0.2 0.025 260 / 0.5))",
                     }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.color = "var(--color-text)";

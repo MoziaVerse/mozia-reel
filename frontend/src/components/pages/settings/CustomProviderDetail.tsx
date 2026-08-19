@@ -295,7 +295,7 @@ export function CustomProviderDetail({ providerId, onDeleted, onSaved }: CustomP
         className="sticky bottom-0 z-10 border-t border-hairline px-6 py-3 backdrop-blur"
         style={{
           background:
-            "linear-gradient(180deg, oklch(0.20 0.011 265 / 0.65), oklch(0.15 0.010 265 / 0.85))",
+            "linear-gradient(180deg, light-dark(oklch(0.97 0.004 260 / 0.65), oklch(0.18 0.02 260 / 0.65)), light-dark(oklch(0.99 0.004 260 / 0.85), oklch(0.13 0.02 260 / 0.85)))",
         }}
       >
         <div className="flex items-center gap-3">

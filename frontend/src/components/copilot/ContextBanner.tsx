@@ -36,7 +36,7 @@ export function ContextBanner() {
         className="ml-auto rounded p-0.5 transition-colors focus-ring"
         style={{ color: "var(--color-text-4)" }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = "oklch(0.28 0.012 265 / 0.5)";
+          e.currentTarget.style.background = "light-dark(oklch(0.91 0.012 260 / 0.5), oklch(0.26 0.03 260 / 0.5))";
           e.currentTarget.style.color = "var(--color-text)";
         }}
         onMouseLeave={(e) => {

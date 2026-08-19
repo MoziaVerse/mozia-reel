@@ -18,7 +18,7 @@ export function PhaseStepper({ currentPhase }: PhaseStepperProps) {
       <div
         className="inline-flex items-center gap-px rounded-full p-[3px]"
         style={{
-          background: "oklch(0.17 0.010 265 / 0.6)",
+          background: "light-dark(oklch(0.995 0.004 260 / 0.6), oklch(0.15 0.02 260 / 0.6))",
           border: "1px solid var(--color-hairline)",
           boxShadow: "inset 0 1px 2px oklch(0 0 0 / 0.25)",
         }}
@@ -36,7 +36,7 @@ export function PhaseStepper({ currentPhase }: PhaseStepperProps) {
                   isActive
                     ? {
                         color: "var(--color-text)",
-                        background: "linear-gradient(180deg, oklch(0.30 0.012 265), oklch(0.26 0.012 265))",
+                        background: "linear-gradient(180deg, light-dark(oklch(0.88 0.012 260), oklch(0.28 0.03 260)), light-dark(oklch(0.91 0.012 260), oklch(0.24 0.03 260)))",
                         boxShadow:
                           "0 0 0 1px var(--color-hairline-strong), 0 1px 2px oklch(0 0 0 / 0.3)",
                       }
@@ -53,7 +53,7 @@ export function PhaseStepper({ currentPhase }: PhaseStepperProps) {
                           boxShadow: "0 0 8px -1px var(--color-accent-glow)",
                         }
                       : {
-                          background: "oklch(0.32 0.012 265)",
+                          background: "light-dark(oklch(0.88 0.012 260), oklch(0.3 0.03 260))",
                           color: "var(--color-text-3)",
                         }
                   }

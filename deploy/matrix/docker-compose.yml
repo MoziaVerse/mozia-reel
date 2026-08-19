@@ -1,18 +1,18 @@
-# ArcReel on Matrix —— 独立 SaaS 形态（非 per-user 容器实例）
+# MoziaReel（ArcReel 下游发行版）on Matrix —— 独立 SaaS 形态（非 per-user 容器实例）
 #
-# ⚠️ 阶段一为**单租户内核**：本实例的所有 matrix 用户共享同一批项目数据。
-#    仅供内部试用，多租户隔离完成前不要对外开放。
-#    见 matrix 仓库 docs/arcreel-onboarding-plan.md 待办 T-1。
+# 单实例多租户：租户 = matrix ssoSub，由服务端从会话 cookie 解出并强制，
+# 项目数据、DB、生成队列 worker 均按租户分流（见 lib/tenant_context.py）。
 #
 # 与上游 deploy/docker-compose.yml 的区别：
-#   - 自建镜像（含 matrix 握手 overlay），不用 ghcr 官方镜像
+#   - 自建镜像（含 matrix 握手与租户隔离 overlay），不用 ghcr 官方镜像
 #   - 关掉 ArcReel 自带 auth，访问控制交给 MatrixSessionGate 中间件
+#   - 经 VITE_BRAND_* build-arg 做白牌化（AGPL 合规说明见 MODIFICATIONS.md）
 #   - 不挂 ./.env 进容器：凭据走 env_file，容器内不需要可写 .env
 #     （上游挂 .env 是为了首启把自动生成的密码回写，AUTH_ENABLED=false 后这条路径不走）
 
 services:
-  arcreel:
-    image: arcreel-matrix:latest
+  mozia-reel:
+    image: mozia-reel:latest
     build:
       context: ../..
       dockerfile: Dockerfile
@@ -23,6 +23,14 @@ services:
         APT_MIRROR: mirrors.aliyun.com
         PIP_INDEX: https://mirrors.aliyun.com/pypi/simple/
         NPM_REGISTRY: https://registry.npmmirror.com
+        # 白牌化：只改产品显示名与副标题。NOTICE §7(b) 的 "Powered by ArcReel"
+        # 署名句与仓库链接不受此影响，在设置→关于页内逐字保留。
+        VITE_BRAND_NAME: MoziaReel
+        VITE_BRAND_TAGLINE: AI 视频创作工作台
+        VITE_BRAND_DESCRIPTION: AI 视频创作工作台，把小说、剧本或商品素材转化为角色一致、过程可控的短视频。
+        # ⚠️ 对外提供服务前必须填：AGPL §13 要求使用者能取得本运行版本对应的完整源码。
+        #    留空会渲染成上游仓库地址——对本修改版而言那不是"对应源码"，等于违约。
+        VITE_SOURCE_URL: ""
     ports:
       - "1241:1241"
     env_file: .env

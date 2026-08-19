@@ -202,7 +202,7 @@ export function ReferencePanel({
   );
 
   return (
-    <div className="relative flex-shrink-0 border-b border-[var(--color-hairline-soft)] bg-[oklch(0.20_0.011_265_/_0.35)] px-3 py-2.5">
+    <div className="relative flex-shrink-0 border-b border-[var(--color-hairline-soft)] bg-[light-dark(oklch(0.95_0.004_260_/_0.35),oklch(0.20_0.011_265_/_0.35))] px-3 py-2.5">
       <div className="mb-2 flex items-center gap-2">
         <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-4)]">
           {t("reference_strip_label")}
@@ -247,7 +247,7 @@ export function ReferencePanel({
           aria-label={t("reference_strip_add")}
           aria-expanded={pickerOpen}
           aria-controls={PICKER_ID}
-          className="focus-ring inline-flex items-center gap-1 rounded-full border border-dashed border-[var(--color-hairline-strong)] bg-[oklch(0.22_0.011_265_/_0.55)] px-2.5 py-1 text-xs text-[var(--color-text-3)] transition-colors hover:border-[var(--color-accent-soft)] hover:text-[var(--color-text)]"
+          className="focus-ring inline-flex items-center gap-1 rounded-full border border-dashed border-[var(--color-hairline-strong)] bg-[light-dark(oklch(0.93_0.004_260_/_0.55),oklch(0.22_0.011_265_/_0.55))] px-2.5 py-1 text-xs text-[var(--color-text-3)] transition-colors hover:border-[var(--color-accent-soft)] hover:text-[var(--color-text)]"
         >
           <Plus className="h-3 w-3" aria-hidden="true" />
           <span>{t("reference_strip_add")}</span>

@@ -41,7 +41,9 @@ type ModalShellA11yProps =
 export type ModalShellProps = ModalShellBaseProps & ModalShellA11yProps;
 
 const DEFAULT_BACKDROP_STYLE: CSSProperties = {
-  background: "oklch(0 0 0 / 0.65)",
+  // 两个主题都用暗遮罩——浅色下遮罩若跟着变浅，弹窗与被遮内容同为浅色，
+  // 层次只剩阴影。浅色底本身更亮，同等观感所需的遮罩略薄，故分开取值。
+  background: "light-dark(oklch(0 0 0 / 0.45), oklch(0 0 0 / 0.65))",
   backdropFilter: "blur(2px)",
   WebkitBackdropFilter: "blur(2px)",
 };

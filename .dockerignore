@@ -6,6 +6,11 @@ node_modules
 frontend/node_modules
 .env
 .env.local
+# 品牌由 Dockerfile 的 VITE_BRAND_* build-arg 决定；
+# 本地 frontend/.env 若进镜像会覆盖 build-arg，构建将不可复现
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
 CLAUDE.local.md
 *.db
 projects/

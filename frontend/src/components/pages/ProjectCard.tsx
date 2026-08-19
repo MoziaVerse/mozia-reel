@@ -23,8 +23,8 @@ interface PhaseTone {
 
 const PHASE_TONE: Record<Phase, PhaseTone> = {
   preparation: {
-    dot: "oklch(0.64 0.020 265)",
-    text: "oklch(0.78 0.010 265)",
+    dot: "oklch(0.62 0.03 260)",
+    text: "oklch(0.76 0.03 260)",
     glow: "transparent",
   },
   script: {
@@ -33,9 +33,9 @@ const PHASE_TONE: Record<Phase, PhaseTone> = {
     glow: "oklch(0.80 0.12 75 / 0.35)",
   },
   production: {
-    dot: "oklch(0.76 0.09 295)",
-    text: "oklch(0.88 0.05 295)",
-    glow: "oklch(0.76 0.09 295 / 0.40)",
+    dot: "light-dark(oklch(0.55 0.2 255), oklch(0.7 0.18 255))",
+    text: "light-dark(oklch(0.5 0.2 255), oklch(0.8 0.13 255))",
+    glow: "light-dark(oklch(0.55 0.2 255 / 0.40), oklch(0.7 0.18 255 / 0.40))",
   },
   completed: {
     dot: "oklch(0.78 0.10 155)",
@@ -80,7 +80,7 @@ export function Poster({ project, styleLabel, large = false }: PosterProps) {
         width: "100%",
         aspectRatio: aspect,
         borderRadius: radius,
-        background: `radial-gradient(120% 80% at 30% 30%, oklch(0.55 0.15 ${hue1}) 0%, oklch(0.28 0.08 ${(hue1 + 10) % 360}) 45%, oklch(0.14 0.02 265) 100%)`,
+        background: `radial-gradient(120% 80% at 30% 30%, oklch(0.55 0.15 ${hue1}) 0%, oklch(0.28 0.08 ${(hue1 + 10) % 360}) 45%, light-dark(oklch(0.985 0.004 260), oklch(0.12 0.02 260)) 100%)`,
         boxShadow: "inset 0 0 0 1px oklch(1 0 0 / 0.06)",
       }}
     >
@@ -209,8 +209,8 @@ function episodeDotColor(
   if (i < inProductionEnd) {
     return { bg: "var(--color-accent)", glow: "0 0 6px var(--color-accent-glow)" };
   }
-  if (i < scriptedEnd) return { bg: "oklch(0.55 0.010 265)" };
-  return { bg: "oklch(0.22 0.011 265)" };
+  if (i < scriptedEnd) return { bg: "oklch(0.53 0.03 260)" };
+  return { bg: "light-dark(oklch(0.95 0.008 260), oklch(0.2 0.025 260))" };
 }
 
 function EpisodeStrip({ summary }: { summary: ProjectStatus["episodes_summary"] }) {
@@ -237,7 +237,7 @@ export function gradientProgressStyles(variant: "accent" | "good"): {
   trackStyle: CSSProperties;
   barStyle: CSSProperties;
 } {
-  const trackStyle: CSSProperties = { background: "oklch(0.16 0.010 265)" };
+  const trackStyle: CSSProperties = { background: "light-dark(oklch(0.99 0.004 260), oklch(0.14 0.02 260))" };
   if (variant === "good") {
     return {
       trackStyle,
@@ -407,7 +407,7 @@ export function ProjectCard(props: ProjectCardProps) {
 
         <div
           className="mt-3 grid grid-cols-4 overflow-hidden rounded-[7px] border border-hairline-soft"
-          style={{ background: "oklch(0.16 0.010 265 / 0.5)" }}
+          style={{ background: "light-dark(oklch(0.99 0.004 260 / 0.5), oklch(0.14 0.02 260 / 0.5))" }}
         >
           {(
             [

@@ -50,9 +50,9 @@ export function ProjectMenu() {
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="flex min-w-0 items-center gap-2 rounded-md py-[3px] pl-1 pr-2 transition-colors focus-ring"
-        style={{ background: open ? "oklch(0.26 0.012 265 / 0.5)" : "transparent" }}
+        style={{ background: open ? "light-dark(oklch(0.91 0.012 260 / 0.5), oklch(0.24 0.03 260 / 0.5))" : "transparent" }}
         onMouseEnter={(e) => {
-          if (!open) e.currentTarget.style.background = "oklch(0.26 0.012 265 / 0.5)";
+          if (!open) e.currentTarget.style.background = "light-dark(oklch(0.91 0.012 260 / 0.5), oklch(0.24 0.03 260 / 0.5))";
         }}
         onMouseLeave={(e) => {
           if (!open) e.currentTarget.style.background = "transparent";
@@ -101,7 +101,7 @@ export function ProjectMenu() {
           className="absolute left-0 z-50 min-w-[280px] rounded-[10px] p-1.5"
           style={{
             top: "calc(100% + 6px)",
-            background: "oklch(0.20 0.011 265 / 0.98)",
+            background: "light-dark(oklch(0.97 0.004 260 / 0.98), oklch(0.18 0.02 260 / 0.98))",
             backdropFilter: "blur(20px) saturate(1.2)",
             WebkitBackdropFilter: "blur(20px) saturate(1.2)",
             border: "1px solid var(--color-hairline-strong)",
@@ -170,7 +170,7 @@ export function ProjectMenu() {
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] transition-colors focus-ring"
             style={{ color: "var(--color-text-3)" }}
             onMouseEnter={(e) =>
-              (e.currentTarget.style.background = "oklch(0.26 0.012 265 / 0.55)")
+              (e.currentTarget.style.background = "light-dark(oklch(0.91 0.012 260 / 0.55), oklch(0.24 0.03 260 / 0.55))")
             }
             onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
           >
@@ -196,7 +196,7 @@ export function ProjectMenu() {
             style={{ color: "var(--color-text-3)" }}
             onMouseEnter={(e) => {
               if (!currentProjectName) return;
-              e.currentTarget.style.background = "oklch(0.26 0.012 265 / 0.55)";
+              e.currentTarget.style.background = "light-dark(oklch(0.91 0.012 260 / 0.55), oklch(0.24 0.03 260 / 0.55))";
             }}
             onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
           >

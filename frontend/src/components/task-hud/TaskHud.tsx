@@ -109,7 +109,7 @@ function RunningProgressBar() {
   return (
     <div
       className="relative mt-1 h-0.5 w-full overflow-hidden rounded-full"
-      style={{ background: "oklch(0.16 0.010 265 / 0.7)" }}
+      style={{ background: "light-dark(oklch(0.99 0.004 260 / 0.7), oklch(0.14 0.02 260 / 0.7))" }}
     >
       <motion.div
         className="absolute inset-y-0 left-0 w-1/3 rounded-full"
@@ -407,7 +407,7 @@ function ChannelSection({
         style={{
           color: "var(--color-text-4)",
           letterSpacing: "0.8px",
-          background: "oklch(0.18 0.010 265 / 0.6)",
+          background: "light-dark(oklch(0.995 0.004 260 / 0.6), oklch(0.16 0.02 260 / 0.6))",
         }}
       >
         <Icon className="h-3.5 w-3.5" style={{ color: "var(--color-text-3)" }} />
@@ -652,7 +652,7 @@ export function TaskHud({ anchorRef }: { anchorRef: RefObject<HTMLElement | null
             className="grid h-7 w-7 place-items-center rounded-lg"
             style={{
               background:
-                "linear-gradient(135deg, var(--color-accent-dim), oklch(0.76 0.09 295 / 0.05))",
+                "linear-gradient(135deg, var(--color-accent-dim), light-dark(oklch(0.55 0.2 255 / 0.05), oklch(0.7 0.18 255 / 0.05)))",
               border: "1px solid var(--color-accent-soft)",
               color: "var(--color-accent-2)",
               boxShadow: "0 8px 18px -8px var(--color-accent-glow)",
@@ -779,7 +779,7 @@ export function TaskHud({ anchorRef }: { anchorRef: RefObject<HTMLElement | null
             className="px-4 py-3"
             role="alertdialog"
             aria-label={t("cancel_confirm_aria")}
-            style={{ background: "oklch(0.16 0.010 265 / 0.5)" }}
+            style={{ background: "light-dark(oklch(0.99 0.004 260 / 0.5), oklch(0.14 0.02 260 / 0.5))" }}
           >
             <p
               className="text-[12px]"
@@ -832,15 +832,15 @@ export function TaskHud({ anchorRef }: { anchorRef: RefObject<HTMLElement | null
                 style={{
                   color: "var(--color-text-3)",
                   border: "1px solid var(--color-hairline)",
-                  background: "oklch(0.22 0.011 265 / 0.5)",
+                  background: "light-dark(oklch(0.95 0.008 260 / 0.5), oklch(0.2 0.025 260 / 0.5))",
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.color = "var(--color-text)";
-                  e.currentTarget.style.background = "oklch(0.26 0.013 265 / 0.7)";
+                  e.currentTarget.style.background = "light-dark(oklch(0.91 0.012 260 / 0.7), oklch(0.24 0.03 260 / 0.7))";
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.color = "var(--color-text-3)";
-                  e.currentTarget.style.background = "oklch(0.22 0.011 265 / 0.5)";
+                  e.currentTarget.style.background = "light-dark(oklch(0.95 0.008 260 / 0.5), oklch(0.2 0.025 260 / 0.5))";
                 }}
               >
                 {t("go_back")}

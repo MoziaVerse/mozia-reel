@@ -61,8 +61,12 @@ export interface TourHandle {
   dispose: () => void;
 }
 
-/** 遮罩墨色 —— body 背景同色系的冷紫墨，而不是 driver 默认纯黑 */
-const OVERLAY_INK = "oklch(0.10 0.012 265)";
+/**
+ * 遮罩墨色 —— body 背景同色系的冷墨，而不是 driver 默认纯黑。
+ * 两个主题都取暗墨：遮罩的职责是压暗背景把注意力交给高亮区，浅色下若跟着
+ * 变浅，弹窗与被遮内容同为浅色、层次只能靠阴影撑，聚焦就失效了。
+ */
+const OVERLAY_INK = "light-dark(oklch(0.30 0.03 260), oklch(0.1 0.02 260))";
 
 /**
  * 锚点缺席时的等待上限（毫秒）。driver 在这段时间里挂 MutationObserver 等元素出现，

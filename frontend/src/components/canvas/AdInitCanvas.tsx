@@ -13,10 +13,10 @@ interface AdInitCanvasProps {
 }
 
 const CARD_BG =
-  "linear-gradient(180deg, oklch(0.22 0.012 265 / 0.55), oklch(0.19 0.010 265 / 0.40))";
+  "linear-gradient(180deg, light-dark(oklch(0.95 0.008 260 / 0.55), oklch(0.2 0.025 260 / 0.55)), light-dark(oklch(0.995 0.004 260 / 0.40), oklch(0.17 0.02 260 / 0.40)))";
 const FIELD_STYLE: React.CSSProperties = {
   background:
-    "linear-gradient(180deg, oklch(0.20 0.011 265 / 0.6), oklch(0.18 0.010 265 / 0.45))",
+    "linear-gradient(180deg, light-dark(oklch(0.97 0.004 260 / 0.6), oklch(0.18 0.02 260 / 0.6)), light-dark(oklch(0.995 0.004 260 / 0.45), oklch(0.16 0.02 260 / 0.45)))",
   border: "1px solid var(--color-hairline)",
   color: "var(--color-text)",
   boxShadow: "inset 0 1px 2px oklch(0 0 0 / 0.2)",
@@ -198,7 +198,7 @@ export function AdInitCanvas({ projectName, onDone }: AdInitCanvasProps) {
                       onClick={() => setFiles((prev) => prev.filter((_, i) => i !== idx))}
                       disabled={submitting}
                       aria-label={`${t("common:delete")} ${file.name}`}
-                      className="focus-ring inline-flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-[oklch(1_0_0_/_0.06)]"
+                      className="focus-ring inline-flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-[light-dark(oklch(0.2_0.02_260_/_0.06),oklch(1_0_0_/_0.06))]"
                       style={{ color: "var(--color-text-4)" }}
                     >
                       <X className="h-3 w-3" />
@@ -281,7 +281,7 @@ export function AdInitCanvas({ projectName, onDone }: AdInitCanvasProps) {
         disabled={!canSubmit}
         className="focus-ring inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-[13px] font-medium transition-transform disabled:cursor-not-allowed disabled:opacity-50"
         style={{
-          color: "oklch(0.14 0 0)",
+          color: "var(--color-accent-fg)",
           background:
             "linear-gradient(135deg, var(--color-accent-2), var(--color-accent))",
           boxShadow:

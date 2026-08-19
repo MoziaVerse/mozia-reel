@@ -75,7 +75,7 @@ export function TodoListPanel({ turns, draftTurn }: TodoListPanelProps) {
       className="mx-3 mb-1 overflow-hidden rounded-lg"
       style={{
         border: "1px solid var(--color-hairline-soft)",
-        background: "oklch(0.20 0.012 265 / 0.5)",
+        background: "light-dark(oklch(0.97 0.004 260 / 0.5), oklch(0.18 0.02 260 / 0.5))",
         backdropFilter: "blur(6px)",
         WebkitBackdropFilter: "blur(6px)",
       }}
@@ -89,7 +89,7 @@ export function TodoListPanel({ turns, draftTurn }: TodoListPanelProps) {
         className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors"
         style={{ color: "var(--color-text-2)" }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = "oklch(0.24 0.012 265 / 0.5)";
+          e.currentTarget.style.background = "light-dark(oklch(0.93 0.008 260 / 0.5), oklch(0.22 0.025 260 / 0.5))";
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.background = "transparent";
@@ -134,7 +134,7 @@ export function TodoListPanel({ turns, draftTurn }: TodoListPanelProps) {
         <div className="flex shrink-0 items-center gap-2">
           <ProgressBar
             value={progressPercent}
-            className="h-1 w-16 rounded-full bg-[oklch(0.30_0.012_265_/_0.5)]"
+            className="h-1 w-16 rounded-full bg-[light-dark(oklch(0.88_0.006_260_/_0.5),oklch(0.30_0.012_265_/_0.5))]"
             barClassName="bg-(--color-good) transition-all duration-500 ease-out"
           />
           <span

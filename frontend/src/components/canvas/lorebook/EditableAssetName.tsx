@@ -19,7 +19,7 @@ interface EditableAssetNameProps {
 }
 
 const ICON_BTN_CLS =
-  "focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-[oklch(1_0_0_/_0.06)] disabled:cursor-not-allowed disabled:opacity-40";
+  "focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-[light-dark(oklch(0.2_0.02_260_/_0.06),oklch(1_0_0_/_0.06))] disabled:cursor-not-allowed disabled:opacity-40";
 
 /**
  * 资产卡片名称的行内重命名：hover 出铅笔 → 名称变行内输入框（Enter 提交 / Esc 取消）→

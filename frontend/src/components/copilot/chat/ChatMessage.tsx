@@ -59,11 +59,11 @@ export function ChatMessage({ message, streaming }: ChatMessageProps) {
     ? USER_BUBBLE_STYLE
     : isSystem
       ? {
-          background: "oklch(0.22 0.011 265 / 0.5)",
+          background: "light-dark(oklch(0.95 0.008 260 / 0.5), oklch(0.2 0.025 260 / 0.5))",
           border: "1px solid var(--color-hairline-soft)",
         }
       : {
-          background: "oklch(0.21 0.012 265 / 0.5)",
+          background: "light-dark(oklch(0.97 0.008 260 / 0.5), oklch(0.19 0.025 260 / 0.5))",
           border: "1px solid var(--color-hairline-soft)",
         };
 

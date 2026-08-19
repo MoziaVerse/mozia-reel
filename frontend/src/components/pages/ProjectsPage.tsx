@@ -67,11 +67,11 @@ type GreetingKey =
   | "lobby_hero_greeting_late";
 
 const ACCENT_BUTTON_STYLE: CSSProperties = {
-  color: "oklch(0.14 0 0)",
+  color: "var(--color-accent-fg)",
   background:
     "linear-gradient(180deg, var(--color-accent-2), var(--color-accent))",
   boxShadow:
-    "inset 0 1px 0 oklch(1 0 0 / 0.3), 0 0 0 1px oklch(0.55 0.10 295 / 0.4), 0 4px 14px -6px var(--color-accent)",
+    "inset 0 1px 0 oklch(1 0 0 / 0.3), 0 0 0 1px light-dark(oklch(0.625 0.2 255 / 0.4), oklch(0.55 0.14 255 / 0.4)), 0 4px 14px -6px var(--color-accent)",
 };
 
 function projectActivityScore(p: ProjectSummary): number {
@@ -151,8 +151,8 @@ function NowEditingCard({ project, styleLabel, phaseLabels, t }: NowEditingCardP
       <div className="relative flex flex-col px-7 pb-6 pt-6">
         <span
           aria-hidden
-          className="font-editorial pointer-events-none absolute right-[-6px] top-2 italic"
-          style={{ fontSize: 120, lineHeight: 1, color: "oklch(0.22 0.013 280)" }}
+          className="font-editorial pointer-events-none absolute right-[-6px] top-2"
+          style={{ fontSize: 120, lineHeight: 1, color: "light-dark(oklch(0.95 0.008 260), oklch(0.2 0.025 260))" }}
         >
           now
         </span>
@@ -184,7 +184,7 @@ function NowEditingCard({ project, styleLabel, phaseLabels, t }: NowEditingCardP
         >
           {getProjectDisplayName(project.title, t("dashboard:untitled_project"))}
         </h3>
-        <div className="font-editorial relative italic text-text-3" style={{ fontSize: 15 }}>
+        <div className="font-editorial relative text-text-3" style={{ fontSize: 15 }}>
           {styleLabel}
         </div>
 
@@ -243,7 +243,7 @@ function NowEditingCard({ project, styleLabel, phaseLabels, t }: NowEditingCardP
             <div
               key={cell.k}
               className="px-3.5 py-3"
-              style={{ background: "oklch(0.16 0.010 265 / 0.6)" }}
+              style={{ background: "light-dark(oklch(0.99 0.004 260 / 0.6), oklch(0.14 0.02 260 / 0.6))" }}
             >
               <div className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-text-3">
                 {cell.k}
@@ -298,7 +298,7 @@ function PlaceholderTile({ onClick, title, kicker, icon, ariaLabel }: Placeholde
           style={{
             aspectRatio: "2 / 1",
             background:
-              "radial-gradient(120% 80% at 30% 30%, oklch(0.26 0.04 290 / 0.5) 0%, transparent 60%), oklch(0.18 0.011 265 / 0.55)",
+              "radial-gradient(120% 80% at 30% 30%, light-dark(oklch(0.91 0.016 262 / 0.5), oklch(0.26 0.04 262 / 0.5)) 0%, transparent 60%), light-dark(oklch(0.995 0.004 260 / 0.55), oklch(0.16 0.02 260 / 0.55))",
           }}
         >
           <div className="flex flex-col items-center gap-2.5 transition-transform motion-safe:group-hover:-translate-y-0.5">
@@ -307,8 +307,8 @@ function PlaceholderTile({ onClick, title, kicker, icon, ariaLabel }: Placeholde
               className="grid h-12 w-12 place-items-center rounded-[12px]"
               style={{
                 background:
-                  "linear-gradient(180deg, oklch(0.30 0.04 290), oklch(0.22 0.02 280))",
-                border: "1px solid oklch(0.76 0.09 295 / 0.4)",
+                  "linear-gradient(180deg, light-dark(oklch(0.88 0.016 262), oklch(0.3 0.04 262)), light-dark(oklch(0.95 0.008 260), oklch(0.2 0.025 260)))",
+                border: "1px solid light-dark(oklch(0.55 0.2 255 / 0.4), oklch(0.7 0.18 255 / 0.4))",
                 boxShadow:
                   "inset 0 1px 0 oklch(1 0 0 / 0.06), 0 8px 22px -14px var(--color-accent)",
                 color: "var(--color-accent-2)",
@@ -341,7 +341,7 @@ function PlaceholderTile({ onClick, title, kicker, icon, ariaLabel }: Placeholde
         </div>
         <div
           className="grid grid-cols-4 overflow-hidden rounded-[7px] border border-dashed border-hairline"
-          style={{ background: "oklch(0.16 0.010 265 / 0.45)" }}
+          style={{ background: "light-dark(oklch(0.99 0.004 260 / 0.45), oklch(0.14 0.02 260 / 0.45))" }}
         >
           {[0, 1, 2, 3].map((i) => (
             <div
@@ -406,7 +406,7 @@ function TopBar({
       className="sticky top-0 z-30"
       style={{
         background:
-          "linear-gradient(180deg, oklch(0.20 0.011 265 / 0.55), oklch(0.15 0.010 265 / 0.45))",
+          "linear-gradient(180deg, light-dark(oklch(0.97 0.004 260 / 0.55), oklch(0.18 0.02 260 / 0.55)), light-dark(oklch(0.99 0.004 260 / 0.45), oklch(0.13 0.02 260 / 0.45)))",
         backdropFilter: "blur(28px) saturate(1.5)",
         WebkitBackdropFilter: "blur(28px) saturate(1.5)",
         borderBottom: "1px solid oklch(1 0 0 / 0.06)",
@@ -619,7 +619,7 @@ function HeroStrip({ totals, t }: HeroStripProps) {
                 { text: t(`dashboard:${greetingKey}`), after: <br /> },
                 {
                   text: subtitle,
-                  style: { fontStyle: "italic", color: "var(--color-accent-2)" },
+                  style: { color: "var(--color-accent-2)" },
                 },
               ] satisfies TypewriterSegment[]
             }
@@ -636,7 +636,7 @@ function HeroStrip({ totals, t }: HeroStripProps) {
         <div
           data-testid="lobby-hero-stats"
           className="flex items-stretch overflow-hidden rounded-[10px] border border-hairline-soft"
-          style={{ background: "oklch(0.16 0.010 265 / 0.4)" }}
+          style={{ background: "light-dark(oklch(0.99 0.004 260 / 0.4), oklch(0.14 0.02 260 / 0.4))" }}
         >
           {stats.map((s, i) => (
             <div
@@ -696,7 +696,7 @@ function FilterPills({ active, onChange, counts, phaseLabels, t }: FilterPillsPr
       style={{
         top: "var(--lobby-topbar-h, 57px)",
         background:
-          "linear-gradient(180deg, oklch(0.20 0.011 265 / 0.55), oklch(0.15 0.010 265 / 0.45))",
+          "linear-gradient(180deg, light-dark(oklch(0.97 0.004 260 / 0.55), oklch(0.18 0.02 260 / 0.55)), light-dark(oklch(0.99 0.004 260 / 0.45), oklch(0.13 0.02 260 / 0.45)))",
         backdropFilter: "blur(16px) saturate(1.1)",
         borderTopWidth: 1,
         borderTopColor: "var(--color-hairline-soft)",
@@ -715,7 +715,7 @@ function FilterPills({ active, onChange, counts, phaseLabels, t }: FilterPillsPr
                 "inline-flex items-center rounded-full px-3 py-1 text-[11.5px] font-medium backdrop-blur-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent " +
                 (isActive
                   ? "border border-accent/40 bg-accent/45 text-text"
-                  : "border border-hairline-soft bg-[oklch(0.22_0.012_265_/_0.7)] text-text-3 hover:border-hairline hover:bg-[oklch(0.24_0.012_265_/_0.78)] hover:text-text-2")
+                  : "border border-hairline-soft bg-[light-dark(oklch(0.93_0.006_260_/_0.7),oklch(0.22_0.012_265_/_0.7))] text-text-3 hover:border-hairline hover:bg-[light-dark(oklch(0.91_0.006_260_/_0.78),oklch(0.24_0.012_265_/_0.78))] hover:text-text-2")
               }
             >
               {c.label}
@@ -984,7 +984,7 @@ export function ProjectsPage() {
           // FilterPills 的 sticky top 读这个变量；TopBar = logo h-8 (32) + py-3 (24) + 1px border
           "--lobby-topbar-h": "57px",
           background:
-            "radial-gradient(1100px 540px at 8% -10%, oklch(0.32 0.05 295 / 0.28), transparent 55%), radial-gradient(900px 500px at 100% 110%, oklch(0.26 0.04 260 / 0.25), transparent 55%), linear-gradient(180deg, var(--color-bg-grad-a), var(--color-bg-grad-b))",
+            "radial-gradient(1100px 540px at 8% -10%, light-dark(oklch(0.88 0.02 262 / 0.28), oklch(0.32 0.05 262 / 0.28)), transparent 55%), radial-gradient(900px 500px at 100% 110%, light-dark(oklch(0.91 0.016 260 / 0.25), oklch(0.26 0.04 260 / 0.25)), transparent 55%), linear-gradient(180deg, var(--color-bg-grad-a), var(--color-bg-grad-b))",
         } as CSSProperties
       }
     >

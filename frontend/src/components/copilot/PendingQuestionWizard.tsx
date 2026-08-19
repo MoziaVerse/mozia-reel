@@ -171,7 +171,7 @@ export function PendingQuestionWizard({
       style={{
         borderTop: "1px solid var(--color-accent-soft)",
         background:
-          "linear-gradient(180deg, oklch(0.76 0.09 295 / 0.10), transparent 60%), oklch(0.18 0.010 265 / 0.6)",
+          "linear-gradient(180deg, light-dark(oklch(0.55 0.2 255 / 0.10), oklch(0.7 0.18 255 / 0.10)), transparent 60%), light-dark(oklch(0.995 0.004 260 / 0.6), oklch(0.16 0.02 260 / 0.6))",
         backdropFilter: "blur(10px)",
         WebkitBackdropFilter: "blur(10px)",
       }}
@@ -234,7 +234,7 @@ export function PendingQuestionWizard({
                       ? "var(--color-accent)"
                       : isVisitedStep
                         ? "var(--color-accent-soft)"
-                        : "oklch(0.30 0.012 265 / 0.4)",
+                        : "light-dark(oklch(0.88 0.012 260 / 0.4), oklch(0.28 0.03 260 / 0.4))",
                     boxShadow: isActiveStep
                       ? "0 0 8px var(--color-accent-glow)"
                       : "none",
@@ -295,7 +295,7 @@ export function PendingQuestionWizard({
               className="mt-3 overflow-hidden rounded-lg"
               style={{
                 border: "1px solid var(--color-hairline-soft)",
-                background: "oklch(0.16 0.010 265 / 0.45)",
+                background: "light-dark(oklch(0.99 0.004 260 / 0.45), oklch(0.14 0.02 260 / 0.45))",
               }}
             >
               {currentQuestionOptions.map((option, optionIndex) => {
@@ -316,7 +316,7 @@ export function PendingQuestionWizard({
                     }}
                     onMouseEnter={(e) => {
                       if (!checked && !answeringQuestion)
-                        e.currentTarget.style.background = "oklch(1 0 0 / 0.03)";
+                        e.currentTarget.style.background = "light-dark(oklch(0.2 0.02 260 / 0.03), oklch(1 0 0 / 0.03))";
                     }}
                     onMouseLeave={(e) => {
                       if (!checked && !answeringQuestion)
@@ -355,7 +355,7 @@ export function PendingQuestionWizard({
                               width: currentQuestion.multiSelect ? "8px" : "5px",
                               height: currentQuestion.multiSelect ? "8px" : "5px",
                               borderRadius: currentQuestion.multiSelect ? "1px" : "9999px",
-                              background: "oklch(0.14 0 0)",
+                              background: "var(--color-accent-fg)",
                             }}
                           />
                         )}
@@ -439,7 +439,7 @@ export function PendingQuestionWizard({
               className="w-full resize-none rounded-md px-3 py-2 text-[12.5px] leading-[1.55] outline-none transition-colors focus-ring"
               style={{
                 border: "1px solid var(--color-accent-soft)",
-                background: "oklch(0.16 0.010 265 / 0.7)",
+                background: "light-dark(oklch(0.99 0.004 260 / 0.7), oklch(0.14 0.02 260 / 0.7))",
                 color: "var(--color-text)",
                 maxHeight: `${OTHER_TEXTAREA_MAX_PX}px`,
                 overflowY: "hidden",
@@ -491,7 +491,7 @@ export function PendingQuestionWizard({
                 disabled={answeringQuestion || !allQuestionsReady}
                 className="rounded-lg px-4 py-2 text-[12.5px] font-semibold transition-all focus-ring disabled:cursor-not-allowed disabled:opacity-40"
                 style={{
-                  color: "oklch(0.14 0 0)",
+                  color: "var(--color-accent-fg)",
                   background:
                     "linear-gradient(180deg, var(--color-accent-2), var(--color-accent))",
                   boxShadow:
@@ -510,7 +510,7 @@ export function PendingQuestionWizard({
                 disabled={answeringQuestion || !currentQuestionReady}
                 className="rounded-lg px-4 py-2 text-[12.5px] font-semibold transition-all focus-ring disabled:cursor-not-allowed disabled:opacity-40"
                 style={{
-                  color: "oklch(0.14 0 0)",
+                  color: "var(--color-accent-fg)",
                   background:
                     "linear-gradient(180deg, var(--color-accent-2), var(--color-accent))",
                   boxShadow:

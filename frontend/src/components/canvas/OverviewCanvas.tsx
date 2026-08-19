@@ -25,12 +25,12 @@ interface OverviewCanvasProps {
 }
 
 const CARD_BG =
-  "linear-gradient(180deg, oklch(0.22 0.012 265 / 0.55), oklch(0.19 0.010 265 / 0.40))";
+  "linear-gradient(180deg, light-dark(oklch(0.95 0.008 260 / 0.55), oklch(0.2 0.025 260 / 0.55)), light-dark(oklch(0.995 0.004 260 / 0.40), oklch(0.17 0.02 260 / 0.40)))";
 const CARD_SHADOW =
   "inset 0 1px 0 oklch(1 0 0 / 0.04), 0 8px 24px -10px oklch(0 0 0 / 0.5)";
 const FIELD_STYLE: React.CSSProperties = {
   background:
-    "linear-gradient(180deg, oklch(0.20 0.011 265 / 0.6), oklch(0.18 0.010 265 / 0.45))",
+    "linear-gradient(180deg, light-dark(oklch(0.97 0.004 260 / 0.6), oklch(0.18 0.02 260 / 0.6)), light-dark(oklch(0.995 0.004 260 / 0.45), oklch(0.16 0.02 260 / 0.45)))",
   border: "1px solid var(--color-hairline)",
   color: "var(--color-text)",
   boxShadow: "inset 0 1px 2px oklch(0 0 0 / 0.2)",
@@ -369,7 +369,7 @@ export function OverviewCanvas({
                       type="button"
                       onClick={enterOverviewEdit}
                       title={t("edit_overview")}
-                      className="focus-ring inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[var(--color-text-3)] transition-colors hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)]"
+                      className="focus-ring inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[var(--color-text-3)] transition-colors hover:bg-[light-dark(oklch(0.2_0.02_260_/_0.05),oklch(1_0_0_/_0.05))] hover:text-[var(--color-text)]"
                     >
                       <Pencil className="h-3 w-3" />
                       <span>{t("edit_overview")}</span>
@@ -380,7 +380,7 @@ export function OverviewCanvas({
                         onClick={() => void handleRegenerate()}
                         disabled={regenerating}
                         title={t("regen_overview_title")}
-                        className="focus-ring inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[var(--color-text-3)] transition-colors hover:bg-[oklch(1_0_0_/_0.05)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-3)]"
+                        className="focus-ring inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[var(--color-text-3)] transition-colors hover:bg-[light-dark(oklch(0.2_0.02_260_/_0.05),oklch(1_0_0_/_0.05))] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-3)]"
                       >
                         <RefreshCw className={`h-3 w-3 ${regenerating ? "animate-spin" : ""}`} />
                         <span>{regenerating ? t("regenerating_short") : t("regen_short")}</span>
@@ -450,7 +450,7 @@ export function OverviewCanvas({
                       disabled={savingOverview}
                       className="focus-ring inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-transform disabled:cursor-not-allowed disabled:opacity-50"
                       style={{
-                        color: "oklch(0.14 0 0)",
+                        color: "var(--color-accent-fg)",
                         background:
                           "linear-gradient(135deg, var(--color-accent-2), var(--color-accent))",
                         boxShadow:
@@ -500,7 +500,7 @@ export function OverviewCanvas({
                       <span
                         className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5"
                         style={{
-                          background: "oklch(0.20 0.011 265 / 0.6)",
+                          background: "light-dark(oklch(0.97 0.004 260 / 0.6), oklch(0.18 0.02 260 / 0.6))",
                           border: "1px solid var(--color-hairline)",
                         }}
                       >
@@ -531,7 +531,7 @@ export function OverviewCanvas({
                   type="button"
                   onClick={enterOverviewEdit}
                   className="focus-ring flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--color-hairline)] px-3 py-4 text-[13px] text-[var(--color-text-4)] transition-colors hover:border-[var(--color-accent-soft)] hover:text-[var(--color-text-2)]"
-                  style={{ background: "oklch(0.18 0.010 265 / 0.35)" }}
+                  style={{ background: "light-dark(oklch(0.995 0.004 260 / 0.35), oklch(0.16 0.02 260 / 0.35))" }}
                 >
                   <Pencil className="h-4 w-4" />
                   {t("create_overview")}
@@ -594,7 +594,7 @@ export function OverviewCanvas({
                       </div>
                       <div
                         className="relative h-1.5 overflow-hidden rounded-full"
-                        style={{ background: "oklch(0.16 0.010 265 / 0.7)" }}
+                        style={{ background: "light-dark(oklch(0.99 0.004 260 / 0.7), oklch(0.14 0.02 260 / 0.7))" }}
                         role="progressbar"
                         aria-label={t("progress_aria_label", { label: labels[key] })}
                         aria-valuenow={pct}
@@ -765,7 +765,7 @@ export function OverviewCanvas({
                         style={{
                           border: "1px solid var(--color-hairline-soft)",
                           background:
-                            "linear-gradient(180deg, oklch(0.21 0.011 265 / 0.5), oklch(0.18 0.010 265 / 0.35))",
+                            "linear-gradient(180deg, light-dark(oklch(0.97 0.008 260 / 0.5), oklch(0.19 0.025 260 / 0.5)), light-dark(oklch(0.995 0.004 260 / 0.35), oklch(0.16 0.02 260 / 0.35)))",
                           boxShadow: "inset 0 1px 0 oklch(1 0 0 / 0.03)",
                         }}
                       >

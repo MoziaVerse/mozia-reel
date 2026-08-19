@@ -1,12 +1,13 @@
 <!doctype html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Title and description are overridden at startup by main.tsx using BRAND config;
-         the values below are just loading-time placeholders. -->
+    <!-- Title and description are rewritten at build time by the brand-index-html
+         plugin (vite.config.ts) and again at startup by main.tsx. The literals
+         below are only what a raw, unbuilt copy of this file would show. -->
     <title>ArcReel · AI 视频创作工作台</title>
-    <meta name="description" content="AI 视频创作工作台，统一管理项目、脚本、分镜、视频生成与助手对话。" />
+    <meta name="description" content="AI 视频创作工作台，统一管理项目、脚本、分镜、视频生成与智能体对话。" />
     
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
@@ -16,7 +17,26 @@
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script>
+        // 首屏定主题，必须在样式生效前同步执行，否则会先按默认色渲染再被纠正、
+        // 闪一下白（或黑）。键名与 src/stores/theme-store.ts 的 THEME_STORAGE_KEY
+        // 保持一致，改名时两处同改。
+        (function () {
+            try {
+                var stored = localStorage.getItem("arcreel-theme");
+                var mode = stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+                var dark = mode === "dark" ||
+                    (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+                if (dark) document.documentElement.classList.add("dark");
+            } catch (e) {
+                // localStorage 不可用时按系统偏好走，读不到就保持浅色
+                if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+                    document.documentElement.classList.add("dark");
+                }
+            }
+        })();
+    </script>
 </head>
 <body class="app-shell font-sans min-h-screen">
     <div id="app-root"></div>
