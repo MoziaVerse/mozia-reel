@@ -355,6 +355,12 @@ async def seed_default_backends(session, *, provider_id: int) -> dict[str, str]:
             continue
         by_media.setdefault(media, []).append(model.model_id)
 
+    # 旁白音色显式置空：上游默认是百炼的 "Cherry"，而托管态的音频走网关自建模型
+    # （index-tts-v2 等），它们不接受任何 preset voice —— 带上直接 400
+    # "preset voice not allowed: Cherry"。置空后 backend 会省略该字段、用模型自带音色。
+    if "audio" in by_media and not (await svc.get_setting("narration_voice", "")).strip():
+        await svc.set_setting("narration_voice", "")
+
     applied: dict[str, str] = {}
     for media, key in _DEFAULT_BACKEND_KEYS.items():
         model_ids = sorted(by_media.get(media, []))

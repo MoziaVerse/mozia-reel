@@ -97,6 +97,15 @@ class NarrationTtsStatus(StrEnum):
     BLOCKED = "blocked"
 
 
+# 「使用模型自带音色」的稳定标识。
+#
+# voice 参与 TTS 产物的新鲜度判定（同一段旁白换了音色要重新合成），所以不能为空 ——
+# 空串会让不同模型的产物看起来"同源"。但中转网关上的自建 TTS（index-tts-v2 等）
+# 不接受任何 preset voice，请求里必须省略该字段。用一个显式哨兵把两件事分开：
+# 对内它是稳定标识，对外由 audio backend 识别并省略。
+MODEL_DEFAULT_VOICE = "__model_default__"
+
+
 @dataclass(frozen=True, slots=True)
 class TtsSynthesisSettings:
     """Resolved paid-synthesis inputs that participate in TTS currency."""

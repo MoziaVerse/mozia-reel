@@ -24,6 +24,9 @@ from lib.retry import with_retry_async
 logger = logging.getLogger(__name__)
 
 # /v1/audio/speech 支持的输出格式（官方 schema），用于按落盘扩展名选 response_format。
+# 长文本合成可能几十秒，给足余量。
+_SPEECH_TIMEOUT_SEC = 180.0
+
 _SUPPORTED_RESPONSE_FORMATS = frozenset({"mp3", "opus", "aac", "flac", "wav", "pcm"})
 _FALLBACK_RESPONSE_FORMAT = "wav"
 
@@ -115,15 +118,48 @@ class OpenAIAudioBackend:
             output_path=request.output_path,
         )
 
+
+    async def _post_speech_without_voice(self, payload: dict) -> bytes:
+        """不带 voice 字段直发 /audio/speech。
+
+        只在「模型自带音色」这条路径上用；其余仍走 SDK，以保留它的鉴权、
+        重试与错误归一。
+        """
+        import httpx
+
+        base = str(self._client.base_url).rstrip("/")
+        api_key = self._client.api_key
+        async with httpx.AsyncClient(timeout=_SPEECH_TIMEOUT_SEC) as client:
+            response = await client.post(
+                f"{base}/audio/speech",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            content = response.content
+        if not content:
+            raise RuntimeError("OpenAI 兼容语音合成返回空响应体")
+        return content
+
     @with_retry_async(retryable_errors=OPENAI_RETRYABLE_ERRORS)
     async def _request_speech(self, request: AudioSynthesisRequest) -> bytes:
         """提交合成请求（计费段），返回音频字节。"""
         kwargs: dict = {
             "model": self._model,
             "input": request.text,
-            "voice": request.voice,
             "response_format": _response_format_for(request.output_path),
         }
+        # 空值或「模型自带音色」哨兵一律省略该字段：OpenAI 官方 TTS 必填 voice，
+        # 但中转网关上的自建模型（如 index-tts-v2）不接受任何 preset voice ——
+        # 带上就是 400 "preset voice not allowed"，不带才用自己的默认音色。
+        from lib.narration_delivery import MODEL_DEFAULT_VOICE
+
+        voice = (request.voice or "").strip()
+        if voice and voice != MODEL_DEFAULT_VOICE:
+            kwargs["voice"] = voice
         if request.speed is not None:
             kwargs["speed"] = request.speed
 
@@ -135,6 +171,12 @@ class OpenAIAudioBackend:
             kwargs["response_format"],
             len(request.text),
         )
+        if "voice" not in kwargs:
+            # SDK 把 voice 声明成必填关键字参数，省略不掉（TypeError: missing
+            # required keyword-only argument: 'voice'）。而网关上的自建 TTS 恰恰
+            # 要求不带这个字段，所以这一种情况绕开 SDK 直接发请求。
+            return await self._post_speech_without_voice(kwargs)
+
         response = await self._client.audio.speech.create(**kwargs)
         if not response.content:
             # 宽松 shim 可能 200 + 空体；不落 0 字节文件、不计成功。该次合成已在供应商侧

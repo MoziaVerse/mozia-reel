@@ -18,6 +18,8 @@ _DEFAULT_TEXT_BACKEND = "gemini-aistudio/gemini-3-flash-preview"
 _DEFAULT_AUDIO_BACKEND = "dashscope/qwen3-tts-flash"
 # 旁白默认音色（DashScope 预设）；可被 project.json 顶层 narration_voice 或全局 setting 覆盖
 # （与 video_backend 等同走顶层 key，非 settings 子字典）。
+from lib.custom_provider import CUSTOM_PROVIDER_PREFIX
+
 _DEFAULT_NARRATION_VOICE = "Cherry"
 
 # 参考上传副本的保守通用请求体上限（ArcReel 侧安全策略常量，非任一供应商的真实字节限；
@@ -219,7 +221,19 @@ class ConfigService:
         # 空白 setting 视为未配置，与项目级覆盖的 strip 语义一致，避免空音色进 TTS 请求
         raw = await self._setting_repo.get("narration_voice", "")
         voice = raw.strip()
-        return voice or _DEFAULT_NARRATION_VOICE
+        if voice:
+            return voice
+        # 未配置时的默认要跟着音频 backend 走。_DEFAULT_NARRATION_VOICE 是百炼的
+        # 音色名，只对内置 provider 成立；自定义供应商（中转网关上的自建 TTS，
+        # 如 index-tts-v2）不接受任何 preset voice —— 带上就是 400
+        # "preset voice not allowed: Cherry"。这类 backend 返回空串，由各 audio
+        # backend 省略 voice 字段、使用模型自带音色。
+        provider, _model = await self.get_default_audio_backend()
+        if provider.startswith(CUSTOM_PROVIDER_PREFIX):
+            from lib.narration_delivery import MODEL_DEFAULT_VOICE
+
+            return MODEL_DEFAULT_VOICE
+        return _DEFAULT_NARRATION_VOICE
 
     async def get_narration_speed(self) -> float | None:
         """旁白语速（全局 setting）。未设置/损坏值返回 None，由各 audio backend 按自身能力处理。"""
