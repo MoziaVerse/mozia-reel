@@ -111,7 +111,27 @@ complete corresponding source code of this modified version.
 - 修改 `frontend/public/site.webmanifest` — `name` / `short_name`
 - 修改 `.dockerignore` — 排除本地 `frontend/.env`，保证镜像构建可复现
 
-### 5. 构建
+### 5. 平台音色库与参考音频克隆
+
+上游按 OpenAI 官方 schema 假设 TTS 用 preset voice（`alloy` 等）。中转网关上的
+自建 TTS 不成立：`index-tts-v2` 对任何 preset voice 返回 400
+`preset voice not allowed`，omnivoice 则静默忽略——音色下拉里一个能用的都没有。
+这类模型表达音色的方式是声音克隆（请求带 `ref_audio` 参考音频）。
+
+- 新增 `lib/voice_library.py` 与 `voice_library/` — 随发行版打包的平台音色库
+  （27 条参考音频 + manifest），id 稳定以免影响上游既有的 TTS 产物新鲜度指纹
+- 修改 `lib/audio_backends/openai.py`：
+  - `list_voices()` 对自定义供应商改为返回「模型自带音色」+ 库音色，不再返回
+    必然失败的官方 preset 目录；官方 OpenAI 通路（含 legacy 收窄）行为不变
+  - `_request_speech()` 对库音色发 `ref_audio`（及可信时的 `ref_text`）而非
+    `voice`；`_post_speech_without_voice` 更名 `_post_speech_raw`，承载
+    SDK 表达不了的请求体
+- 修改 `lib/i18n/{zh,en,vi}/assets.py` — 新增 `voice_label_model_default`
+- 修改 `Dockerfile` — 复制 `voice_library/`
+
+音色库为空时退化为只剩「模型自带音色」，不影响可用性。
+
+### 6. 构建
 
 - 修改 `Dockerfile` — 新增 `APT_MIRROR` / `PIP_INDEX` / `NPM_REGISTRY`
   可选 build-arg，默认空值不启用，出网慢的构建机可显式传入提速
@@ -119,7 +139,8 @@ complete corresponding source code of this modified version.
 ### 测试
 
 上述改动附带的测试：`tests/test_tenant_isolation.py`、
-`tests/test_matrix_session_gate.py`、`tests/test_h3_video_via_gateway.py`，
+`tests/test_matrix_session_gate.py`、`tests/test_h3_video_via_gateway.py`、
+`tests/test_voice_library.py`，
 以及 `tests/conftest.py`、`tests/test_app_module.py`、
 `tests/test_auth_coverage.py`、`tests/test_custom_provider_endpoints.py`
 的相应调整。

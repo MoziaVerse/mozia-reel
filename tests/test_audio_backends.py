@@ -341,26 +341,49 @@ class TestOpenAIAudioBackend:
                 assert ids.isdisjoint({"ballad", "verse", "marin", "cedar"})
                 assert "alloy" in ids
 
-    def test_list_voices_returns_full_catalog_for_custom_openai_tts_endpoint(self):
-        """自定义 openai-tts endpoint 未落入官方 legacy 集合时不额外收窄，保持既有兼容口径。"""
+    def test_list_voices_drops_official_presets_for_custom_providers(self):
+        """自定义供应商不再列官方 preset 目录。
+
+        旧口径是"拿不准就保持全量目录"，实测证伪：中转网关上的自建 TTS 对任何
+        preset voice 都返回 400 ``preset voice not allowed``，那份目录里一个能用的
+        都没有——留着等于给用户一个选哪个都失败的下拉。改为「模型自带音色」（唯一
+        实测可用的）+ 打包音色库（走参考音频克隆）。
+        """
+        with patch("lib.openai_shared.AsyncOpenAI"):
+            from lib.audio_backends.openai import OpenAIAudioBackend
+            from lib.narration_delivery import MODEL_DEFAULT_VOICE
+
+            b = OpenAIAudioBackend(api_key="sk", model="index-tts-v2", provider_name="custom-7")
+            ids = [v.id for v in b.list_voices()]
+            assert ids[0] == MODEL_DEFAULT_VOICE, "模型自带音色必须排在首位——它是唯一无条件可用的"
+            assert not ({"alloy", "ballad", "verse", "marin", "cedar"} & set(ids))
+
+    def test_list_voices_keeps_official_catalog_for_openai_itself(self):
+        """收窄只针对自定义供应商；官方 OpenAI 的目录与 legacy 收窄都不受影响。"""
         with patch("lib.openai_shared.AsyncOpenAI"):
             from lib.audio_backends.openai import OpenAIAudioBackend
 
-            b = OpenAIAudioBackend(api_key="sk", model="fish-audio-v1", provider_name="custom-7")
-            ids = {v.id for v in b.list_voices()}
-            assert {"ballad", "verse", "marin", "cedar"} <= ids
+            ids = {v.id for v in OpenAIAudioBackend(api_key="sk", model="gpt-4o-mini-tts").list_voices()}
+            assert {"alloy", "ballad", "verse", "marin", "cedar"} <= ids
 
-    def test_list_voices_legacy_narrowing_only_applies_to_official_openai(self):
-        """自定义供应商即使模型名恰好也叫 tts-1/tts-1-hd，也无法确定其继承官方同名模型的
-        音色限制——legacy 收窄只对 provider_name 为官方 openai 时生效，避免对无法验证的
-        第三方 endpoint 误收窄。"""
+            legacy = {v.id for v in OpenAIAudioBackend(api_key="sk", model="tts-1").list_voices()}
+            assert legacy.isdisjoint({"ballad", "verse", "marin", "cedar"})
+            assert "alloy" in legacy
+
+    def test_list_voices_survives_empty_voice_library(self, monkeypatch, tmp_path):
+        """音色库是增强项：缺失时退化成只剩「模型自带音色」，而不是让 TTS 不可用。"""
         with patch("lib.openai_shared.AsyncOpenAI"):
             from lib.audio_backends.openai import OpenAIAudioBackend
+            from lib import voice_library
+            from lib.narration_delivery import MODEL_DEFAULT_VOICE
 
-            for legacy_model in ("tts-1", "tts-1-hd"):
-                b = OpenAIAudioBackend(api_key="sk", model=legacy_model, provider_name="custom-7")
-                ids = {v.id for v in b.list_voices()}
-                assert {"ballad", "verse", "marin", "cedar"} <= ids
+            monkeypatch.setattr(voice_library, "VOICE_LIBRARY_DIR", tmp_path / "missing")
+            voice_library._reset_for_tests()
+            try:
+                b = OpenAIAudioBackend(api_key="sk", model="index-tts-v2", provider_name="custom-7")
+                assert [v.id for v in b.list_voices()] == [MODEL_DEFAULT_VOICE]
+            finally:
+                voice_library._reset_for_tests()
 
     async def test_speed_passthrough_and_omitted_when_none(self, tmp_path: Path):
         mock_client = _mock_speech_client()

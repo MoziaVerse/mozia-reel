@@ -1,7 +1,11 @@
 """OpenAIAudioBackend — OpenAI 兼容语音合成后端（同步 ``/v1/audio/speech``）。
 
-请求体携带 ``model`` / ``input`` / ``voice``（必填）与可选 ``response_format`` / ``speed``，
+请求体携带 ``model`` / ``input`` / ``voice``（官方必填）与可选 ``response_format`` / ``speed``，
 响应直接返回音频字节（无需二段下载）。schema 依据 OpenAI 官方 API 参考核实。
+
+中转网关上的自建 TTS 偏离官方 schema 两处，本后端据此分流（见 ``list_voices`` /
+``_request_speech``）：它们不接受任何 preset voice，且用非官方的 ``ref_audio``
+字段做声音克隆——这两种请求体 SDK 都表达不了，走 ``_post_speech_raw``。
 主要服务自定义供应商通路：任意 OpenAI 兼容 TTS（Fish Audio、自托管 shim、中转站）
 经 ``openai-tts`` endpoint 包装为 ``CustomAudioBackend`` 后接入。
 """
@@ -96,12 +100,21 @@ class OpenAIAudioBackend:
         return {AudioCapability.TEXT_TO_SPEECH}
 
     def list_voices(self) -> list[VoiceOption]:
-        # legacy 收窄只对官方 OpenAI 生效：自定义 openai-tts 供应商（provider_name 被覆盖）即使
-        # 模型名恰好也叫 tts-1/tts-1-hd，也无法确定其是否真的继承官方同名模型的音色限制——
-        # 维持全量目录是既有、已声明的兼容策略（见文件顶部注释与 _build_openai_tts 调用点）。
-        if self._provider_name == PROVIDER_OPENAI and self._model in _LEGACY_MODELS:
-            return [v for v in _VOICE_CATALOG if v.id not in _LEGACY_UNSUPPORTED_VOICE_IDS]
-        return list(_VOICE_CATALOG)
+        if self._provider_name == PROVIDER_OPENAI:
+            # legacy 收窄只对官方 OpenAI 生效。
+            if self._model in _LEGACY_MODELS:
+                return [v for v in _VOICE_CATALOG if v.id not in _LEGACY_UNSUPPORTED_VOICE_IDS]
+            return list(_VOICE_CATALOG)
+
+        # 自定义供应商（中转网关上的自建 TTS）不接受官方 preset voice —— 列出 alloy 那一批
+        # 等于给用户一个选哪个都 400 的下拉。改为「模型自带音色」+ 打包音色库（走参考音频
+        # 克隆，见 lib.voice_library）。库为空时退化成只剩前者，仍是可用状态。
+        from lib.narration_delivery import MODEL_DEFAULT_VOICE
+        from lib.voice_library import load_voice_library
+
+        options = [VoiceOption(id=MODEL_DEFAULT_VOICE, label="voice_label_model_default")]
+        options.extend(VoiceOption(id=v.id, label=v.label) for v in load_voice_library())
+        return options
 
     async def synthesize(self, request: AudioSynthesisRequest) -> AudioSynthesisResult:
         # language_type 是 DashScope 特有字段，/v1/audio/speech 无对应参数（语种随输入文本），不发送。
@@ -119,11 +132,11 @@ class OpenAIAudioBackend:
         )
 
 
-    async def _post_speech_without_voice(self, payload: dict) -> bytes:
-        """不带 voice 字段直发 /audio/speech。
+    async def _post_speech_raw(self, payload: dict) -> bytes:
+        """绕开 SDK 直发 /audio/speech。
 
-        只在「模型自带音色」这条路径上用；其余仍走 SDK，以保留它的鉴权、
-        重试与错误归一。
+        用在 SDK 表达不了的请求体上：SDK 把 voice 声明成必填、也不认识 ref_audio
+        这类非官方字段。其余情况仍走 SDK，以保留它的鉴权、重试与错误归一。
         """
         import httpx
 
@@ -156,9 +169,18 @@ class OpenAIAudioBackend:
         # 但中转网关上的自建模型（如 index-tts-v2）不接受任何 preset voice ——
         # 带上就是 400 "preset voice not allowed"，不带才用自己的默认音色。
         from lib.narration_delivery import MODEL_DEFAULT_VOICE
+        from lib.voice_library import find_platform_voice, reference_audio_data_uri
 
         voice = (request.voice or "").strip()
-        if voice and voice != MODEL_DEFAULT_VOICE:
+        # 库音色的"音色"就是那段参考音频：发 ref_audio 让上游克隆，绝不能把库 id 当
+        # preset voice 发上去（上游不认，必然 400）。二者互斥。
+        platform_voice = find_platform_voice(voice) if voice and voice != MODEL_DEFAULT_VOICE else None
+        if platform_voice is not None:
+            kwargs["ref_audio"] = reference_audio_data_uri(platform_voice)
+            # 裁剪过的素材没有可信转写，此时不传 —— 错的 ref_text 比不传更伤克隆质量。
+            if platform_voice.transcript:
+                kwargs["ref_text"] = platform_voice.transcript
+        elif voice and voice != MODEL_DEFAULT_VOICE:
             kwargs["voice"] = voice
         if request.speed is not None:
             kwargs["speed"] = request.speed
@@ -171,11 +193,13 @@ class OpenAIAudioBackend:
             kwargs["response_format"],
             len(request.text),
         )
+        if platform_voice is not None:
+            logger.info("使用平台音色参考音频克隆: %s (%s)", platform_voice.name, platform_voice.path.name)
         if "voice" not in kwargs:
-            # SDK 把 voice 声明成必填关键字参数，省略不掉（TypeError: missing
-            # required keyword-only argument: 'voice'）。而网关上的自建 TTS 恰恰
-            # 要求不带这个字段，所以这一种情况绕开 SDK 直接发请求。
-            return await self._post_speech_without_voice(kwargs)
+            # 两种情况都落在这里：①「模型自带音色」——SDK 把 voice 声明成必填关键字
+            # 参数省略不掉（TypeError），而网关上的自建 TTS 恰恰要求不带它；②库音色
+            # ——请求体里的 ref_audio 是非官方字段，SDK 不认。
+            return await self._post_speech_raw(kwargs)
 
         response = await self._client.audio.speech.create(**kwargs)
         if not response.content:

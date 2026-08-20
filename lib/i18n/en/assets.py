@@ -17,6 +17,7 @@ MESSAGES = {
     "asset_type_scene": "scene",
     "asset_type_prop": "prop",
     "asset_type_product": "merchandise",
+    "voice_label_model_default": "Model default voice",
     "voice_label_dashscope_cherry": "Cherry — Warm, upbeat natural young female voice",
     "voice_label_dashscope_serena": "Serena — Gentle young female voice",
     "voice_label_dashscope_ethan": "Ethan — Standard Mandarin, warm and sunny young male voice",
