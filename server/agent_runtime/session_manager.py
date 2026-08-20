@@ -343,6 +343,7 @@ class SessionManager:
         project_root: Path,
         meta_store: SessionMetaStore,
         projects_root: Path | None = None,
+        projects_root_provider: Callable[[], Path] | None = None,
         in_docker: bool = False,
         sandbox_enabled: bool = True,
         event_log_store: EventLogStore | None = None,
@@ -354,11 +355,17 @@ class SessionManager:
         # convention. Production passes the configured app_data_dir() explicitly.
         # 两路都 resolve，避免符号链接场景下 _resolve_project_cwd 的 relative_to
         # 校验失败（project_cwd 已经 resolve 过）。strict=False 容忍目录不存在。
-        self.projects_root = (
-            Path(projects_root).resolve(strict=False)
-            if projects_root is not None
-            else (self.project_root / "projects").resolve()
+        # 三档取值，优先级从高到低：
+        #   1) 显式传入的 projects_root（测试与特殊调用方）——固定不变
+        #   2) projects_root_provider——按调用时点现取，用于多租户：本管理器随
+        #      AssistantService 在 lifespan 构造，那时没有租户上下文，固化会让 agent
+        #      一直指向部署级根目录、看不到任何租户的项目
+        #   3) 都没有则回落 project_root/"projects"（上游默认，勿改）
+        self._projects_root_override = (
+            Path(projects_root).resolve(strict=False) if projects_root is not None else None
         )
+        self._projects_root_provider = projects_root_provider
+        self._projects_root_fallback = (self.project_root / "projects").resolve()
         self.meta_store = meta_store
         self.sessions: dict[str, ManagedSession] = {}
         # 轮次终结时仍未被认领的回显登记累计数，见 _drain_pending_user_echoes。
@@ -381,7 +388,10 @@ class SessionManager:
         # resolve 后的进程级根路径（零 I/O 纯构造）。用 resolve_log_dir() 拿日志
         # 真实路径，覆盖 ``ARCREEL_LOG_DIR`` 自定义场景——无论落在 repo 内还是外
         # 都必须 deny。
-        self.access_policy = AgentAccessPolicy(
+        # ⚠️ projects_root 传当前值只是给出一个基底；真正生效的是下面 access_policy
+        # 这个 property —— 它每次按当前租户 replace 出新实例。沙箱白名单的基准必须
+        # 跟着租户走，否则"不允许跨项目读取"那条判定用的是错的根。
+        self._access_policy_base = AgentAccessPolicy(
             project_root=self._project_root_resolved,
             projects_root=self.projects_root,
             agent_profile_root=self._agent_profile_root,
@@ -398,7 +408,9 @@ class SessionManager:
         # 同源，避免 store 与用量落到不同 per-user 命名空间。_resolve_project_cwd
         # （项目名校验/作用域）留在会话管理侧，作为依赖注入。
         self._options_assembler = OptionsAssembler(
-            projects_root=self.projects_root,
+            # provider 而非值：MCP 工具跑在主进程、绕过 sandbox，拿这个根去找项目。
+            # 固化成启动时的部署级根目录，租户的项目就一个也找不到。
+            projects_root_provider=lambda: self.projects_root,
             allowed_tools=self.DEFAULT_ALLOWED_TOOLS,
             setting_sources=self.DEFAULT_SETTING_SOURCES,
             access_policy_provider=lambda: self.access_policy,
@@ -417,11 +429,47 @@ class SessionManager:
         而非戳改字段——hook / options 构建都在调用时读 ``self.access_policy``，
         换新即对后续所有会话与工具调用生效。
         """
-        self.access_policy = replace(
-            self.access_policy,
+        self._access_policy_base = replace(
+            self._access_policy_base,
             in_docker=bool(in_docker),
             sandbox_enabled=bool(sandbox_enabled),
         )
+
+    @property
+    def access_policy(self) -> AgentAccessPolicy:
+        """按当前租户现取。
+
+        白名单基准（projects_root）必须跟着租户走：固化成部署级根目录时，
+        "不允许跨项目读取"那条判定的基准就是错的。
+        """
+        root = self.projects_root
+        if self._access_policy_base.projects_root == root:
+            return self._access_policy_base
+        return replace(self._access_policy_base, projects_root=root)
+
+    @access_policy.setter
+    def access_policy(self, value: AgentAccessPolicy) -> None:
+        """整体换新（测试与 refresh_config）。policy 不可变，戳改字段无效。"""
+        self._access_policy_base = value
+
+    @property
+    def projects_root(self) -> Path:
+        """按当前租户现取。
+
+        显式传入 projects_root 时按传入值固定（测试与特殊调用方）；否则动态解析 ——
+        本管理器随 AssistantService 在 lifespan 构造，那时没有租户上下文，固化会让
+        agent 一直指向部署级根目录，租户的项目一个也看不到。
+        """
+        if self._projects_root_override is not None:
+            return self._projects_root_override
+        if self._projects_root_provider is not None:
+            return Path(self._projects_root_provider()).resolve(strict=False)
+        return self._projects_root_fallback
+
+    @projects_root.setter
+    def projects_root(self, value: Path | None) -> None:
+        """显式赋值固定下来（测试与特殊调用方）；赋 None 恢复按租户解析。"""
+        self._projects_root_override = Path(value).resolve(strict=False) if value is not None else None
 
     def _load_config(self) -> None:
         """Load configuration from environment (sync fallback)."""

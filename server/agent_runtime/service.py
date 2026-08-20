@@ -35,7 +35,7 @@ from lib.app_data_dir import app_data_dir
 from lib.i18n import DEFAULT_LOCALE, get_locale
 from lib.profile_frontmatter import FrontmatterError, parse_profile_metadata
 from lib.profile_manifest import VALID_CONTENT_MODES
-from lib.project_manager import ProjectManager
+from lib.project_manager import ProjectManager, get_project_manager
 from server.agent_runtime.event_log import (
     EventLogService,
     EventLogStore,
@@ -81,11 +81,40 @@ class InterruptSettleTimeoutError(MessageRewriteError):
 
 
 class AssistantService:
+    # ⚠️ 按租户现取，不在 __init__ 固化：本服务是进程级单例，在 lifespan 启动时构造，
+    # 那时没有任何租户上下文，取到的是部署级根目录。固化之后 agent 永远看不到租户目录
+    # 下的项目 —— 表现为"项目不存在"，而且只有走完整 agent 链路才撞得到。
+    @property
+    def projects_root(self) -> Path:
+        if self._projects_root_override is not None:
+            return self._projects_root_override
+        return app_data_dir()
+
+    @projects_root.setter
+    def projects_root(self, value: Path | None) -> None:
+        """显式赋值固定下来（测试与特殊调用方）；赋 None 恢复按租户解析。"""
+        self._projects_root_override = Path(value) if value is not None else None
+        # 会话侧共用同一基准，否则 agent 的 cwd 与访问白名单会与这里分叉。
+        if getattr(self, "session_manager", None) is not None:
+            self.session_manager._projects_root_override = self._projects_root_override
+
+    @property
+    def pm(self) -> ProjectManager:
+        if self._pm_override is not None:
+            return self._pm_override
+        if self._projects_root_override is not None:
+            return ProjectManager(self._projects_root_override)
+        return get_project_manager()
+
+    @pm.setter
+    def pm(self, value: ProjectManager | None) -> None:
+        """显式注入（测试替身）；赋 None 恢复按租户解析。"""
+        self._pm_override = value
+
     def __init__(self, project_root: Path):
         self.project_root = Path(project_root)
-        self.projects_root = app_data_dir()
-
-        self.pm = ProjectManager(self.projects_root)
+        self._projects_root_override: Path | None = None
+        self._pm_override: ProjectManager | None = None
         self.meta_store = SessionMetaStore()
         # 会话事件日志：UI 时间线唯一读源。store 与 SessionManager 共享同一实例，
         # live 写入点（entry pipeline）与读取端（REST / SSE / 懒生成）落同一张表。
@@ -93,7 +122,9 @@ class AssistantService:
         self.session_manager = SessionManager(
             project_root=self.project_root,
             meta_store=self.meta_store,
-            projects_root=self.projects_root,
+            # 传 provider 而非值：传值等于把启动那一刻的部署级根目录固化进去，
+            # 之后所有租户共用它，agent 一个租户项目也看不到。
+            projects_root_provider=lambda: self.projects_root,
             event_log_store=self.event_log_store,
         )
         # Shared with SessionManager (lazy-cached there) so reads via the

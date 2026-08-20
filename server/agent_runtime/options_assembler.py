@@ -90,7 +90,8 @@ class OptionsAssembler:
     def __init__(
         self,
         *,
-        projects_root: Path,
+        projects_root: Path | None = None,
+        projects_root_provider: Callable[[], Path] | None = None,
         allowed_tools: Sequence[str],
         setting_sources: Sequence[str],
         access_policy_provider: Callable[[], AgentAccessPolicy],
@@ -100,7 +101,14 @@ class OptionsAssembler:
         session_factory_provider: Callable[[], Any] | None = None,
         user_id_provider: Callable[[], str] | None = None,
     ) -> None:
-        self.projects_root = Path(projects_root)
+        # 与 SessionManager 同样的三档取值：显式值 > provider > 报错。
+        # 传值会把启动那一刻的部署级根目录固化下来，之后 MCP 工具（跑在主进程、
+        # 绕过 sandbox）拿它去找项目，租户的项目一个也找不到 —— 表现为
+        # "complete_asset_inventory 失败: 项目 xxx 不存在"，而 agent 本身工作正常。
+        self._projects_root_static = Path(projects_root) if projects_root is not None else None
+        self._projects_root_provider = projects_root_provider
+        if self._projects_root_static is None and self._projects_root_provider is None:
+            raise ValueError("projects_root 与 projects_root_provider 至少给一个")
         self._allowed_tools = list(allowed_tools)
         self._setting_sources = list(setting_sources)
         self._access_policy_provider = access_policy_provider
@@ -190,6 +198,12 @@ class OptionsAssembler:
         self._cached_session_store = store
         self._session_store_resolved = True
         return store
+
+    @property
+    def projects_root(self) -> Path:
+        if self._projects_root_static is not None:
+            return self._projects_root_static
+        return Path(self._projects_root_provider())
 
     async def build(
         self,
