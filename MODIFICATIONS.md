@@ -160,6 +160,11 @@ complete corresponding source code of this modified version.
 - 修改 `public/skill.md.template`、`server/app.py`、`Dockerfile` —
   文档里的产品名改用 `{{BRAND}}` 占位符，运行期从 `BRAND_NAME` 填充。此前前端
   已改名而这份文档仍写上游名，外部 Agent 会看到两个不一致的产品
+- 托管态撤掉「外部 Agent 凭 API 令牌驱动本站」整条链路：`ProjectsPage` 的
+  OpenClaw 入口、设置页的「API 令牌」小节、后端 `/skill.md`（托管态返回 404）。
+  该功能在托管形态下不完整，留着半条链路只会把人引到不存在的页面
+- 修改 `frontend/src/stores/config-status-store.ts` — 暴露 `managed`，
+  各处复用同一次总览请求判断托管态
 
 ### 7. 构建
 

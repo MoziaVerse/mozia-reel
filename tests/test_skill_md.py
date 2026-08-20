@@ -17,8 +17,10 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client(monkeypatch) -> TestClient:
     # 不进 lifespan：本端点只读模板 + 环境变量，与 DB / worker 无关。
+    # 默认按独立部署跑；托管态由单独的用例显式打开。
+    monkeypatch.delenv("MATRIX_BACKEND_URL", raising=False)
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -61,3 +63,13 @@ def test_served_without_auth(client, monkeypatch):
     res = client.get("/skill.md")
     assert res.status_code == 200
     assert res.headers["content-type"].startswith("text/markdown")
+
+
+def test_not_served_in_hosted_mode(client, monkeypatch):
+    """托管态下外部 Agent 那条链路整个撤掉了（入口与令牌管理都不再提供）。
+
+    继续对外发一份"去设置页的 API 令牌区拿 key"的说明，只会把人引到一个
+    不存在的页面。
+    """
+    monkeypatch.setenv("MATRIX_BACKEND_URL", "https://matrix.example.com")
+    assert client.get("/skill.md").status_code == 404

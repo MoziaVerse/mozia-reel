@@ -296,6 +296,17 @@ describe("SystemConfigPage · 托管态", () => {
     expect(screen.queryByText(/gw\.example\.com/)).not.toBeInTheDocument();
   });
 
+  it("撤掉 API 令牌入口——外部 Agent 那条链路整个不提供", async () => {
+    renderPage();
+    expect(await screen.findByRole("button", { name: /账户/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /API 令牌/ })).not.toBeInTheDocument();
+  });
+
+  it("存量的 ?section=api-keys 书签同样落到账户页", async () => {
+    renderPage("/app/settings?section=api-keys");
+    expect(await screen.findByText("sub-123")).toBeInTheDocument();
+  });
+
   it("模型页在选择器之外附一份网关可用模型清单", async () => {
     renderPage("/app/settings?section=media");
     expect(await screen.findByText("One")).toBeInTheDocument();

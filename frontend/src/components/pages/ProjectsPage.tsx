@@ -383,6 +383,8 @@ interface TopBarProps {
   onSettings: () => void;
   onAssets: () => void;
   onOpenClaw: () => void;
+  /** 托管态下外部 Agent 那条链路整个不提供，入口一并撤掉。 */
+  showOpenClaw: boolean;
   importing: boolean;
   configIncomplete: boolean;
   searchInputRef: React.RefObject<HTMLInputElement | null>;
@@ -396,6 +398,7 @@ function TopBar({
   onSettings,
   onAssets,
   onOpenClaw,
+  showOpenClaw,
   importing,
   configIncomplete,
   searchInputRef,
@@ -488,16 +491,20 @@ function TopBar({
             <Plus className="h-3.5 w-3.5" />
             {t("dashboard:create_project")}
           </button>
-          <span aria-hidden className="mx-1 h-5 w-px bg-hairline-soft" />
-          <button
-            type="button"
-            onClick={onOpenClaw}
-            className="rounded-md px-2 py-1.5 text-sm text-text-3 transition-colors hover:bg-bg-grad-a hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-            title={t("dashboard:openclaw")}
-            aria-label={t("dashboard:openclaw")}
-          >
-            <span aria-hidden>🦞</span>
-          </button>
+          {showOpenClaw && (
+            <>
+              <span aria-hidden className="mx-1 h-5 w-px bg-hairline-soft" />
+              <button
+                type="button"
+                onClick={onOpenClaw}
+                className="rounded-md px-2 py-1.5 text-sm text-text-3 transition-colors hover:bg-bg-grad-a hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                title={t("dashboard:openclaw")}
+                aria-label={t("dashboard:openclaw")}
+              >
+                <span aria-hidden>🦞</span>
+              </button>
+            </>
+          )}
           <button
             type="button"
             onClick={onSettings}
@@ -770,6 +777,7 @@ export function ProjectsPage() {
   const importInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const isConfigComplete = useConfigStatusStore((s) => s.isComplete);
+  const managed = useConfigStatusStore((s) => s.managed);
 
   const phaseLabels = usePhaseLabels();
 
@@ -999,6 +1007,7 @@ export function ProjectsPage() {
           navigate("/app/assets");
         }}
         onOpenClaw={() => setShowOpenClaw(true)}
+        showOpenClaw={!managed}
         importing={importingProject}
         configIncomplete={!isConfigComplete}
         searchInputRef={searchInputRef}
@@ -1156,7 +1165,7 @@ export function ProjectsPage() {
         />
       )}
 
-      {showOpenClaw && <OpenClawModal onClose={() => setShowOpenClaw(false)} />}
+      {showOpenClaw && !managed && <OpenClawModal onClose={() => setShowOpenClaw(false)} />}
       {showCreateModal && <CreateProjectModal />}
 
       <ConfirmDialog
