@@ -105,6 +105,39 @@ def _video_error_message(video: object) -> str:
     return "unknown"
 
 
+# H3 的 parse_size 只认 32 的倍数，且面积不超过 1344×768。9:16 的 720P 档算出来是
+# 720x1280 —— 720 不是 32 的倍数，直接 400。所以 H3 的尺寸必须自己算，不能借用
+# Sora 的固定档。
+_H3_SIZE_MULTIPLE = 32
+_H3_MAX_AREA = 1344 * 768
+
+
+def _snap_h3_size(width: int, height: int) -> str:
+    """吸附到 32 的倍数，并在超面积时等比缩到 H3 的上限内。"""
+
+    def _snap(v: int) -> int:
+        return max(_H3_SIZE_MULTIPLE, round(v / _H3_SIZE_MULTIPLE) * _H3_SIZE_MULTIPLE)
+
+    w, h = _snap(width), _snap(height)
+    while w * h > _H3_MAX_AREA:
+        # 每次退一档而不是一次性算比例：吸附后仍要落在 32 的倍数上。
+        if w >= h:
+            w -= _H3_SIZE_MULTIPLE
+        else:
+            h -= _H3_SIZE_MULTIPLE
+        w, h = max(w, _H3_SIZE_MULTIPLE), max(h, _H3_SIZE_MULTIPLE)
+    return f"{w}x{h}"
+
+
+def _h3_size_for_aspect(aspect_ratio: str) -> str:
+    """按目标比例算一个 H3 合法的尺寸，尽量贴近面积上限。"""
+    aw, ah = parse_aspect_ratio(aspect_ratio)
+    ratio = aw / ah
+    # 以面积上限为基准反解边长，再交给 _snap_h3_size 收口。
+    height = (_H3_MAX_AREA / ratio) ** 0.5
+    return _snap_h3_size(round(height * ratio), round(height))
+
+
 def _resolve_size(model: str, resolution: str | None, aspect_ratio: str) -> str:
     """比例优先：在 model+分辨率档对应的 sora 合法档中选比例最接近 aspect_ratio 的；并列取像素更高者。
 
@@ -116,9 +149,12 @@ def _resolve_size(model: str, resolution: str | None, aspect_ratio: str) -> str:
     # 面积 ≤1344×768，档位吸附会把用户指定的分辨率改掉。
     # Sora 必须继续走吸附：它只认固定档，透传自定义值会被上游拒绝，
     # 这也是上游 test_custom_resolution_value_ignored_uses_legal_size 锁的行为。
-    if _is_minimax_h3(model) and resolution is not None:
-        if match := _CUSTOM_SIZE_RE.match(resolution):
-            return f"{match.group(1)}x{match.group(2)}"
+    if _is_minimax_h3(model):
+        if resolution is not None and (match := _CUSTOM_SIZE_RE.match(resolution)):
+            return _snap_h3_size(int(match.group(1)), int(match.group(2)))
+        # 没给显式尺寸时也不能落回 Sora 档位：那套档里的 720 不是 32 的倍数，
+        # H3 会直接 400（invalid_size: must use width/height multiples of 32）。
+        return _h3_size_for_aspect(aspect_ratio)
 
     aw, ah = parse_aspect_ratio(aspect_ratio)
     target = aw / ah

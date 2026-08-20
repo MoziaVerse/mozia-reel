@@ -137,3 +137,40 @@ class TestPollingTimeout:
         from lib.video_backends.openai import _H3_POLL_INTERVAL_SECONDS, _POLL_INTERVAL_SECONDS
 
         assert _H3_POLL_INTERVAL_SECONDS > _POLL_INTERVAL_SECONDS
+
+
+class TestH3SizeConstraints:
+    """H3 的 parse_size 只认 32 的倍数、面积 ≤1344×768。
+
+    Sora 的 9:16 720P 档算出来是 720x1280 —— 720 不是 32 的倍数，H3 直接 400
+    (invalid_size: must use width/height multiples of 32)。所以 H3 的尺寸必须
+    自己算，不能借用 Sora 的固定档。这几条尺寸都在生产网关上实测过。
+    """
+
+    MAX_AREA = 1344 * 768
+
+    def _check(self, size: str) -> tuple[int, int]:
+        w, h = (int(x) for x in size.split("x"))
+        assert w % 32 == 0 and h % 32 == 0, f"{size} 不是 32 的倍数"
+        assert w * h <= self.MAX_AREA, f"{size} 超出面积上限"
+        return w, h
+
+    @pytest.mark.parametrize("aspect", ["9:16", "16:9", "1:1", "4:3"])
+    def test_derived_size_is_always_legal(self, aspect):
+        self._check(_resolve_size("minimax/minimax-h3-ref2va", None, aspect))
+
+    def test_portrait_matches_probed_value(self):
+        """9:16 应得到实测可用的 768x1344。"""
+        assert _resolve_size("minimax/minimax-h3-ref2va", None, "9:16") == "768x1344"
+
+    def test_illegal_explicit_size_is_snapped(self):
+        """用户给的 720x1280 含非法的 720，要吸附成合法值而不是原样下发。"""
+        assert _resolve_size("minimax/minimax-h3-ref2va", "720x1280", "9:16") == "704x1280"
+
+    def test_oversized_request_is_scaled_down(self):
+        self._check(_resolve_size("minimax/minimax-h3-ref2va", "4096x4096", "1:1"))
+
+    def test_sora_still_uses_its_own_tiers(self):
+        from lib.video_backends.openai import _SORA_LEGAL_SIZES
+
+        assert _resolve_size("sora-2", None, "9:16") in _SORA_LEGAL_SIZES
