@@ -74,6 +74,20 @@ class TestDataRootIsolation:
         with tenant_scope("alice"):
             assert app_data_dir().parent.name == "tenants"
 
+    def test_recreates_root_if_deleted(self):
+        """目录被外部删掉后要能自愈。
+
+        带缓存的版本会记住"建过了"而不再重建，之后所有请求撞
+        "unable to open database file" —— 那个报错指不到根因。
+        """
+        import shutil
+
+        with tenant_scope("alice"):
+            first = app_data_dir()
+            shutil.rmtree(first)
+            assert not first.exists()
+            assert app_data_dir().exists()
+
     def test_scope_restores_previous(self):
         with tenant_scope("alice"):
             with tenant_scope("bob"):

@@ -18,10 +18,14 @@ from lib.db import ensure_tenant_db, get_async_session, safe_session_factory
 from lib.tenant_context import is_valid_tenant, tenant_scope
 from lib.matrix_session import (
     SESSION_COOKIE_NAME,
+    fetch_wallet_balance,
+    get_wallet_token,
+    save_wallet_token,
     MatrixHandoffError,
     cookie_secure,
     exchange_ticket,
     issue_session_cookie,
+    matrix_launch_url,
     seed_agent_credential_for_gateway,
     seed_gateway_provider,
     session_ttl_seconds,
@@ -86,6 +90,8 @@ async def init_session(
             # Agent 编排走同一把 key（网关支持 Anthropic 格式的 /v1/messages）。
             # 不配的话设置页会一直挂"智能体未配置"的红点，而用户无从填写。
             await seed_agent_credential_for_gateway(tenant_session, gateway=gateway, api_key=api_key)
+            # 余额凭据存服务端：cookie 只签名未加密，不放凭据。
+            await save_wallet_token(tenant_session, payload.get("walletToken"))
 
     # 新租户首次握手：拉起它自己的生成 worker，否则它提交的任务没人处理。
     supervisor = getattr(request.app.state, "worker_supervisor", None)
@@ -152,6 +158,39 @@ _HANDOFF_HTML = """<!doctype html>
 })();
 </script></body></html>
 """
+
+
+@router.post("/matrix-session/logout")
+async def logout(response: Response):
+    """登出：清会话 cookie。
+
+    只清 cookie，不动租户数据 —— 同一个人下次登录还要看到自己的项目。
+    网关 key 留在服务端该租户的库里，浏览器侧本来就没有，所以不存在
+    "登出后仍能拿旧 key 发起生成"的窗口。
+    """
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    # 前端拿这个地址把人送回去。带 prompt=login 强制走登录表单，否则 matrix
+    # 那边还留着会话，会直接把同一个账号再送回来 —— 用户就没有换人的口子。
+    return {"ok": True, "login_url": matrix_launch_url(force_login=True)}
+
+
+@router.get("/matrix-session/credits")
+async def credits(session: AsyncSession = Depends(get_async_session)):
+    """当前用户在 Matrix 的实时余额。
+
+    走服务端存的 walletToken（scope=wallet 的只读凭据），不下发给浏览器。
+    拿不到就明确回 unavailable，让前端隐藏余额而不是显示成 0 —— 后者会被
+    当成"没钱了"。
+    """
+    token = await get_wallet_token(session)
+    if not token:
+        return {"available": False, "reason": "no_wallet_token"}
+    try:
+        data = await fetch_wallet_balance(token)
+    except MatrixHandoffError as exc:
+        logger.warning("拉取余额失败: %s", exc)
+        return {"available": False, "reason": exc.code}
+    return {"available": True, "wallet": data}
 
 
 @router.get("/matrix-session/overview")

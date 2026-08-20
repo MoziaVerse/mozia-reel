@@ -55,14 +55,18 @@ def external_client_id() -> str:
     return os.environ.get("EXTERNAL_CLIENT_ID", "mozia-reel").strip()
 
 
-def matrix_launch_url() -> str:
+def matrix_launch_url(*, force_login: bool = False) -> str:
     """未握手的浏览器该被送去哪。
 
     送 matrix 的 launch 中继页而不是站点首页：中继页会自己处理"未登录先登录、
     已登录直接 mint ticket 跳回来"，形成闭环。送首页的话用户跳过去就没有回来的
     路了——得自己想起来去应用市场找卡片。
+
+    force_login 用于"切换账号"：matrix 那边还留着会话时，默认路径会直接把同一个
+    账号再送回来，用户没有换人的口子；带上 prompt=login 才会强制走登录表单。
     """
-    return f"{matrix_web_url()}/launch/{external_client_id()}"
+    suffix = "?prompt=login" if force_login else ""
+    return f"{matrix_web_url()}/launch/{external_client_id()}{suffix}"
 
 
 def session_ttl_seconds() -> int:
@@ -274,6 +278,47 @@ async def seed_default_backends(session, *, provider_id: int) -> dict[str, str]:
         await session.commit()
         logger.info("默认模型已配置: %s", applied)
     return applied
+
+
+# matrix 下发的长期只读余额凭据。存服务端而不是塞进 cookie：cookie 只做了签名
+# 没有加密，payload 可被解出来 —— 身份信息无所谓，凭据不行。
+# （canvas 把 key 和 walletToken 一起放 cookie，靠 AES-256-GCM 加密兜底；
+#  我们的 key 本来就在 DB，没必要为一个 token 引入加密体系。）
+_WALLET_TOKEN_SETTING = "matrix_wallet_token"
+
+
+async def save_wallet_token(session, token: str | None) -> None:
+    """保存余额凭据。matrix 未下发时清掉旧值，避免拿过期 token 一直查失败。"""
+    from lib.config.service import ConfigService
+
+    svc = ConfigService(session)
+    await svc.set_setting(_WALLET_TOKEN_SETTING, token or "")
+    await session.commit()
+
+
+async def get_wallet_token(session) -> str | None:
+    from lib.config.service import ConfigService
+
+    value = (await ConfigService(session).get_setting(_WALLET_TOKEN_SETTING, "")).strip()
+    return value or None
+
+
+async def fetch_wallet_balance(token: str) -> dict:
+    """凭 walletToken 拉实时余额。"""
+    base = matrix_backend_url()
+    if not base:
+        raise MatrixHandoffError("MATRIX_BACKEND_URL 未配置", 500, "misconfigured")
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(
+                f"{base}/api/external/wallet",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    except httpx.HTTPError as exc:
+        raise MatrixHandoffError(f"matrix 不可达: {exc}", 502, "matrix_unreachable") from exc
+    if response.status_code >= 400:
+        raise MatrixHandoffError(response.text[:200], response.status_code, "wallet_failed")
+    return response.json()
 
 
 AGENT_CREDENTIAL_DISPLAY_NAME = "Matrix 网关"

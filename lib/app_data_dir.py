@@ -42,11 +42,6 @@ def base_data_dir() -> Path:
     return default
 
 
-# 每租户根目录只需建一次，但不能用 functools.cache 包 app_data_dir 本身 ——
-# 它的返回值依赖 ContextVar，缓存会把第一个租户的路径固定给所有人。
-_ensured_tenant_roots: set[str] = set()
-
-
 def app_data_dir() -> Path:
     """Return the data root for the **current tenant**.
 
@@ -66,13 +61,14 @@ def app_data_dir() -> Path:
     if tenant is None:
         return base
     path = base / "tenants" / tenant
-    if tenant not in _ensured_tenant_roots:
-        path.mkdir(parents=True, exist_ok=True)
-        _ensured_tenant_roots.add(tenant)
+    # 每次都 mkdir(exist_ok=True) 而不是用 set 记住"建过了"：目录一旦被外部
+    # 删除（卷挂载异常、运维清理），带缓存的版本不会重建，之后所有请求都撞
+    # "unable to open database file" —— 那个报错指不到根因。mkdir 是一次幂等
+    # syscall，换来的是自愈。
+    path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def _reset_for_tests() -> None:
     """Clear the cached value so tests can monkeypatch env between cases."""
     base_data_dir.cache_clear()
-    _ensured_tenant_roots.clear()
