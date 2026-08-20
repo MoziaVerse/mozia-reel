@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 
 import { API } from "@/api";
 import { AgentPageIntro } from "@/components/agent/AgentPageIntro";
+import type { MatrixOverview } from "@/types";
+import { AgentModelRouting } from "@/components/agent/AgentModelRouting";
 import { CredentialsSection } from "@/components/agent/CredentialsSection";
 import { GHOST_BTN_CLS, INPUT_CLS } from "@/components/ui/darkroom-tokens";
 import { FieldLabel } from "@/components/ui/FieldLabel";
@@ -47,9 +49,11 @@ function buildPatch(draft: AgentDraft, saved: AgentDraft): SystemConfigPatch {
 
 interface AgentConfigTabProps {
   visible: boolean;
+  /** 托管态总览。由设置页传入而非本组件自取，免得同一份数据拉两遍。 */
+  matrixOverview?: MatrixOverview | null;
 }
 
-export function AgentConfigTab({ visible }: AgentConfigTabProps) {
+export function AgentConfigTab({ visible, matrixOverview }: AgentConfigTabProps) {
   const { t } = useTranslation("dashboard");
   const [remoteData, setRemoteData] = useState<GetSystemConfigResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -164,8 +168,14 @@ export function AgentConfigTab({ visible }: AgentConfigTabProps) {
   return (
     <div className={visible ? undefined : "hidden"}>
       <div className="space-y-7 pb-0 pt-1">
-        <AgentPageIntro />
-        <CredentialsSection />
+        <AgentPageIntro showCompatHint={!matrixOverview?.enabled} />
+        {/* 托管态没有凭证可管：地址与密钥由平台握手时下发，"选供应商"那一排选了也没用
+            （网关只有一个）。只留真正可调的模型路由。 */}
+        {matrixOverview?.enabled ? (
+          <AgentModelRouting overview={matrixOverview} />
+        ) : (
+          <CredentialsSection />
+        )}
         <SectionShell kicker="Runtime Tuning" title={t("advanced_settings")}>
           <div className="space-y-4">
             <div>

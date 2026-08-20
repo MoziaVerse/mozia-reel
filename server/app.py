@@ -731,7 +731,12 @@ async def serve_skill_md(request: Request) -> Response:
     host = request.url.netloc
     base_url = f"{scheme}://{host}"
 
-    content = template.replace("{{BASE_URL}}", base_url)
+    # 品牌名与前端同源：前端走构建期 VITE_BRAND_NAME，后端这份文档走运行期
+    # BRAND_NAME。两处都留空时回落上游名，未改名的部署行为不变。
+    # 不同步的后果很具体：外部 Agent 被告知"了解如何使用 MoziaReel"，
+    # 打开文档却看到"ArcReel Skill"，会以为拿错了地址。
+    brand = os.environ.get("BRAND_NAME", "").strip() or "ArcReel"
+    content = template.replace("{{BASE_URL}}", base_url).replace("{{BRAND}}", brand)
     return PlainTextResponse(content, media_type="text/markdown; charset=utf-8")
 
 

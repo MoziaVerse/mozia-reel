@@ -13,6 +13,11 @@ set -a; . "./$ENV_FILE"; set +a
 # 本地数据独立，不碰生产：租户目录仍按 ssoSub 分，但根目录在本地。
 export ARCREEL_DATA_DIR="${ARCREEL_DATA_DIR:-./.dev-data}"
 export SESSION_COOKIE_SECRET="${SESSION_COOKIE_SECRET:-local-dev-only-$(printf '%040d' 0)}"
+# skill.md 由后端运行期渲染，本地也得给品牌名，否则文档里还写着上游名字。
+if [ -z "${BRAND_NAME:-}" ] && [ -f frontend/.env ]; then
+  BRAND_NAME="$(sed -n 's/^VITE_BRAND_NAME=//p' frontend/.env | head -1)"
+fi
+export BRAND_NAME="${BRAND_NAME:-}"
 
 echo "以 ${DEV_BOUND_USERNAME:-$DEV_BOUND_SSO_SUB} 身份启动 · 网关 ${DEV_BOUND_GATEWAY}"
 echo "数据目录 ${ARCREEL_DATA_DIR}"

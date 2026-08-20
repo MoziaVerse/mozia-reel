@@ -646,6 +646,22 @@ export default {
   'drop_more_files_here': 'Hoặc kéo thả thêm tệp vào đây',
   'uploading': 'Đang tải lên...',
 
+  // AgentModelRouting（托管态智能体模型路由）
+  'agent_models': "Dinh tuyen mo hinh",
+  'agent_models_desc': "Claude Agent SDK dinh tuyen theo cap do nang luc; ung vien lay tu cac mo hinh van ban cua Matrix gateway.",
+  'agent_tier_default': "Mo hinh mac dinh",
+  'agent_tier_default_desc': "Dung cho moi cap do khong chi dinh rieng.",
+  'agent_tier_haiku': "Cap HAIKU",
+  'agent_tier_haiku_desc': "Tac vu nhe (phan loai, trich xuat, hoi dap don gian).",
+  'agent_tier_sonnet': "Cap SONNET",
+  'agent_tier_sonnet_desc': "Tac vu can bang (viet, dieu phoi, suy luan nhieu buoc).",
+  'agent_tier_opus': "Cap OPUS",
+  'agent_tier_opus_desc': "Tac vu phuc tap (viet dai, phan tich sau).",
+  'agent_tier_subagent': "Mo hinh tac vu con",
+  'agent_tier_subagent_desc': "Mo hinh dung khi cac tac vu con chay song song.",
+  'agent_tier_inherit': "De trong de theo mo hinh mac dinh",
+  'agent_credential_missing': "Nen tang chua cap thong tin xac thuc cho agent. Hay vao lai ung dung tu Matrix app store; neu van loi, lien he nen tang.",
+
   // AccountSection（托管态账户页）
   'account_gift_limited_hint': "Tin dung tang khong het han nhung chi dung duoc voi mot so mo hinh. Truy cap day du can tin dung nap hoac thue bao, do chinh la phan tin dung kha dung.",
   'account': "Tài khoản",

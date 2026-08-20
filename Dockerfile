@@ -99,6 +99,10 @@ COPY agent_runtime_profile/ agent_runtime_profile/
 # 平台音色库（参考音频 + manifest）。漏掉不会报错，只会让音色下拉退化成
 # 只剩「模型自带音色」——静默降级，所以这行别删。
 COPY voice_library/ voice_library/
+
+# skill.md 是后端在运行期渲染的，拿不到构建期的 VITE_BRAND_NAME。留空则回落上游名。
+ARG VITE_BRAND_NAME=""
+ENV BRAND_NAME=${VITE_BRAND_NAME}
 COPY public/ public/
 
 # 复制前端构建产物

@@ -357,7 +357,9 @@ export function SystemConfigPage() {
               {activeSection === "account" && matrixOverview && (
                 <AccountSection overview={matrixOverview} />
               )}
-              {activeSection === "agent" && <AgentConfigTab visible />}
+              {activeSection === "agent" && (
+                <AgentConfigTab visible matrixOverview={matrixOverview} />
+              )}
               {activeSection === "media" && (
                 <div className="space-y-6">
                   <MediaModelSection />

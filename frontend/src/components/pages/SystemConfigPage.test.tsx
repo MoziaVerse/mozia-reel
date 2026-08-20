@@ -266,6 +266,36 @@ describe("SystemConfigPage · 托管态", () => {
     expect(await screen.findByText("sub-123")).toBeInTheDocument();
   });
 
+  it("智能体页只留模型路由，凭证 CRUD 整个撤掉", async () => {
+    vi.spyOn(API, "listAgentCredentials").mockResolvedValue({
+      credentials: [
+        {
+          id: 1,
+          preset_id: "__custom__",
+          display_name: "Matrix 网关",
+          icon_key: null,
+          base_url: "https://gw.example.com",
+          api_key_masked: "abcd…wxyz",
+          model: "m/one",
+          haiku_model: "",
+          sonnet_model: "",
+          opus_model: "",
+          subagent_model: "",
+          is_active: true,
+          created_at: "2026-08-20T00:00:00",
+        },
+      ],
+    } as never);
+
+    renderPage("/app/settings?section=agent");
+
+    expect(await screen.findByText("模型路由")).toBeInTheDocument();
+    // 地址与密钥由平台下发，用户改不了也不该看到入口
+    expect(screen.queryByText(/添加供应商/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/连接测试/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/gw\.example\.com/)).not.toBeInTheDocument();
+  });
+
   it("模型页在选择器之外附一份网关可用模型清单", async () => {
     renderPage("/app/settings?section=media");
     expect(await screen.findByText("One")).toBeInTheDocument();

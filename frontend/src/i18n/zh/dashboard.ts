@@ -662,6 +662,22 @@ export default {
   'workspace_notifications_title': '工作区通知',
   'cost_details_eyebrow': '用量与费用',
 
+  // AgentModelRouting（托管态智能体模型路由）
+  'agent_models': "模型路由",
+  'agent_models_desc': "Claude Agent SDK 按能力等级路由到不同模型；候选来自 Matrix 网关的文本模型。",
+  'agent_tier_default': "默认模型",
+  'agent_tier_default_desc': "未单独指定的档位都用它。",
+  'agent_tier_haiku': "HAIKU 档",
+  'agent_tier_haiku_desc': "轻量任务（分类、提取、简单问答）。",
+  'agent_tier_sonnet': "SONNET 档",
+  'agent_tier_sonnet_desc': "均衡任务（写作、编排、多步推理）。",
+  'agent_tier_opus': "OPUS 档",
+  'agent_tier_opus_desc': "复杂任务（长文创作、深度分析）。",
+  'agent_tier_subagent': "子任务模型",
+  'agent_tier_subagent_desc': "子任务并行执行时使用的模型。",
+  'agent_tier_inherit': "留空跟随默认模型",
+  'agent_credential_missing': "平台尚未下发智能体凭证。请重新从 Matrix 应用市场进入本应用；若仍不可用，请联系平台。",
+
   // AccountSection（托管态账户页）
   'account_gift_limited_hint': "获赠积分长期有效，但只能调用有限模型；完整模型调用依赖充值或订阅积分——「可用积分」统计的正是后者。",
   'account': "账户",

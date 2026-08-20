@@ -152,6 +152,14 @@ complete corresponding source code of this modified version.
   分组标题去掉 "Channel" 措辞
 - 修改 `frontend/src/components/ui/ProviderModelSelect.tsx` — 候选只有一家供应商
   且回退值也属于它时省略前缀；回退值来自候选之外时保留（那时供应商恰是关键信息）
+- 新增 `frontend/src/components/agent/AgentModelRouting.tsx` — 托管态智能体页
+  只保留 SDK 各档位的模型路由，候选取网关文本模型目录；上游那套凭证 CRUD
+  （选供应商 / 代理地址 / API 密钥 / 增删改 / 连接测试）在托管态下一个都不成立
+- 修改 `frontend/src/components/agent/AgentPageIntro.tsx` — Claude Code 兼容提示
+  改为可关，托管态下不显示（用户没有配置项可填）
+- 修改 `public/skill.md.template`、`server/app.py`、`Dockerfile` —
+  文档里的产品名改用 `{{BRAND}}` 占位符，运行期从 `BRAND_NAME` 填充。此前前端
+  已改名而这份文档仍写上游名，外部 Agent 会看到两个不一致的产品
 
 ### 7. 构建
 
@@ -162,7 +170,7 @@ complete corresponding source code of this modified version.
 
 上述改动附带的测试：`tests/test_tenant_isolation.py`、
 `tests/test_matrix_session_gate.py`、`tests/test_h3_video_via_gateway.py`、
-`tests/test_voice_library.py`，
+`tests/test_voice_library.py`、`tests/test_skill_md.py`，
 以及 `tests/conftest.py`、`tests/test_app_module.py`、
 `tests/test_auth_coverage.py`、`tests/test_custom_provider_endpoints.py`
 的相应调整。

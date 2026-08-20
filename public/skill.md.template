@@ -1,6 +1,6 @@
-# ArcReel Skill
+# {{BRAND}} Skill
 
-ArcReel 是一个 AI 视频生成平台，将小说转化为短视频。通过此 Skill，你可以使用自然语言对话来调用 ArcReel 的项目管理和内容创作能力。
+{{BRAND}} 是一个 AI 视频生成平台，将小说转化为短视频。通过此 Skill，你可以使用自然语言对话来调用 {{BRAND}} 的项目管理和内容创作能力。
 
 ## 认证
 
@@ -10,7 +10,7 @@ ArcReel 是一个 AI 视频生成平台，将小说转化为短视频。通过�
 Authorization: Bearer arc-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-API Key 可从 ArcReel 设置页面的「API Keys」管理区获取。
+API Key 可从 {{BRAND}} 设置页的「API 令牌」区获取。
 
 ## 工作流
 
@@ -169,7 +169,7 @@ curl -X PATCH {{BASE_URL}}/api/v1/projects/my-novel \
 
 ### 6. Agent 对话（剧本与创作）
 
-向 ArcReel AI Agent 发送消息，Agent 可执行剧本生成、分镜创作、视频生成等复杂任务。
+向 {{BRAND}} AI Agent 发送消息，Agent 可执行剧本生成、分镜创作、视频生成等复杂任务。
 
 - **端点**：`POST {{BASE_URL}}/api/v1/agent/chat`
 - **认证**：需要 Bearer Token

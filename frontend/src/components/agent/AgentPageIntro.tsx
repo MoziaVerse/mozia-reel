@@ -4,7 +4,11 @@ import { useTranslation } from "react-i18next";
 
 import { CARD_STYLE } from "@/components/ui/darkroom-tokens";
 
-export function AgentPageIntro() {
+/**
+ * @param showCompatHint 「配置项兼容 Claude Code 环境变量命名」那条提示。托管态下
+ *   用户没有配置项可填、也接不了别家 Coding Plan API，那句话对他们不成立。
+ */
+export function AgentPageIntro({ showCompatHint = true }: { showCompatHint?: boolean } = {}) {
   const { t } = useTranslation("dashboard");
   return (
     <div>
@@ -39,12 +43,14 @@ export function AgentPageIntro() {
           </p>
         </div>
       </div>
-      <div className="mt-3 flex items-start gap-2 rounded-[8px] border border-hairline-soft bg-bg-grad-a/45 px-3 py-2">
-        <Terminal className="mt-0.5 h-3 w-3 shrink-0 text-text-4" aria-hidden />
-        <p className="text-[11.5px] leading-[1.55] text-text-3">
-          {t("claude_code_compat_hint")}
-        </p>
-      </div>
+      {showCompatHint && (
+        <div className="mt-3 flex items-start gap-2 rounded-[8px] border border-hairline-soft bg-bg-grad-a/45 px-3 py-2">
+          <Terminal className="mt-0.5 h-3 w-3 shrink-0 text-text-4" aria-hidden />
+          <p className="text-[11.5px] leading-[1.55] text-text-3">
+            {t("claude_code_compat_hint")}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

@@ -663,6 +663,22 @@ export default {
   'workspace_notifications_title': 'Workspace Notifications',
   'cost_details_eyebrow': 'Usage & Spend',
 
+  // AgentModelRouting（托管态智能体模型路由）
+  'agent_models': "Model routing",
+  'agent_models_desc': "The Claude Agent SDK routes by capability tier. Candidates come from the Matrix gateway's text models.",
+  'agent_tier_default': "Default model",
+  'agent_tier_default_desc': "Used by every tier left unset.",
+  'agent_tier_haiku': "HAIKU tier",
+  'agent_tier_haiku_desc': "Light tasks (classification, extraction, simple Q&A).",
+  'agent_tier_sonnet': "SONNET tier",
+  'agent_tier_sonnet_desc': "Balanced tasks (writing, orchestration, multi-step reasoning).",
+  'agent_tier_opus': "OPUS tier",
+  'agent_tier_opus_desc': "Heavy tasks (long-form writing, deep analysis).",
+  'agent_tier_subagent': "Subagent model",
+  'agent_tier_subagent_desc': "Model used when subtasks run in parallel.",
+  'agent_tier_inherit': "Leave empty to follow the default model",
+  'agent_credential_missing': "The platform has not provisioned agent credentials yet. Re-enter this app from the Matrix app store; contact the platform if it still fails.",
+
   // AccountSection（托管态账户页）
   'account_gift_limited_hint': "Gifted credits never expire but only work with a limited set of models. Full model access draws on purchased or subscription credits, which is what credits available counts.",
   'account': "Account",
