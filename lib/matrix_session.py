@@ -266,6 +266,21 @@ _DEFAULT_BACKEND_KEYS = {
     "audio": "default_audio_backend",
 }
 
+# 各媒体类型的首选默认模型，按实测**开箱可用性**排序，命中即用；都不在就回落到
+# 字典序第一个。
+#
+# 为什么需要这张表：字典序第一个跟"能不能用"毫无关系。实测网关上 5 个图像模型里
+# 只有 mozia/image-2 在 ArcReel 的默认 720P 下可用 —— doubao/seedream-4.5 与
+# seedream-5.0-lite 都要求 ≥3686400 像素（4K 级），而字典序恰好把 seedream-4.5
+# 排在第一，等于给每个新用户配了一个开箱即挂的默认值。
+#
+# ⚠️ 这张表会随平台上架/下架漂移，不是长期真相。新增条目前先实测：
+#     POST {gateway}/v1/images/generations  {"model":..., "size":"720x1280"}
+# 表里的模型不存在时自动跳过，不会因为它下架而让 seed 失败。
+_PREFERRED_DEFAULT_MODELS: dict[str, tuple[str, ...]] = {
+    "image": ("mozia/image-2",),
+}
+
 
 async def seed_default_backends(session, *, provider_id: int) -> dict[str, str]:
     """把各媒体类型的默认模型配好，让用户登录即可用。
@@ -299,10 +314,14 @@ async def seed_default_backends(session, *, provider_id: int) -> dict[str, str]:
         model_ids = sorted(by_media.get(media, []))
         if not model_ids:
             continue
+        preferred = next(
+            (m for m in _PREFERRED_DEFAULT_MODELS.get(media, ()) if m in model_ids),
+            None,
+        )
         current = (await svc.get_setting(key, "")).strip()
         if current:
             continue  # 用户已有选择，不覆盖
-        option = f"{pid}/{model_ids[0]}"
+        option = f"{pid}/{preferred or model_ids[0]}"
         await svc.set_setting(key, option)
         applied[media] = option
 

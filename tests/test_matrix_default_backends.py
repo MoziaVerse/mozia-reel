@@ -114,3 +114,39 @@ class TestDefaultBackendSeeding:
 
         applied = await seed_default_backends(session, provider_id=pid)
         assert applied["text"] == f"custom-{pid}/on"
+
+
+class TestPreferredDefaults:
+    """默认模型要挑**开箱可用**的，而不是字典序第一个。
+
+    实测网关 5 个图像模型里只有 mozia/image-2 在 ArcReel 默认的 720P 下可用；
+    seedream 系列要求 ≥3686400 像素（4K 级），而字典序恰好把 seedream-4.5 排第一。
+    照字典序选等于给每个新用户配一个开箱即挂的默认值。
+    """
+
+    @pytest.mark.asyncio
+    async def test_prefers_known_good_image_model(self, session):
+        pid = await _make_provider(
+            session,
+            [
+                ("doubao/seedream-4.5", "openai-images-generations"),
+                ("mozia/image-2", "openai-images-generations"),
+            ],
+        )
+        applied = await seed_default_backends(session, provider_id=pid)
+        assert applied["image"] == f"custom-{pid}/mozia/image-2"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_when_preferred_absent(self, session):
+        """首选下架时不能卡住，回落字典序第一个。"""
+        pid = await _make_provider(session, [("zzz-model", "openai-images-generations")])
+        applied = await seed_default_backends(session, provider_id=pid)
+        assert applied["image"] == f"custom-{pid}/zzz-model"
+
+    def test_preference_table_is_documented_as_drifting(self):
+        """这张表依赖平台上架情况，必须留下"会漂、需实测"的提示。"""
+        from pathlib import Path
+
+        src = Path("lib/matrix_session.py").read_text(encoding="utf-8")
+        idx = src.index("_PREFERRED_DEFAULT_MODELS")
+        assert "实测" in src[max(0, idx - 1200) : idx]
