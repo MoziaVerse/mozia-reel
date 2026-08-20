@@ -97,3 +97,6 @@ deploy/production/projects/
 deploy/production/vertex_keys/
 deploy/production/claude_data/
 deploy/production/pgdata/
+
+# 绑定生产账号的本地开发配置（含生产网关 key 明文）
+.env.prod-account

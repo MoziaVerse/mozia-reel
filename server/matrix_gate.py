@@ -16,6 +16,7 @@ import logging
 from lib.tenant_context import set_current_tenant
 from lib.matrix_session import (
     SESSION_COOKIE_NAME,
+    dev_bound_account,
     matrix_backend_url,
     matrix_launch_url,
     verify_session_cookie,
@@ -64,6 +65,15 @@ class MatrixSessionGate:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # 绑定生产账号模式：本地开发直接以该账号身份运行，不走握手。
+        # 放在最前面 —— 它同时也配了 MATRIX_BACKEND_URL（要用生产网关），
+        # 落到下面的常规分支会被要求握手，而本地拿不到 ticket。
+        bound = dev_bound_account()
+        if bound is not None:
+            set_current_tenant(bound["sso_sub"])
             await self.app(scope, receive, send)
             return
 

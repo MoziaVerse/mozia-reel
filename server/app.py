@@ -420,6 +420,34 @@ async def lifespan(app: FastAPI):
     await assistant.assistant_service.startup(in_docker=is_docker, sandbox_enabled=sandbox_enabled)
     assistant.assistant_service.session_manager.start_patrol()
 
+    # 绑定生产账号模式：启动时就把该租户的网关供应商与默认模型 seed 好，
+    # 否则本地要等一次握手才有模型可用 —— 而绑定模式的全部意义就是跳过握手。
+    from lib.matrix_session import dev_bound_account
+
+    _bound = dev_bound_account()
+    if _bound is not None:
+        from lib.db import ensure_tenant_db, safe_session_factory
+        from lib.matrix_session import (
+            save_wallet_token,
+            seed_agent_credential_for_gateway,
+            seed_gateway_provider,
+        )
+        from lib.tenant_context import tenant_scope
+
+        logger.info(
+            "绑定生产账号模式：%s（网关 %s）",
+            _bound.get("username") or _bound["sso_sub"],
+            _bound["gateway"],
+        )
+        with tenant_scope(_bound["sso_sub"]):
+            await ensure_tenant_db()
+            async with safe_session_factory() as _s:
+                await seed_gateway_provider(_s, gateway=_bound["gateway"], api_key=_bound["api_key"])
+                await seed_agent_credential_for_gateway(
+                    _s, gateway=_bound["gateway"], api_key=_bound["api_key"]
+                )
+                await save_wallet_token(_s, _bound.get("wallet_token"))
+
     # 参考素材外链托管：默认走网关的 /v1/sd/upload。没有它的话，需要参考图的
     # 模型会在提交时报"未配置外链托管"，而不是静默丢掉参考图。
     from lib.reference_image_hosting import set_uploader, uploader_from_env

@@ -30,6 +30,38 @@ SESSION_COOKIE_NAME = "arcreel_matrix_session"
 GATEWAY_PROVIDER_DISPLAY_NAME = "Matrix 网关"
 
 
+def dev_bound_account() -> dict | None:
+    """「绑定生产账号」模式（scripts/bind-prod-account.sh 写入的那套 env）。
+
+    存在的理由是个实打实的测试痛点：测试服网关与生产网关**上架的模型不一样**
+    （测试服只有文本与 TTS，视频那批 channel 只在生产）。对着测试服开发，
+    视频链路根本跑不到。绑定后本地直接用生产网关与生产账号，模型清单与线上一致。
+
+    只在本地开发用：它跳过握手，把请求一律认作这个账号。
+    """
+    sub = os.environ.get("DEV_BOUND_SSO_SUB", "").strip()
+    api_key = os.environ.get("DEV_BOUND_API_KEY", "").strip()
+    gateway = os.environ.get("DEV_BOUND_GATEWAY", "").strip()
+    if not (sub and api_key and gateway):
+        return None
+    if not is_valid_tenant_id(sub):
+        logger.error("DEV_BOUND_SSO_SUB 不是合法租户标识，绑定模式未启用: %r", sub)
+        return None
+    return {
+        "sso_sub": sub,
+        "username": os.environ.get("DEV_BOUND_USERNAME", "").strip() or None,
+        "api_key": api_key,
+        "gateway": gateway,
+        "wallet_token": os.environ.get("DEV_BOUND_WALLET_TOKEN", "").strip() or None,
+    }
+
+
+def is_valid_tenant_id(value: str) -> bool:
+    from lib.tenant_context import is_valid_tenant
+
+    return is_valid_tenant(value)
+
+
 class MatrixHandoffError(RuntimeError):
     """换票失败。``status`` 用于原样回给前端，便于区分票据过期与 matrix 不可达。"""
 
