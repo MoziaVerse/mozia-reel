@@ -25,7 +25,7 @@ from lib.project_change_hints import (
     register_project_change_batch_listener,
     register_project_change_listener,
 )
-from lib.project_manager import ProjectManager
+from lib.project_manager import ProjectManager, get_project_manager
 from lib.script_models import get_generated_assets
 from lib.script_skeleton import (
     SKELETON_ANCHOR_TYPES,
@@ -34,6 +34,7 @@ from lib.script_skeleton import (
     SKELETONS,
     resolve_kind_items,
 )
+from lib.tenant_context import current_tenant, tenant_scope
 from server.sse_channel import IDLE, DropSubscriber, SseChannel
 
 logger = logging.getLogger(__name__)
@@ -99,18 +100,37 @@ class ProjectEventService:
         poll_interval: float = PROJECT_EVENTS_POLL_SECONDS,
     ):
         self.project_root = Path(project_root or PROJECT_ROOT)
-        # 显式传入 ``projects_root`` 时优先使用（生产入口走 ``app_data_dir()``），
-        # 否则保留旧契约（仓库根下的 ``projects/``）兼容测试 fixture。
-        projects_dir = (
-            Path(projects_root).resolve(strict=False) if projects_root is not None else self.project_root / "projects"
-        )
-        self.pm = ProjectManager(projects_dir)
+        # 显式传入 ``projects_root``（或 ``project_root``）就钉死到那个根：测试
+        # fixture 与单租户旧契约走这条。两者都不传时不在此固化 —— 服务是启动期
+        # 构造的单例，那时还没有任何租户上下文，固化下来的根对所有租户都是错的
+        # （SSE 端点会对每个项目 404）。改由 ``pm`` property 按调用时的租户解析。
+        if projects_root is not None:
+            self._fixed_pm: ProjectManager | None = ProjectManager(Path(projects_root).resolve(strict=False))
+        elif project_root is not None:
+            self._fixed_pm = ProjectManager(self.project_root / "projects")
+        else:
+            self._fixed_pm = None
         self.poll_interval = max(0.1, float(poll_interval))
-        self._channels: dict[str, _ProjectChannel] = {}
+        # 通道按 (租户, 项目名) 索引：项目名只在租户内唯一，跨租户同名项目
+        # 共用一个通道会把 A 的变更广播给 B。
+        self._channels: dict[tuple[str | None, str], _ProjectChannel] = {}
         self._listener_unregister = None
         self._batch_listener_unregister = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._pending_batch_tasks: set[asyncio.Task] = set()
+
+    @property
+    def pm(self) -> ProjectManager:
+        """当前租户的 ProjectManager；构造时钉死了根就用那个。"""
+        if self._fixed_pm is not None:
+            return self._fixed_pm
+        return get_project_manager()
+
+    @staticmethod
+    def _key(project_name: str) -> tuple[str | None, str]:
+        """通道索引键。租户取自 ContextVar —— 非请求上下文（hint 回调）必须先
+        用 ``tenant_scope`` 恢复，否则会落到 ``None`` 那一格。"""
+        return (current_tenant(), project_name)
 
     async def start(self) -> None:
         if self._listener_unregister is not None or self._batch_listener_unregister is not None:
@@ -160,7 +180,7 @@ class ProjectEventService:
         溢出移除掉最后一个订阅者时 watch task 经 ``while has_subscribers`` 自行
         退出而通道仍留在注册表，故重启条件是「任务不在跑」而非仅「首次订阅」。
         """
-        channel = self._channels.get(project_name)
+        channel = self._channels.get(self._key(project_name))
         if channel is None:
             return
         if channel.task is not None and not channel.task.done():
@@ -180,7 +200,7 @@ class ProjectEventService:
         摘的正是当前通道。收尾期间让出事件循环时，并发进入的新订阅者取不到这个
         将死通道，会新建独立通道注册入表，不会被本次收尾的删除连带摘掉。
         """
-        channel = self._channels.pop(project_name, None)
+        channel = self._channels.pop(self._key(project_name), None)
         if channel is None:
             return
         task = channel.task
@@ -195,10 +215,11 @@ class ProjectEventService:
         deterministic unsubscribe via its context-manager ``__aexit__``.
         """
         await asyncio.to_thread(self.pm.get_project_path, project_name)
-        channel = self._channels.get(project_name)
+        key = self._key(project_name)
+        channel = self._channels.get(key)
         if channel is None:
             channel = self._create_channel(project_name)
-            self._channels[project_name] = channel
+            self._channels[key] = channel
 
         # 队列在首次扫描启动前注册(首订阅者钩子在注册后触发)，否则会漏掉
         # 扫描完成到注册之间广播的事件。
@@ -213,13 +234,13 @@ class ProjectEventService:
             # 收尾自理。
             if channel.sse.unsubscribe_nowait(queue) and channel.task is not None:
                 channel.task.cancel()
-                self._channels.pop(project_name, None)
+                self._channels.pop(key, None)
             raise
         return channel.sse, queue, self._build_snapshot_payload(project_name, channel)
 
     async def _unsubscribe(self, project_name: str, queue: asyncio.Queue) -> None:
         """Remove a queue; the last-subscriber hook stops the watch task."""
-        channel = self._channels.get(project_name)
+        channel = self._channels.get(self._key(project_name))
         if channel is None:
             return
         await channel.sse.unsubscribe(queue)
@@ -269,8 +290,11 @@ class ProjectEventService:
         loop = self._loop
         if loop is None or loop.is_closed():
             return
+        # call_soon_threadsafe 不带 contextvars，租户得在发布方所在上下文里当场
+        # 取出来随调用传走；否则回调侧一律看到 None，命不中任何租户的通道。
         loop.call_soon_threadsafe(
-            self._apply_hint,
+            self._apply_hint_in_tenant,
+            current_tenant(),
             project_name,
             source,
             changed_paths,
@@ -286,11 +310,33 @@ class ProjectEventService:
         if loop is None or loop.is_closed():
             return
         loop.call_soon_threadsafe(
-            self._apply_emitted_batch,
+            self._apply_emitted_batch_in_tenant,
+            current_tenant(),
             project_name,
             source,
             changes,
         )
+
+    def _apply_hint_in_tenant(
+        self,
+        tenant: str | None,
+        project_name: str,
+        source: ProjectChangeSource,
+        changed_paths: tuple[str, ...],
+    ) -> None:
+        with tenant_scope(tenant):
+            self._apply_hint(project_name, source, changed_paths)
+
+    def _apply_emitted_batch_in_tenant(
+        self,
+        tenant: str | None,
+        project_name: str,
+        source: ProjectChangeSource,
+        changes: tuple[ProjectChangeBatch, ...],
+    ) -> None:
+        # tenant_scope 内建的任务会拷走当前上下文，重建/广播因此留在正确的租户下。
+        with tenant_scope(tenant):
+            self._apply_emitted_batch(project_name, source, changes)
 
     def _apply_hint(
         self,
@@ -298,7 +344,7 @@ class ProjectEventService:
         source: ProjectChangeSource,
         changed_paths: tuple[str, ...],
     ) -> None:
-        channel = self._channels.get(project_name)
+        channel = self._channels.get(self._key(project_name))
         if channel is None:
             return
         channel.pending_sources.add(source)
@@ -316,7 +362,7 @@ class ProjectEventService:
         source: ProjectChangeSource,
         changes: tuple[ProjectChangeBatch, ...],
     ) -> None:
-        channel = self._channels.get(project_name)
+        channel = self._channels.get(self._key(project_name))
         if channel is None or not changes:
             return
 
@@ -462,9 +508,10 @@ class ProjectEventService:
         按「本通道是否仍是注册表现行通道」判定是否为首次终止，避免重复广播/
         重复日志，也避免误杀同名项目重建后已注册的新通道。
         """
-        if self._channels.get(project_name) is not channel:
+        key = self._key(project_name)
+        if self._channels.get(key) is not channel:
             return
-        self._channels.pop(project_name, None)
+        self._channels.pop(key, None)
         channel.sse.broadcast((PROJECT_DELETED_EVENT, {"project_name": project_name}))
         logger.info("项目已被删除，终止事件流 project=%s", project_name)
         task = channel.task

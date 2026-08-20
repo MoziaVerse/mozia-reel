@@ -472,7 +472,9 @@ async def lifespan(app: FastAPI):
     logger.info("GenerationWorker 已启动")
 
     logger.info("启动 ProjectEventService...")
-    project_event_service = ProjectEventService(PROJECT_ROOT, projects_root=app_data_dir())
+    # 不在此传 projects_root：启动期没有租户上下文，app_data_dir() 这时解析出的是
+    # 部署级根，钉进服务后每个租户的项目都查不到（SSE 端点对所有项目 404）。
+    project_event_service = ProjectEventService()
     app.state.project_event_service = project_event_service
     await project_event_service.start()
     logger.info("ProjectEventService 已启动")

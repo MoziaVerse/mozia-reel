@@ -811,7 +811,7 @@ class TestProjectEventService:
                 event_name, _snapshot = await anext(stream)
                 assert event_name == "snapshot"
 
-                channel = service._channels["demo"]
+                channel = service._channels[service._key("demo")]
                 # 订阅时的首轮扫描会清空标记，等它落定再预置，否则重建捕获到的是空集合
                 await asyncio.sleep(0.1)
                 assert channel.pending_sources == set()
@@ -921,7 +921,7 @@ class TestProjectEventService:
 
         task = asyncio.create_task(service._subscribe("demo"))
         await asyncio.sleep(0.05)  # 让 _subscribe 注册 queue 并 park
-        channel = service._channels["demo"]
+        channel = service._channels[service._key("demo")]
         assert channel.sse.has_subscribers  # 已注册
         watch_task = channel.task
 
@@ -930,7 +930,7 @@ class TestProjectEventService:
             await task
 
         # 取消后:订阅者被清理、channel 被弹出、watch task 被取消(不泄漏)。
-        assert "demo" not in service._channels
+        assert service._key("demo") not in service._channels
         await asyncio.sleep(0)  # 让 watch task 的取消落定
         assert watch_task.cancelled() or watch_task.done()
 
@@ -968,7 +968,7 @@ class TestProjectEventService:
 
             # 订阅者 A 拉起旧通道与旧 watch task。
             _sse_a, queue_a, _snap_a = await service._subscribe("demo")
-            old_channel = service._channels["demo"]
+            old_channel = service._channels[service._key("demo")]
             old_watch_task = old_channel.task
 
             # A 退订触发末订阅者钩子；钩子停在等已取消 watch task 退出的收尾点。
@@ -983,8 +983,8 @@ class TestProjectEventService:
             await asyncio.wait_for(stop_task, timeout=1.0)
 
             # B 归属注册表中的现行通道，旧通道已退役。
-            assert "demo" in service._channels
-            assert service._channels["demo"] is not old_channel
+            assert service._key("demo") in service._channels
+            assert service._channels[service._key("demo")] is not old_channel
 
             # 经注册表路由的 hint 广播抵达 B。
             service._apply_emitted_batch(
@@ -1585,7 +1585,7 @@ class TestProjectEventService:
                 with pytest.raises(StopAsyncIteration):
                     await anext(stream)
 
-        assert "demo" not in service._channels
+        assert service._key("demo") not in service._channels
         assert not any(record.levelno >= logging.ERROR for record in caplog.records)
         info_records = [
             record for record in caplog.records if record.levelno == logging.INFO and "已被删除" in record.message
@@ -1611,7 +1611,7 @@ class TestProjectEventService:
                 (pm.get_project_path("demo") / ProjectManager.PROJECT_FILE).unlink()
                 # 等至少一个轮询周期，让扫描命中缺失的 project.json。
                 await asyncio.sleep(0.3)
-                assert "demo" in service._channels  # 通道未终止，仍在注册表中
+                assert service._key("demo") in service._channels  # 通道未终止，仍在注册表中
 
         assert any(record.levelno >= logging.ERROR for record in caplog.records)
         assert not any("已被删除" in record.message for record in caplog.records)
@@ -1656,7 +1656,7 @@ class TestProjectEventService:
                 assert event_name == PROJECT_DELETED_EVENT
                 assert payload == {"project_name": "demo"}
 
-        assert "demo" not in service._channels
+        assert service._key("demo") not in service._channels
         assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
         await service.shutdown()
@@ -1681,7 +1681,7 @@ class TestProjectEventService:
             event_name, _payload = await _next_event(stream, timeout=1.5)
             assert event_name == PROJECT_DELETED_EVENT
 
-        assert "demo" not in service._channels
+        assert service._key("demo") not in service._channels
 
         # 同名项目重建：新订阅应走全新通道，正常收到 snapshot 与后续变更（不复用将死通道）。
         pm.create_project("demo")
@@ -1690,6 +1690,6 @@ class TestProjectEventService:
         async with service.stream_events("demo", idle_timeout=0.1) as stream:
             first = await anext(stream)
             assert first[0] == "snapshot"
-            assert "demo" in service._channels
+            assert service._key("demo") in service._channels
 
         await service.shutdown()

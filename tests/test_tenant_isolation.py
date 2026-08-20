@@ -131,6 +131,44 @@ class TestDerivedResourcesFollowTenant:
             assert "alice-secret" not in get_project_manager().list_projects()
 
 
+class TestProjectEventServiceFollowsTenant:
+    """SSE 事件服务是启动期构造的单例，最容易把"那一刻的根"钉死。
+
+    钉死的后果不是串数据而是全员 404：租户项目全在 ``tenants/<sub>/`` 下，
+    部署级根里一个都没有，每个项目的事件流都查无此项目。
+    """
+
+    def test_pm_follows_current_tenant(self):
+        from server.services.project_events import ProjectEventService
+
+        service = ProjectEventService()
+        with tenant_scope("alice"):
+            a = service.pm.projects_root
+        with tenant_scope("bob"):
+            b = service.pm.projects_root
+        assert a != b
+
+    def test_explicit_root_stays_pinned(self, tmp_path):
+        """显式给根的调用方（测试 fixture / 单租户旧契约）不受租户影响。"""
+        from server.services.project_events import ProjectEventService
+
+        pinned = tmp_path / "pinned"
+        service = ProjectEventService(projects_root=pinned)
+        with tenant_scope("alice"):
+            assert service.pm.projects_root == pinned.resolve()
+
+    def test_channels_are_keyed_per_tenant(self):
+        """同名项目在两个租户下必须是两条独立通道，否则 A 的变更会广播给 B。"""
+        from server.services.project_events import ProjectEventService
+
+        service = ProjectEventService()
+        with tenant_scope("alice"):
+            a = service._key("shared-name")
+        with tenant_scope("bob"):
+            b = service._key("shared-name")
+        assert a != b
+
+
 class _FakeWorker:
     """记录启停与所处租户的 worker 替身。"""
 
