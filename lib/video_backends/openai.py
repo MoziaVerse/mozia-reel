@@ -33,6 +33,17 @@ _POLL_INTERVAL_SECONDS = 5.0
 _MIN_POLL_TIMEOUT_SECONDS = 600.0
 _POLL_TIMEOUT_PER_SECOND = 30.0
 
+# MiniMax H3 的耗时与 Sora 不是一个量级：网关 tasks 表实测 ref2va 15s 档
+# p50 约 12 分钟、p90 89 分钟、max 142 分钟，且长尾与时长无关（5s 也出现过 96 分钟）。
+# 按 Sora 那套 max(600, duration×30) 算，5 秒视频只等 600 秒 —— 必然超时。
+#
+# 超时的代价不是"失败"这么简单：服务端仍会跑完并计费，用户却拿不到产物。
+# Canvas 踩过同一个坑，那边把任务过期放宽到 3 小时（当时 10% 的任务超 60 分钟且已扣费），
+# 这里取同一口径。
+_H3_MIN_POLL_TIMEOUT_SECONDS = 3 * 60 * 60.0
+# 动辄十几分钟的任务不值得每 5 秒问一次：那是上千次无谓请求打在网关上。
+_H3_POLL_INTERVAL_SECONDS = 15.0
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "sora-2"
@@ -320,7 +331,12 @@ class OpenAIVideoBackend(ProviderJobIdPersistenceMixin):
         不复用 SDK 的 client.videos.poll：它仅识别 in_progress/queued/completed/failed，
         对接返回非标状态（如 NOT_START）的 OpenAI 兼容网关时会提前退出，导致下载未就绪任务。
         """
-        max_wait = max(_MIN_POLL_TIMEOUT_SECONDS, float(duration_seconds) * _POLL_TIMEOUT_PER_SECOND)
+        if _is_minimax_h3(self._model):
+            max_wait = max(_H3_MIN_POLL_TIMEOUT_SECONDS, float(duration_seconds) * _POLL_TIMEOUT_PER_SECOND)
+            poll_interval = _H3_POLL_INTERVAL_SECONDS
+        else:
+            max_wait = max(_MIN_POLL_TIMEOUT_SECONDS, float(duration_seconds) * _POLL_TIMEOUT_PER_SECOND)
+            poll_interval = _POLL_INTERVAL_SECONDS
 
         # is_done 是纯谓词：成功 / 失败 / 过期三档都视为「已终态」让 poll 返回。
         # caller (generate / resume_video) 拿到 result 后再分流：
@@ -336,7 +352,7 @@ class OpenAIVideoBackend(ProviderJobIdPersistenceMixin):
                 if _video_status(v) is ProviderJobStatus.FAILED
                 else None
             ),
-            poll_interval=_POLL_INTERVAL_SECONDS,
+            poll_interval=poll_interval,
             max_wait=max_wait,
             retryable_errors=OPENAI_RETRYABLE_ERRORS,
             label="OpenAI",

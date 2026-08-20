@@ -104,3 +104,36 @@ class TestReferenceHostingContract:
                 asyncio.run(upload_reference_images([Path("/a.png"), Path("/b.png")]))
         finally:
             set_uploader(None)
+
+
+class TestPollingTimeout:
+    """H3 的轮询上限必须按它真实的耗时分布来，不能沿用 Sora 那套。
+
+    网关 tasks 表实测 ref2va 15s 档 p50 约 12 分钟、p90 89 分钟，而 Sora 的
+    max(600, duration×30) 对 5 秒视频只等 600 秒 —— 必然超时。超时的代价不是
+    "失败"：服务端仍会跑完并计费，用户却拿不到产物。
+    """
+
+    def _max_wait(self, model: str, duration: int) -> float:
+        from lib.video_backends.openai import (
+            _H3_MIN_POLL_TIMEOUT_SECONDS,
+            _is_minimax_h3,
+            _MIN_POLL_TIMEOUT_SECONDS,
+            _POLL_TIMEOUT_PER_SECOND,
+        )
+
+        floor = _H3_MIN_POLL_TIMEOUT_SECONDS if _is_minimax_h3(model) else _MIN_POLL_TIMEOUT_SECONDS
+        return max(floor, duration * _POLL_TIMEOUT_PER_SECOND)
+
+    def test_h3_waits_past_its_p90(self):
+        """p90 是 89 分钟；等不到那儿就等于给近一成的任务判死刑。"""
+        assert self._max_wait("minimax/minimax-h3-ref2va", 5) >= 89 * 60
+
+    def test_sora_timeout_unchanged(self):
+        assert self._max_wait("sora-2", 5) == 600.0
+
+    def test_h3_polls_less_often(self):
+        """十几分钟的任务每 5 秒问一次，是上千次无谓请求打在网关上。"""
+        from lib.video_backends.openai import _H3_POLL_INTERVAL_SECONDS, _POLL_INTERVAL_SECONDS
+
+        assert _H3_POLL_INTERVAL_SECONDS > _POLL_INTERVAL_SECONDS
