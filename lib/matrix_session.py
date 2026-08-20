@@ -229,6 +229,16 @@ def _correct_endpoint(endpoint: str) -> str:
     return endpoint
 
 
+def endpoint_to_media_type_safe(endpoint: str) -> str | None:
+    """endpoint → media_type，未知 endpoint 返回 None 而不是抛错。"""
+    from lib.custom_provider.endpoints import endpoint_to_media_type
+
+    try:
+        return endpoint_to_media_type(endpoint)
+    except (KeyError, ValueError):
+        return None
+
+
 async def _discover_gateway_models(*, base_url: str, api_key: str) -> list[dict]:
     """拉网关模型列表并纠偏 endpoint。失败不致命——供应商先建起来，用户可在 UI 手动补。"""
     from lib.custom_provider.discovery import discover_models
@@ -242,11 +252,21 @@ async def _discover_gateway_models(*, base_url: str, api_key: str) -> list[dict]
     corrected: list[dict] = []
     for item in models:
         endpoint = _correct_endpoint(item.get("endpoint", ""))
+        # 视频模型必须带 supported_durations：剧本生成会硬校验它来定每段时长，
+        # 空值直接 fail loud（"supported_durations is empty for ..."），视频链路
+        # 对每个新用户都开箱不可用。discover 不返回这个字段，用上游现成的启发式补。
+        durations = None
+        if endpoint_to_media_type_safe(endpoint) == "video":
+            from lib.custom_provider.duration_presets import infer_supported_durations
+
+            durations = json.dumps(infer_supported_durations(item["model_id"]))
+
         corrected.append(
             {
                 "model_id": item["model_id"],
                 "display_name": item.get("display_name") or item["model_id"],
                 "endpoint": endpoint,
+                "supported_durations": durations,
                 # is_default 交给用户在 UI 里定：discover 的默认标记按厂商习惯来，
                 # 中转站上一批同类模型谁该是默认没有客观答案，硬塞一个反而误导。
                 "is_default": False,
@@ -280,6 +300,32 @@ _DEFAULT_BACKEND_KEYS = {
 _PREFERRED_DEFAULT_MODELS: dict[str, tuple[str, ...]] = {
     "image": ("mozia/image-2",),
 }
+
+
+async def backfill_video_durations(session, *, provider_id: int) -> int:
+    """给已有的视频模型补 supported_durations。
+
+    seed 逻辑修好之前握手过的租户，库里这个字段全是空的，视频链路对他们依然
+    开箱不可用（剧本生成硬校验它，空值直接 fail loud）。握手时顺带回填一次。
+
+    只补空值：用户在 UI 上改过的档位不能被覆盖。
+    """
+    from lib.custom_provider.duration_presets import infer_supported_durations
+    from lib.db.repositories.custom_provider_repo import CustomProviderRepository
+
+    repo = CustomProviderRepository(session)
+    filled = 0
+    for model in await repo.list_models(provider_id):
+        if model.supported_durations:
+            continue
+        if endpoint_to_media_type_safe(model.endpoint) != "video":
+            continue
+        model.supported_durations = json.dumps(infer_supported_durations(model.model_id))
+        filled += 1
+    if filled:
+        await session.commit()
+        logger.info("已回填 %d 个视频模型的时长档位", filled)
+    return filled
 
 
 async def seed_default_backends(session, *, provider_id: int) -> dict[str, str]:
@@ -450,6 +496,7 @@ async def seed_gateway_provider(session, *, gateway: str, api_key: str) -> None:
             logger.info("网关供应商凭据已更新 (provider_id=%s)", existing.id)
         # 已有供应商也要补默认值：早期握手过、但那时还没有这段逻辑的租户，
         # 以及平台后来才上架某类模型的情况，都靠这里补齐。
+        await backfill_video_durations(session, provider_id=existing.id)
         await seed_default_backends(session, provider_id=existing.id)
         return
 
@@ -463,6 +510,7 @@ async def seed_gateway_provider(session, *, gateway: str, api_key: str) -> None:
     )
     await session.commit()
     logger.info("网关供应商已创建 (provider_id=%s, models=%d)", provider.id, len(models))
+    await backfill_video_durations(session, provider_id=provider.id)
     await seed_default_backends(session, provider_id=provider.id)
 
 

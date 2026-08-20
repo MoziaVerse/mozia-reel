@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -150,3 +152,52 @@ class TestPreferredDefaults:
         src = Path("lib/matrix_session.py").read_text(encoding="utf-8")
         idx = src.index("_PREFERRED_DEFAULT_MODELS")
         assert "实测" in src[max(0, idx - 1200) : idx]
+
+
+class TestVideoDurations:
+    """视频模型必须带 supported_durations，否则视频链路开箱不可用。
+
+    剧本生成会硬校验它来定每段时长，空值直接 fail loud
+    （"supported_durations is empty for ..."）。discover 不返回这个字段，
+    seed 时必须用上游的启发式补上。
+    """
+
+    @pytest.mark.asyncio
+    async def test_backfill_fills_only_video_models(self, session):
+        from lib.matrix_session import backfill_video_durations
+
+        pid = await _make_provider(
+            session,
+            [
+                ("minimax/minimax-h3-ref2va", "openai-video"),
+                ("gpt-x", "openai-chat"),
+            ],
+        )
+        filled = await backfill_video_durations(session, provider_id=pid)
+        assert filled == 1
+
+        repo = CustomProviderRepository(session)
+        by_id = {m.model_id: m for m in await repo.list_models(pid)}
+        assert json.loads(by_id["minimax/minimax-h3-ref2va"].supported_durations)
+        assert not by_id["gpt-x"].supported_durations
+
+    @pytest.mark.asyncio
+    async def test_backfill_preserves_user_edits(self, session):
+        """用户在 UI 上改过的档位不能被回填覆盖。"""
+        from lib.matrix_session import backfill_video_durations
+
+        pid = await _make_provider(session, [("doubao/seedance-2.0", "openai-video")])
+        repo = CustomProviderRepository(session)
+        model = (await repo.list_models(pid))[0]
+        model.supported_durations = json.dumps([7])
+        await session.commit()
+
+        assert await backfill_video_durations(session, provider_id=pid) == 0
+        assert json.loads((await repo.list_models(pid))[0].supported_durations) == [7]
+
+    def test_h3_durations_match_contract(self):
+        """H3 的契约是 4–15 秒。"""
+        from lib.custom_provider.duration_presets import infer_supported_durations
+
+        d = infer_supported_durations("minimax/minimax-h3-ref2va")
+        assert min(d) == 4 and max(d) == 15
