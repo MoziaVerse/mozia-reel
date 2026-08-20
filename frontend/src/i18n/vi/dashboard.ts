@@ -646,6 +646,26 @@ export default {
   'drop_more_files_here': 'Hoặc kéo thả thêm tệp vào đây',
   'uploading': 'Đang tải lên...',
 
+  // AccountSection（托管态账户页）
+  'account_gift_limited_hint': "Tin dung tang khong het han nhung chi dung duoc voi mot so mo hinh. Truy cap day du can tin dung nap hoac thue bao, do chinh la phan tin dung kha dung.",
+  'account': "Tài khoản",
+  'account_identity': "Thông tin cơ bản",
+  'account_username': "Tên đăng nhập",
+  'account_username_unset': "Chưa đặt",
+  'account_user_id': "ID người dùng",
+  'account_user_id_hint': "Cung cấp ID này khi liên hệ hỗ trợ hoặc yêu cầu điều chỉnh hạn mức.",
+  'account_copy_id': "Sao chép ID người dùng",
+  'account_balance': "Số dư",
+  'account_balance_unavailable': "Hiện chưa lấy được số dư — thử lại sau hoặc xem trên Matrix console.",
+  'account_credits_unit': "tín dụng khả dụng",
+  'account_balance_gift': "Tặng",
+  'account_balance_paid': "Nạp",
+  'account_balance_subscription': "Gói thuê bao",
+  'account_manage': "Quản lý tài khoản",
+  'account_manage_hint': "Biệt danh, số điện thoại, nạp tiền và hóa đơn đều quản lý tại Matrix console. Trang này chỉ để xem.",
+  'account_open_console': "Mở Matrix console",
+  'account_switch': "Đăng xuất / đổi tài khoản",
+
   // MediaModelSection
   'save_failed': 'Lưu thất bại: {{message}}',
 

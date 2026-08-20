@@ -285,7 +285,7 @@ export function MediaModelSection() {
       </div>
 
       {/* Video */}
-      <SectionCard kicker="Video Channel" title={t("default_video_model")}>
+      <SectionCard kicker="Video" title={t("default_video_model")}>
         {videoBackends.length > 0 ? (
           <LayeredModelFields
             defaultLabel={t("default_video_model")}
@@ -355,7 +355,7 @@ export function MediaModelSection() {
       </SectionCard>
 
       {/* Image */}
-      <SectionCard kicker="Image Channel" title={t("default_image_model")}>
+      <SectionCard kicker="Image" title={t("default_image_model")}>
         {imageBackends.length > 0 ? (
           <LayeredModelFields
             defaultLabel={t("default_image_model")}
@@ -374,7 +374,7 @@ export function MediaModelSection() {
       </SectionCard>
 
       {/* Text */}
-      <SectionCard kicker="Text Channel" title={t("text_models")} description={t("text_models_desc")}>
+      <SectionCard kicker="Text" title={t("text_models")} description={t("text_models_desc")}>
         {textBackends.length > 0 ? (
           <TextTierFields
             value={textTierValue}
@@ -402,7 +402,7 @@ export function MediaModelSection() {
       </SectionCard>
 
       {/* Audio (narration TTS) */}
-      <SectionCard kicker="Audio Channel" title={t("default_audio_model")}>
+      <SectionCard kicker="Audio" title={t("default_audio_model")}>
         {audioBackends.length > 0 ? (
           <ProviderModelSelect
             value={currentAudioBackend}

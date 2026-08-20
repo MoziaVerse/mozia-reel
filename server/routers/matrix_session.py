@@ -195,6 +195,7 @@ async def credits(session: AsyncSession = Depends(get_async_session)):
 
 @router.get("/matrix-session/overview")
 async def session_overview(
+    request: Request,
     session: AsyncSession = Depends(get_async_session),
 ):
     """设置页用的托管态总览。
@@ -210,11 +211,22 @@ async def session_overview(
     from lib.matrix_capabilities import matrix_mode_enabled
     from lib.matrix_session import (
         GATEWAY_PROVIDER_DISPLAY_NAME,
+        dev_bound_account,
         matrix_web_url,
+        verify_session_cookie,
     )
 
     if not matrix_mode_enabled():
         return {"enabled": False}
+
+    # 账户信息只来自服务端已验证的来源：签名 cookie 的 payload，或本地绑定账号的
+    # env。不从请求体/查询串取任何一个字段 —— 那样前端就能自报身份。
+    identity = verify_session_cookie(request.cookies.get(SESSION_COOKIE_NAME)) or {}
+    bound = dev_bound_account()
+    user = {
+        "username": (bound or {}).get("username") or identity.get("username"),
+        "sso_sub": (bound or {}).get("sso_sub") or identity.get("sub"),
+    }
 
     repo = CustomProviderRepository(session)
     provider = next(
@@ -245,6 +257,7 @@ async def session_overview(
     return {
         "enabled": True,
         "connected": provider is not None,
+        "user": user,
         # 只回主机名：网关地址不是秘密，但也没有让用户看到完整 URL 的必要，
         # 而 api_key 一律不出服务端。
         "gateway_host": _host_only(provider.base_url) if provider else None,

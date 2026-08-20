@@ -227,3 +227,52 @@ describe("SystemConfigPage", () => {
     });
   });
 });
+
+describe("SystemConfigPage · 托管态", () => {
+  beforeEach(() => {
+    useConfigStatusStore.setState(useConfigStatusStore.getInitialState(), true);
+    vi.restoreAllMocks();
+    vi.spyOn(API, "getSystemConfig").mockResolvedValue(makeConfigResponse());
+    vi.spyOn(API, "getProviders").mockResolvedValue(makeProviders());
+    vi.spyOn(API, "listCustomProviders").mockResolvedValue({ providers: [] });
+    vi.spyOn(API, "getSystemVersion").mockResolvedValue(makeVersionResponse());
+    vi.spyOn(API, "getUsageStatsGrouped").mockResolvedValue({ stats: [], period: { start: "", end: "" } });
+    vi.spyOn(API, "getMatrixCredits").mockResolvedValue({ available: false });
+    vi.spyOn(API, "getMatrixOverview").mockResolvedValue({
+      enabled: true,
+      connected: true,
+      gateway_host: "gw.example.com",
+      media_counts: { text: 1, image: 1, video: 1, audio: 1 },
+      models: [{ model_id: "m/one", display_name: "One", media_type: "video" }],
+      matrix_web_url: "https://matrix.example.com",
+      user: { username: "zeo", sso_sub: "sub-123" },
+    });
+  });
+
+  it("把供应商入口整个撤掉——网关由平台下发，用户既选不了也换不了", async () => {
+    renderPage();
+    expect(await screen.findByRole("button", { name: /账户/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /供应商/ })).not.toBeInTheDocument();
+  });
+
+  it("默认落在账户页，并按 Matrix 站内口径展示用户名与用户 ID", async () => {
+    renderPage();
+    expect(await screen.findByText("zeo")).toBeInTheDocument();
+    expect(screen.getByText("sub-123")).toBeInTheDocument();
+  });
+
+  it("存量的 ?section=providers 书签落到账户页，而不是一个空壳", async () => {
+    renderPage("/app/settings?section=providers");
+    expect(await screen.findByText("sub-123")).toBeInTheDocument();
+  });
+
+  it("模型页在选择器之外附一份网关可用模型清单", async () => {
+    renderPage("/app/settings?section=media");
+    expect(await screen.findByText("One")).toBeInTheDocument();
+  });
+
+  it("余额取不到时说明情况，不显示成 0——后者会被当成余额耗尽", async () => {
+    renderPage();
+    expect(await screen.findByText(/暂时取不到余额/)).toBeInTheDocument();
+  });
+});

@@ -131,7 +131,29 @@ complete corresponding source code of this modified version.
 
 音色库为空时退化为只剩「模型自带音色」，不影响可用性。
 
-### 6. 构建
+### 6. 设置页按托管态重排
+
+上游设置页以「供应商 / 渠道」为组织轴，那是给自己配 key 的用户设计的。托管态下
+网关只有一个、由平台下发，用户既选不了也换不了 —— 把它当成可管理对象展示，只会
+让人去找不存在的开关。
+
+- 新增 `frontend/src/components/pages/settings/AccountSection.tsx` — 账户页，
+  字段与积分口径（1 积分 = ¥0.01）对齐 Matrix 站内个人资料页；只读，改动跳回 Matrix
+- 修改 `server/routers/matrix_session.py` — 总览补 `user`（用户名 / ssoSub），
+  只取自服务端已验证来源（签名 cookie 或绑定账号 env）
+- 修改 `frontend/src/api.ts`、`frontend/src/types/matrix.ts` — 接上既有的
+  `/matrix-session/credits` 与 `/logout`（此前只有后端实现，前端从未消费）
+- 重写 `frontend/src/components/pages/settings/MatrixGatewaySection.tsx` —
+  连接状态 / 网关主机名 / 媒体计数那套渠道卡片删除，改为按媒体分组的可用模型清单，
+  并入模型页
+- 修改 `frontend/src/components/pages/SystemConfigPage.tsx` — 托管态与独立部署
+  两套侧栏；托管态无供应商页，存量 `?section=providers` 书签落到账户页
+- 修改 `frontend/src/components/pages/settings/MediaModelSection.tsx` —
+  分组标题去掉 "Channel" 措辞
+- 修改 `frontend/src/components/ui/ProviderModelSelect.tsx` — 候选只有一家供应商
+  且回退值也属于它时省略前缀；回退值来自候选之外时保留（那时供应商恰是关键信息）
+
+### 7. 构建
 
 - 修改 `Dockerfile` — 新增 `APT_MIRROR` / `PIP_INDEX` / `NPM_REGISTRY`
   可选 build-arg，默认空值不启用，出网慢的构建机可显式传入提速

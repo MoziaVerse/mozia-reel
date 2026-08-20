@@ -1,15 +1,20 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, CheckCircle2, AlertTriangle, ExternalLink, Type, Image as ImageIcon, Film, AudioLines } from "lucide-react";
+import { Loader2, Type, Image as ImageIcon, Film, AudioLines } from "lucide-react";
 import { API } from "@/api";
 import type { MatrixOverview } from "@/types";
+import { CARD_STYLE } from "@/components/ui/darkroom-tokens";
 
 /**
- * 托管态下的「模型服务」页。
+ * 托管态下网关**实际供得出来**的模型清单，按媒体类型分组。
  *
- * 这里刻意**没有任何可编辑项**：网关地址与密钥由 Matrix 在握手时下发，模型目录
- * 由平台上架，计费也在平台侧。给出一个填了不生效的表单，只会让人以为配错了而
- * 反复折腾。所以这一页只回答三个问题：连上了没、能用哪些模型、去哪管账户。
+ * 这里刻意不再画"连接状态 / 网关主机名 / 供应商"那套渠道卡片：托管态下网关只有
+ * 一个，既选不了也换不了，把它当成一个可管理的对象展示，只会让人去找根本不存在
+ * 的开关。真正有用的事实只有一件 —— 现在能用哪些模型。至于连没连上，模型清单为空
+ * 本身就是答案，不需要额外一张卡片复述。
+ *
+ * 与上面的默认模型选择器是同一批数据的两面：那边决定"默认用哪个"（可调），
+ * 这边回答"一共有哪些"（只读）。
  */
 
 const MEDIA_META = [
@@ -19,85 +24,64 @@ const MEDIA_META = [
   { key: "audio", Icon: AudioLines, labelKey: "matrix_media_audio" },
 ] as const;
 
-export function MatrixGatewaySection({ overview }: { overview: MatrixOverview }) {
+export function GatewayModelCatalog({ overview }: { overview: MatrixOverview }) {
   const { t } = useTranslation(["dashboard", "common"]);
-  const counts = overview.media_counts ?? {};
   const models = overview.models ?? [];
 
   return (
-    <div className="space-y-6">
-      {/* 连接状态 */}
-      <section className="rounded-xl border border-border bg-card p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              {overview.connected ? (
-                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
-              ) : (
-                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
-              )}
-              <h3 className="truncate text-sm font-medium">
-                {overview.connected ? t("dashboard:matrix_connected") : t("dashboard:matrix_disconnected")}
-              </h3>
-            </div>
-            <p className="mt-1.5 text-xs text-muted-foreground">
-              {overview.connected
-                ? t("dashboard:matrix_connected_hint")
-                : t("dashboard:matrix_disconnected_hint")}
-            </p>
-            {overview.gateway_host && (
-              <p className="mt-2 font-mono text-xs text-muted-foreground/80">{overview.gateway_host}</p>
-            )}
-          </div>
-          {overview.matrix_web_url && (
-            <a
-              href={overview.matrix_web_url}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent"
-            >
-              {t("dashboard:matrix_open_console")}
-              <ExternalLink className="h-3 w-3" />
-            </a>
-          )}
+    <div className="rounded-[10px] border border-hairline p-5" style={CARD_STYLE}>
+      <div className="mb-4">
+        <div className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-accent-2">
+          Catalog
         </div>
-      </section>
+        <h4 className="mt-1.5 text-[14px] font-medium text-text">
+          {t("dashboard:matrix_models_title")}
+        </h4>
+        <p className="mt-1 text-[12px] leading-[1.55] text-text-3">
+          {t("dashboard:matrix_models_hint")}
+        </p>
+      </div>
 
-      {/* 各媒体类型可用模型数 */}
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {MEDIA_META.map(({ key, Icon, labelKey }) => (
-          <div key={key} className="rounded-xl border border-border bg-card p-4">
-            <Icon className="h-4 w-4 text-muted-foreground" />
-            <p className="mt-2 text-2xl font-semibold tabular-nums">{counts[key] ?? 0}</p>
-            <p className="text-xs text-muted-foreground">{t(`dashboard:${labelKey}`)}</p>
-          </div>
-        ))}
-      </section>
-
-      {/* 模型清单（只读） */}
-      <section className="rounded-xl border border-border bg-card">
-        <div className="border-b border-border px-5 py-3">
-          <h3 className="text-sm font-medium">{t("dashboard:matrix_models_title")}</h3>
-          <p className="mt-1 text-xs text-muted-foreground">{t("dashboard:matrix_models_hint")}</p>
+      {models.length === 0 ? (
+        <p className="py-6 text-center text-[12px] text-text-4">
+          {t("dashboard:matrix_models_empty")}
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {MEDIA_META.map(({ key, Icon, labelKey }) => {
+            const group = models.filter((m) => m.media_type === key);
+            if (group.length === 0) return null;
+            return (
+              <div key={key}>
+                <div className="mb-1.5 flex items-center gap-2">
+                  <Icon className="h-3.5 w-3.5 text-text-4" />
+                  <span className="text-[12px] font-medium text-text-2">
+                    {t(`dashboard:${labelKey}`)}
+                  </span>
+                  <span className="font-mono text-[11px] tabular-nums text-text-4">
+                    {group.length}
+                  </span>
+                </div>
+                <ul className="space-y-0.5">
+                  {group.map((m) => (
+                    <li
+                      key={m.model_id}
+                      className="flex items-baseline gap-3 rounded-[6px] px-2 py-1 hover:bg-bg-grad-a/50"
+                    >
+                      <span className="truncate text-[12.5px] text-text-2">{m.display_name}</span>
+                      {m.display_name !== m.model_id && (
+                        <span className="ml-auto truncate font-mono text-[11px] text-text-4">
+                          {m.model_id}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
         </div>
-        {models.length === 0 ? (
-          <p className="px-5 py-8 text-center text-xs text-muted-foreground">
-            {t("dashboard:matrix_models_empty")}
-          </p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {models.map((m) => (
-              <li key={`${m.media_type}:${m.model_id}`} className="flex items-center gap-3 px-5 py-2.5">
-                <span className="w-14 shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                  {m.media_type}
-                </span>
-                <span className="truncate text-sm">{m.display_name}</span>
-                <span className="ml-auto truncate font-mono text-xs text-muted-foreground/70">{m.model_id}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      )}
     </div>
   );
 }

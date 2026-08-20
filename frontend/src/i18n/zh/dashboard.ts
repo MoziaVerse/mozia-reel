@@ -662,6 +662,26 @@ export default {
   'workspace_notifications_title': '工作区通知',
   'cost_details_eyebrow': '用量与费用',
 
+  // AccountSection（托管态账户页）
+  'account_gift_limited_hint': "获赠积分长期有效，但只能调用有限模型；完整模型调用依赖充值或订阅积分——「可用积分」统计的正是后者。",
+  'account': "账户",
+  'account_identity': "基本信息",
+  'account_username': "用户名",
+  'account_username_unset': "未设置",
+  'account_user_id': "用户 ID",
+  'account_user_id_hint': "联系客服或后台调整额度时，请提供此 ID。",
+  'account_copy_id': "复制用户 ID",
+  'account_balance': "余额",
+  'account_balance_unavailable': "暂时取不到余额，稍后重试或到 Matrix 控制台查看。",
+  'account_credits_unit': "可用积分",
+  'account_balance_gift': "赠送",
+  'account_balance_paid': "充值",
+  'account_balance_subscription': "订阅",
+  'account_manage': "账户管理",
+  'account_manage_hint': "昵称、手机号、充值与发票都在 Matrix 控制台统一管理；这里只做展示，改动请到那边。",
+  'account_open_console': "前往 Matrix 控制台",
+  'account_switch': "退出并切换账号",
+
   // MediaModelSection
   'save_failed': '保存失败: {{message}}',
 

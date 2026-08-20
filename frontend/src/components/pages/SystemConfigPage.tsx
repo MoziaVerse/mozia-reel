@@ -11,6 +11,7 @@ import {
   KeyRound,
   Languages,
   Plug,
+  UserCircle2,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useConfigStatusStore } from "@/stores/config-status-store";
@@ -22,8 +23,9 @@ import { AboutSection } from "./settings/AboutSection";
 import { MediaModelSection } from "./settings/MediaModelSection";
 import { ProviderSection } from "./ProviderSection";
 import { UsageStatsSection } from "./settings/UsageStatsSection";
+import { AccountSection } from "./settings/AccountSection";
 import {
-  MatrixGatewaySection,
+  GatewayModelCatalog,
   MatrixSectionLoading,
   useMatrixOverview,
 } from "./settings/MatrixGatewaySection";
@@ -40,7 +42,7 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
-type SettingsSection = "agent" | "providers" | "media" | "usage" | "api-keys" | "about";
+type SettingsSection = "account" | "agent" | "providers" | "media" | "usage" | "api-keys" | "about";
 
 /** 引导第 5/6 步指向的侧栏入口——只有这两项挂锚点，其余小节不在当前引导覆盖范围内。 */
 const SECTION_ONBOARDING_ANCHORS: Partial<Record<SettingsSection, string>> = {
@@ -63,13 +65,41 @@ interface SectionGroup {
 // Sidebar navigation config — grouped by purpose
 // ---------------------------------------------------------------------------
 
-const SECTION_GROUPS: SectionGroup[] = [
+/** 独立部署：供应商要自己配，"渠道"是真实存在、需要管理的对象。 */
+const STANDALONE_GROUPS: SectionGroup[] = [
   {
     kicker: "Configuration",
     items: [
       { id: "providers", labelKey: "dashboard:providers", Icon: Plug },
       { id: "agent", labelKey: "dashboard:agents", Icon: Bot },
       { id: "media", labelKey: "dashboard:models", Icon: Film },
+    ],
+  },
+  {
+    kicker: "Access",
+    items: [
+      { id: "usage", labelKey: "dashboard:usage", Icon: BarChart3 },
+      { id: "api-keys", labelKey: "dashboard:api_keys", Icon: KeyRound },
+    ],
+  },
+  {
+    kicker: "System",
+    items: [{ id: "about", labelKey: "dashboard:about", Icon: Info }],
+  },
+];
+
+/** 托管态：没有"供应商"这一层——网关是平台发的，用户既选不了也换不了。
+ *  换成账户入口，与 Matrix 站内的个人资料页对齐。 */
+const HOSTED_GROUPS: SectionGroup[] = [
+  {
+    kicker: "Account",
+    items: [{ id: "account", labelKey: "dashboard:account", Icon: UserCircle2 }],
+  },
+  {
+    kicker: "Configuration",
+    items: [
+      { id: "media", labelKey: "dashboard:models", Icon: Film },
+      { id: "agent", labelKey: "dashboard:agents", Icon: Bot },
     ],
   },
   {
@@ -97,15 +127,22 @@ export function SystemConfigPage() {
   // 托管态下「模型服务」是只读的：网关与模型都由 Matrix 下发，没有可配置项。
   const { overview: matrixOverview, loading: matrixLoading } = useMatrixOverview();
 
+  const hosted = Boolean(matrixOverview?.enabled);
+  const sectionGroups = hosted ? HOSTED_GROUPS : STANDALONE_GROUPS;
+
   const activeSection = useMemo((): SettingsSection => {
     const section = new URLSearchParams(search).get("section");
+    if (section === "account") return hosted ? "account" : "providers";
     if (section === "agent") return "agent";
     if (section === "media") return "media";
     if (section === "usage") return "usage";
     if (section === "api-keys") return "api-keys";
     if (section === "about") return "about";
-    return "providers";
-  }, [search]);
+    // 托管态没有供应商页；存量书签落到 ?section=providers 时改去账户，
+    // 而不是渲染一个空壳或 404。
+    if (section === "providers") return hosted ? "account" : "providers";
+    return hosted ? "account" : "providers";
+  }, [search, hosted]);
 
   const setActiveSection = (section: SettingsSection) => {
     const params = new URLSearchParams(search);
@@ -211,7 +248,7 @@ export function SystemConfigPage() {
           className="w-[220px] shrink-0 overflow-y-auto border-r border-hairline-soft px-3 py-5"
           style={{ background: "light-dark(oklch(0.99 0.004 260 / 0.45), oklch(0.14 0.02 260 / 0.45))" }}
         >
-          {SECTION_GROUPS.map((group, gi) => (
+          {sectionGroups.map((group, gi) => (
             <div key={group.kicker} className={gi > 0 ? "mt-5" : undefined}>
               <div className="mb-2 px-3 font-mono text-[9.5px] font-bold uppercase tracking-[0.16em] text-text-4">
                 {group.kicker}
@@ -277,18 +314,10 @@ export function SystemConfigPage() {
             providers section bypasses the centered padded wrapper so its sticky bottom bar
             can truly hug the viewport edge (and sidebar can sticky-top across full height). */}
         <main className="min-w-0 flex-1 overflow-y-auto">
-          {activeSection === "providers" ? (
-            matrixLoading ? (
-              <MatrixSectionLoading />
-            ) : matrixOverview?.enabled ? (
-              // 与 ProviderSection 同样铺满：这一页是清单式内容，
-              // 居中窄栏会在宽屏上把侧栏与内容拉出一大片空白。
-              <div className="px-6 py-6">
-                <MatrixGatewaySection overview={matrixOverview} />
-              </div>
-            ) : (
-              <ProviderSection />
-            )
+          {matrixLoading ? (
+            <MatrixSectionLoading />
+          ) : activeSection === "providers" ? (
+            <ProviderSection />
           ) : (
             <div className="mx-auto max-w-4xl px-8 py-8">
               {/* Quick alert for config issues */}
@@ -325,8 +354,18 @@ export function SystemConfigPage() {
                 </div>
               )}
 
+              {activeSection === "account" && matrixOverview && (
+                <AccountSection overview={matrixOverview} />
+              )}
               {activeSection === "agent" && <AgentConfigTab visible />}
-              {activeSection === "media" && <MediaModelSection />}
+              {activeSection === "media" && (
+                <div className="space-y-6">
+                  <MediaModelSection />
+                  {/* 托管态才有清单：独立部署下模型来自用户自己配的供应商，
+                      上面的选择器已经把它们列全了，再列一遍是重复。 */}
+                  {hosted && matrixOverview && <GatewayModelCatalog overview={matrixOverview} />}
+                </div>
+              )}
               {activeSection === "usage" && <UsageStatsSection />}
               {activeSection === "api-keys" && (
                 <div className="p-6">

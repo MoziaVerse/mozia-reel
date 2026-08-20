@@ -307,13 +307,22 @@ export function ProviderModelSelect({
     [open, flatOptions, activeIndex, selectOption, handleListKeyDown],
   );
 
+  // 候选里只有一个供应商时，前缀每行都是同一个词，纯噪声——托管态恒是这种情况
+  // （网关只有一个，用户既选不了也换不了），独立部署下只配了一家也一样。
+  const optionProviders = Object.keys(grouped);
+
   // 配置值也可以是不带 model 的裸 provider id（下游按该供应商默认模型执行）。按 "provider/model"
   // 硬拆会让它显示成空的「 · 」，故拆不出 model 时整串当作 provider 名呈现。
   const describe = (fullValue: string) => {
     const idx = fullValue.indexOf("/");
     if (idx === -1) return providerNames[fullValue] || fullValue;
     const provider = fullValue.slice(0, idx);
-    return `${providerNames[provider] || provider} · ${fullValue.slice(idx + 1)}`;
+    const model = fullValue.slice(idx + 1);
+    // 省略前缀的前提是"这一处只可能是这一家"。触发按钮上显示的可能是**候选之外**的
+    // 回退值（细分项候选只有 A 家，而回退到的全局默认在 B 家）——那时供应商恰恰是
+    // 最该说出来的信息，不能省。
+    if (optionProviders.length === 1 && optionProviders[0] === provider) return model;
+    return `${providerNames[provider] || provider} · ${model}`;
   };
 
   const showFallback = !value && !!fallbackValue;

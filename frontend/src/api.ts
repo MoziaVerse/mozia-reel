@@ -66,6 +66,7 @@ import type {
   ReferenceStep1Draft,
   VideoCapabilities,
   MatrixOverview,
+  MatrixCredits,
 } from "@/types";
 import type { GenerationRoute } from "@/utils/generation-mode";
 import type { GridCapability, GridGeneration } from "@/types/grid";
@@ -2646,6 +2647,19 @@ class API {
    */
   static async getMatrixOverview(): Promise<MatrixOverview> {
     return this.request("/matrix-session/overview");
+  }
+
+  /** 实时余额。凭据在服务端，浏览器侧拿不到也不需要。 */
+  static async getMatrixCredits(): Promise<MatrixCredits> {
+    return this.request("/matrix-session/credits");
+  }
+
+  /**
+   * 登出。返回的 login_url 带 prompt=login —— matrix 那边还留着会话时，
+   * 不带它会把同一个账号直接送回来，用户没有换人的口子。
+   */
+  static async matrixLogout(): Promise<{ ok: boolean; login_url: string }> {
+    return this.request("/matrix-session/logout", { method: "POST" });
   }
 
   // ==================== 自定义供应商 API ====================

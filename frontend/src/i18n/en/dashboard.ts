@@ -663,6 +663,26 @@ export default {
   'workspace_notifications_title': 'Workspace Notifications',
   'cost_details_eyebrow': 'Usage & Spend',
 
+  // AccountSection（托管态账户页）
+  'account_gift_limited_hint': "Gifted credits never expire but only work with a limited set of models. Full model access draws on purchased or subscription credits, which is what credits available counts.",
+  'account': "Account",
+  'account_identity': "Profile",
+  'account_username': "Username",
+  'account_username_unset': "Not set",
+  'account_user_id': "User ID",
+  'account_user_id_hint': "Provide this ID when contacting support or requesting a quota change.",
+  'account_copy_id': "Copy user ID",
+  'account_balance': "Balance",
+  'account_balance_unavailable': "Balance unavailable right now — retry later or check the Matrix console.",
+  'account_credits_unit': "credits available",
+  'account_balance_gift': "Gifted",
+  'account_balance_paid': "Purchased",
+  'account_balance_subscription': "Subscription",
+  'account_manage': "Account management",
+  'account_manage_hint': "Display name, phone, top-ups and invoices are all managed in the Matrix console. This page is read-only.",
+  'account_open_console': "Open Matrix console",
+  'account_switch': "Sign out / switch account",
+
   // MediaModelSection
   'save_failed': 'Failed to save: {{message}}',
 

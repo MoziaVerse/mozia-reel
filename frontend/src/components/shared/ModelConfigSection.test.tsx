@@ -275,7 +275,7 @@ describe("ModelConfigSection", () => {
       });
       await user.click(screen.getAllByText("按用途指定模型")[0]);
       expect(screen.getByRole("combobox", { name: "图生视频" })).toHaveTextContent(
-        /跟随默认 · Gemini · veo-3/,
+        /跟随默认 · veo-3/,
       );
     });
 
@@ -287,10 +287,10 @@ describe("ModelConfigSection", () => {
       await user.click(screen.getAllByText("按用途指定模型")[0]);
       // r2v 有全局桶 → 用桶值；i2v 无 → 落到全局默认模型
       expect(screen.getByRole("combobox", { name: "参考生视频" })).toHaveTextContent(
-        /跟随默认 · Ark · seedance/,
+        /跟随默认 · seedance/,
       );
       expect(screen.getByRole("combobox", { name: "图生视频" })).toHaveTextContent(
-        /跟随默认 · Gemini · veo-3/,
+        /跟随默认 · veo-3/,
       );
     });
 

@@ -134,7 +134,9 @@ describe("MediaModelSection", () => {
     await screen.findByRole("combobox", { name: "默认图片模型" });
     await user.click(screen.getAllByText("按用途指定模型")[1]);
     expect(screen.getByRole("combobox", { name: "文生图" })).toHaveTextContent(
-      /跟随默认 · gemini · nano-banana/,
+      // 候选与回退值同属一家供应商时不再重复前缀（见 ProviderModelSelect.describe），
+      // 这条断言的主语始终是「跟随默认背后解析到哪个模型」。
+      /跟随默认 · nano-banana/,
     );
   });
 
