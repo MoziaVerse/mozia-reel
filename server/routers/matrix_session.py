@@ -19,6 +19,7 @@ from lib.tenant_context import is_valid_tenant, tenant_scope
 from lib.matrix_session import (
     SESSION_COOKIE_NAME,
     fetch_wallet_balance,
+    fetch_wallet_logs,
     get_wallet_token,
     save_wallet_token,
     MatrixHandoffError,
@@ -191,6 +192,41 @@ async def credits(session: AsyncSession = Depends(get_async_session)):
         logger.warning("拉取余额失败: %s", exc)
         return {"available": False, "reason": exc.code}
     return {"available": True, "wallet": data}
+
+
+@router.get("/matrix-session/usage")
+async def usage(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """当前用户在本应用的调用记录（用量页数据源）。
+
+    数据取自平台账务，而不是本地账本 —— 本地记的是"我们以为花了多少"，平台记的
+    是"实际扣了多少"，两者对不上时用户信的当然是账单那份。
+
+    与余额同一条链路：walletToken 是 scope=wallet 的只读凭据，只在服务端用。
+    跨应用隔离由 matrix 侧按 client 过滤强制完成。
+    """
+    token = await get_wallet_token(session)
+    if not token:
+        # 与余额不同：用量页是用户主动打开的功能页，拿不到数据要让他知道原因，
+        # 而不是静默显示成空列表——后者看起来像"你还没用过"。
+        return JSONResponse(
+            {"error": "no_wallet_token", "message": "请重新从 Matrix 进入本应用后查看"},
+            status_code=409,
+        )
+
+    # 白名单转发：tokenName 之类必须由 matrix 按 token 身份决定，客户端不该有机会影响。
+    allowed = ("page", "pageSize", "modelName", "startTimestamp", "endTimestamp", "type")
+    params = {k: v for k, v in request.query_params.items() if k in allowed and v}
+    try:
+        return await fetch_wallet_logs(token, params)
+    except MatrixHandoffError as exc:
+        logger.warning("拉取调用记录失败: %s", exc)
+        return JSONResponse(
+            {"error": exc.code, "message": "暂时取不到记录"},
+            status_code=409 if exc.status == 401 else 502,
+        )
 
 
 @router.get("/matrix-session/overview")

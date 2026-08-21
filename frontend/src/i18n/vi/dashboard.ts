@@ -662,6 +662,24 @@ export default {
   'agent_tier_inherit': "De trong de theo mo hinh mac dinh",
   'agent_credential_missing': "Nen tang chua cap thong tin xac thuc cho agent. Hay vao lai ung dung tu Matrix app store; neu van loi, lien he nen tang.",
 
+  // MatrixUsageSection（托管态用量页）
+  'usage_source_hint': "Du lieu tu he thong thanh toan cua nen tang — so tien thuc te bi tru, cung nguon voi Matrix console.",
+  'usage_range_7d': "7 ngay qua",
+  'usage_range_30d': "30 ngay qua",
+  'usage_range_all': "Tat ca",
+  'usage_kpi_credits': "Tin dung da dung",
+  'usage_kpi_calls': "Goi thanh cong",
+  'usage_kpi_errors': "That bai",
+  'usage_by_model': "Theo mo hinh",
+  'usage_records': "Ban ghi goi",
+  'usage_empty': "Khong co ban ghi trong khoang nay",
+  'usage_calls_n': "{{count}} lan",
+  'usage_errors_n': "{{count}} that bai",
+  'usage_kind_error': "that bai",
+  'usage_kind_refund': "hoan tien",
+  'usage_kind_other': "khac",
+  'usage_truncated': "Chi hien {{shown}} ban ghi moi nhat trong tong so {{total}}",
+
   // AccountSection（托管态账户页）
   'account_gift_limited_hint': "Tin dung tang khong het han nhung chi dung duoc voi mot so mo hinh. Truy cap day du can tin dung nap hoac thue bao, do chinh la phan tin dung kha dung.",
   'account': "Tài khoản",

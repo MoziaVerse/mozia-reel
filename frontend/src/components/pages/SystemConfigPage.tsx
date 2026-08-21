@@ -23,6 +23,7 @@ import { AboutSection } from "./settings/AboutSection";
 import { MediaModelSection } from "./settings/MediaModelSection";
 import { ProviderSection } from "./ProviderSection";
 import { UsageStatsSection } from "./settings/UsageStatsSection";
+import { MatrixUsageSection } from "./settings/MatrixUsageSection";
 import { AccountSection } from "./settings/AccountSection";
 import {
   GatewayModelCatalog,
@@ -367,7 +368,8 @@ export function SystemConfigPage() {
                   {hosted && matrixOverview && <GatewayModelCatalog overview={matrixOverview} />}
                 </div>
               )}
-              {activeSection === "usage" && <UsageStatsSection />}
+              {activeSection === "usage" &&
+                (hosted ? <MatrixUsageSection /> : <UsageStatsSection />)}
               {activeSection === "api-keys" && (
                 <div className="p-6">
                   <ApiKeysTab />

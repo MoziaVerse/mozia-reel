@@ -44,3 +44,27 @@ export type MatrixCredits =
   | { available: true; wallet: MatrixWallet }
   /** 拿不到余额时明确回不可用，而不是 0 —— 后者会被当成"没钱了"。 */
   | { available: false; reason?: string };
+
+/** 一条平台账务流水。性质区分很重要：失败记录 quota=0，混在消费里就是一串
+ *  「0 消耗」，看不出那其实是失败。 */
+export interface MatrixUsageItem {
+  id: number | null;
+  /** 秒级 unix 时间戳 */
+  created_at: number;
+  model_name: string;
+  kind: "consume" | "error" | "refund" | "other";
+  credits: number;
+  quota: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  use_time: number;
+  request_id: string;
+}
+
+export interface MatrixUsagePage {
+  items: MatrixUsageItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  quota_per_unit: number;
+}

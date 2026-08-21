@@ -679,6 +679,24 @@ export default {
   'agent_tier_inherit': "Leave empty to follow the default model",
   'agent_credential_missing': "The platform has not provisioned agent credentials yet. Re-enter this app from the Matrix app store; contact the platform if it still fails.",
 
+  // MatrixUsageSection（托管态用量页）
+  'usage_source_hint': "From platform billing — the amounts actually charged, same source as the Matrix console.",
+  'usage_range_7d': "Last 7 days",
+  'usage_range_30d': "Last 30 days",
+  'usage_range_all': "All",
+  'usage_kpi_credits': "Credits spent",
+  'usage_kpi_calls': "Successful calls",
+  'usage_kpi_errors': "Failures",
+  'usage_by_model': "By model",
+  'usage_records': "Call records",
+  'usage_empty': "No records in this range",
+  'usage_calls_n': "{{count}} calls",
+  'usage_errors_n': "{{count}} failed",
+  'usage_kind_error': "failed",
+  'usage_kind_refund': "refund",
+  'usage_kind_other': "other",
+  'usage_truncated': "Showing the latest {{shown}} of {{total}} records in range",
+
   // AccountSection（托管态账户页）
   'account_gift_limited_hint': "Gifted credits never expire but only work with a limited set of models. Full model access draws on purchased or subscription credits, which is what credits available counts.",
   'account': "Account",

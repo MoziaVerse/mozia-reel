@@ -67,6 +67,7 @@ import type {
   VideoCapabilities,
   MatrixOverview,
   MatrixCredits,
+  MatrixUsagePage,
 } from "@/types";
 import type { GenerationRoute } from "@/utils/generation-mode";
 import type { GridCapability, GridGeneration } from "@/types/grid";
@@ -2652,6 +2653,24 @@ class API {
   /** 实时余额。凭据在服务端，浏览器侧拿不到也不需要。 */
   static async getMatrixCredits(): Promise<MatrixCredits> {
     return this.request("/matrix-session/credits");
+  }
+
+  /**
+   * 平台账务流水（用量页数据源）。取的是实际扣费记录，不是本地账本的估算。
+   * 未握手/凭据缺失时后端回 409，由页面如实说明而不是显示成空列表。
+   */
+  static async getMatrixUsage(params: {
+    page?: number;
+    pageSize?: number;
+    startTimestamp?: number;
+    endTimestamp?: number;
+    modelName?: string;
+  }): Promise<MatrixUsagePage> {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== "") qs.set(k, String(v));
+    }
+    return this.request(`/matrix-session/usage?${qs.toString()}`);
   }
 
   /**

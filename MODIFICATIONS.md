@@ -165,6 +165,11 @@ complete corresponding source code of this modified version.
   该功能在托管形态下不完整，留着半条链路只会把人引到不存在的页面
 - 修改 `frontend/src/stores/config-status-store.ts` — 暴露 `managed`，
   各处复用同一次总览请求判断托管态
+- 新增 `frontend/src/components/pages/settings/MatrixUsageSection.tsx` 与
+  `GET /matrix-session/usage`（代理 matrix `/api/external/logs`）—— 托管态用量页
+  改用平台账务数据。本地账本记的是「我们以为花了多少」，平台记的是实际扣费，
+  两者并列只会让人怀疑哪个都不准。消费 / 失败 / 退款分开统计：上游把三者混在
+  一条流水里，而失败记录 quota=0，不区分就是一串「0 消耗」
 
 ### 7. 构建
 
@@ -175,7 +180,7 @@ complete corresponding source code of this modified version.
 
 上述改动附带的测试：`tests/test_tenant_isolation.py`、
 `tests/test_matrix_session_gate.py`、`tests/test_h3_video_via_gateway.py`、
-`tests/test_voice_library.py`、`tests/test_skill_md.py`，
+`tests/test_voice_library.py`、`tests/test_skill_md.py`、`tests/test_matrix_usage.py`，
 以及 `tests/conftest.py`、`tests/test_app_module.py`、
 `tests/test_auth_coverage.py`、`tests/test_custom_provider_endpoints.py`
 的相应调整。

@@ -424,6 +424,81 @@ async def fetch_wallet_balance(token: str) -> dict:
     return response.json()
 
 
+# 上游 mozia 的 log.type（见 mozia-api model/log.go）。一条流水里混着多种性质，
+# 不区分会让页面很误导：失败记录 quota=0，混在消费记录里就是一串「0 消耗」，
+# 看不出那其实是失败。1=Topup 3=Manage 4=System 7=Login 不会出现在 client token 的流水里。
+_LOG_KINDS = {2: "consume", 5: "error", 6: "refund"}
+
+
+def _log_kind(raw: object) -> str:
+    return _LOG_KINDS.get(raw, "other") if isinstance(raw, int) else "other"
+
+
+def _num(value: object, fallback: float = 0.0) -> float:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else fallback
+
+
+def normalize_logs(payload: dict) -> dict:
+    """把 matrix /api/external/logs 的响应归一成前端要的形状。
+
+    单条记录字段缺失不该让整页失败：逐字段兜底，坏记录降级成「未知模型 / 0 消耗」。
+    quota → 积分用 quotaPerUnit/100，与钱包页同源（matrix src/lib/billing.ts）。
+    """
+    per_unit = _num(payload.get("quotaPerUnit"), 500000.0) or 500000.0
+    per_credit = per_unit / 100 or 1.0
+
+    items = []
+    for raw in payload.get("items") or []:
+        if not isinstance(raw, dict):
+            continue
+        quota = _num(raw.get("quota"))
+        items.append(
+            {
+                "id": raw.get("id"),
+                # 秒级 unix 时间戳，原样交给前端格式化——服务端不做时区假设
+                "created_at": int(_num(raw.get("createdAt"))),
+                "model_name": str(raw.get("modelName") or "").strip() or "unknown",
+                "kind": _log_kind(raw.get("type")),
+                "credits": quota / per_credit,
+                "quota": quota,
+                "prompt_tokens": int(_num(raw.get("promptTokens"))),
+                "completion_tokens": int(_num(raw.get("completionTokens"))),
+                "use_time": _num(raw.get("useTime")),
+                "request_id": str(raw.get("requestId") or ""),
+            }
+        )
+    return {
+        "items": items,
+        "total": int(_num(payload.get("total"))),
+        "page": int(_num(payload.get("page"), 1)) or 1,
+        "page_size": int(_num(payload.get("pageSize"), len(items))),
+        "quota_per_unit": per_unit,
+    }
+
+
+async def fetch_wallet_logs(token: str, params: dict) -> dict:
+    """凭 walletToken 拉调用记录。
+
+    跨应用隔离由 matrix 侧按 ``client:<clientId>`` 强制完成（clientId 取自 token
+    payload），这边传不了也不该传 tokenName。
+    """
+    base = matrix_backend_url()
+    if not base:
+        raise MatrixHandoffError("MATRIX_BACKEND_URL 未配置", 500, "misconfigured")
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(
+                f"{base}/api/external/logs",
+                params=params,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    except httpx.HTTPError as exc:
+        raise MatrixHandoffError(f"matrix 不可达: {exc}", 502, "matrix_unreachable") from exc
+    if response.status_code >= 400:
+        raise MatrixHandoffError(response.text[:200], response.status_code, "logs_failed")
+    return normalize_logs(response.json())
+
+
 AGENT_CREDENTIAL_DISPLAY_NAME = "Matrix 网关"
 
 

@@ -678,6 +678,24 @@ export default {
   'agent_tier_inherit': "留空跟随默认模型",
   'agent_credential_missing': "平台尚未下发智能体凭证。请重新从 Matrix 应用市场进入本应用；若仍不可用，请联系平台。",
 
+  // MatrixUsageSection（托管态用量页）
+  'usage_source_hint': "数据来自平台账务，即实际扣费记录；与 Matrix 控制台的账单同源。",
+  'usage_range_7d': "近 7 天",
+  'usage_range_30d': "近 30 天",
+  'usage_range_all': "全部",
+  'usage_kpi_credits': "消费积分",
+  'usage_kpi_calls': "成功调用",
+  'usage_kpi_errors': "失败",
+  'usage_by_model': "按模型",
+  'usage_records': "调用记录",
+  'usage_empty': "该区间内没有记录",
+  'usage_calls_n': "{{count}} 次",
+  'usage_errors_n': "{{count}} 失败",
+  'usage_kind_error': "失败",
+  'usage_kind_refund': "退款",
+  'usage_kind_other': "其它",
+  'usage_truncated': "仅统计最近 {{shown}} 条，区间内共 {{total}} 条",
+
   // AccountSection（托管态账户页）
   'account_gift_limited_hint': "获赠积分长期有效，但只能调用有限模型；完整模型调用依赖充值或订阅积分——「可用积分」统计的正是后者。",
   'account': "账户",
