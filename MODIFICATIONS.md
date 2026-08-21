@@ -170,6 +170,12 @@ complete corresponding source code of this modified version.
   改用平台账务数据。本地账本记的是「我们以为花了多少」，平台记的是实际扣费，
   两者并列只会让人怀疑哪个都不准。消费 / 失败 / 退款分开统计：上游把三者混在
   一条流水里，而失败记录 quota=0，不区分就是一串「0 消耗」
+- 修改 `lib/matrix_session.py` — 模型目录改从 matrix `/api/external/catalog` 取，
+  用平台算好的 `model_type` 分桶，不再按模型名猜（上游 `supported_endpoint_types`
+  普遍只回 `["openai"]`，猜的结果会把 TTS / embedding / OCR 混进对话模型）。
+  vision / embedding / rerank 本地无对应链路，不收。
+  握手时逐项合并而非删表重插：新增补进、下架标禁用（项目里可能还引用着）、
+  endpoint 跟平台走（错了就是必然失败），用户设的默认项保留
 
 ### 7. 构建
 
@@ -180,7 +186,7 @@ complete corresponding source code of this modified version.
 
 上述改动附带的测试：`tests/test_tenant_isolation.py`、
 `tests/test_matrix_session_gate.py`、`tests/test_h3_video_via_gateway.py`、
-`tests/test_voice_library.py`、`tests/test_skill_md.py`、`tests/test_matrix_usage.py`，
+`tests/test_voice_library.py`、`tests/test_skill_md.py`、`tests/test_matrix_usage.py`、`tests/test_matrix_model_catalog.py`，
 以及 `tests/conftest.py`、`tests/test_app_module.py`、
 `tests/test_auth_coverage.py`、`tests/test_custom_provider_endpoints.py`
 的相应调整。

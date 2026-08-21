@@ -87,7 +87,14 @@ async def init_session(
     with tenant_scope(sso_sub):
         await ensure_tenant_db()
         async with safe_session_factory() as tenant_session:
-            await seed_gateway_provider(tenant_session, gateway=gateway, api_key=api_key)
+            # walletToken 一并传进去：模型目录（含平台算好的 model_type）就是凭它拉的，
+            # 拿不到会回落到按模型名猜，猜出来必然把 TTS / embedding / OCR 混进对话模型。
+            await seed_gateway_provider(
+                tenant_session,
+                gateway=gateway,
+                api_key=api_key,
+                wallet_token=payload.get("walletToken"),
+            )
             # Agent 编排走同一把 key（网关支持 Anthropic 格式的 /v1/messages）。
             # 不配的话设置页会一直挂"智能体未配置"的红点，而用户无从填写。
             await seed_agent_credential_for_gateway(tenant_session, gateway=gateway, api_key=api_key)

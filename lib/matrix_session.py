@@ -239,6 +239,143 @@ def endpoint_to_media_type_safe(endpoint: str) -> str | None:
         return None
 
 
+# matrix 的 model_type → 本地 endpoint。
+#
+# 平台按"调用形态"分类（见 matrix backend/src/lib/model-category.ts），我们按
+# endpoint 分类，两者是同一件事的不同说法。multimodal 并入 chat —— 那类模型
+# 本来就能纯文本对话，只是顺带能看图。
+_MODEL_TYPE_TO_ENDPOINT = {
+    "chat": "openai-chat",
+    "multimodal": "openai-chat",
+    "image": "openai-images",
+    "video": _VIDEO_ENDPOINT_ON_GATEWAY,
+    "audio": "openai-tts",
+}
+
+# 本地四条生成链路用不上的类目。不是"平台没分类"，而是分类明确、但 ArcReel
+# 没有对应的用法：vision 是视觉专用（不给图什么也做不了），embedding/rerank
+# 更不是生成模型。收进来只会让它们出现在模型下拉里，选中必失败。
+_UNUSABLE_MODEL_TYPES = {"vision", "embedding", "rerank"}
+
+
+async def fetch_model_catalog(token: str) -> list[dict] | None:
+    """凭 walletToken 拉平台模型目录（含 model_type）。
+
+    拿不到返回 None，由调用方回落到按模型名猜的旧路径 —— 目录是增强项，
+    不该让握手因为它失败。
+    """
+    base = matrix_backend_url()
+    if not base:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(
+                f"{base}/api/external/catalog",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        if response.status_code >= 400:
+            logger.warning("拉取平台模型目录失败: %s %s", response.status_code, response.text[:150])
+            return None
+        models = response.json().get("models")
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("拉取平台模型目录失败: %s", exc)
+        return None
+    return models if isinstance(models, list) else None
+
+
+def catalog_to_models(catalog: list[dict]) -> list[dict]:
+    """平台目录 → 本地模型行。不认识或用不上的类目直接不收。"""
+    from lib.custom_provider.duration_presets import infer_supported_durations
+
+    rows: list[dict] = []
+    skipped: dict[str, list[str]] = {}
+    for item in catalog:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("model_name") or "").strip()
+        if not name:
+            continue
+        model_type = str(item.get("model_type") or "").strip()
+        endpoint = _MODEL_TYPE_TO_ENDPOINT.get(model_type)
+        if endpoint is None:
+            skipped.setdefault(model_type or "unknown", []).append(name)
+            continue
+        rows.append(
+            {
+                "model_id": name,
+                "display_name": str(item.get("display_name") or "").strip() or name,
+                "endpoint": endpoint,
+                # 视频模型必须带 supported_durations，剧本生成会硬校验它。平台目录不发
+                # 这个字段（拿不到真值，见 external-model-catalog.ts 的说明），沿用启发式。
+                "supported_durations": json.dumps(infer_supported_durations(name))
+                if endpoint == _VIDEO_ENDPOINT_ON_GATEWAY
+                else None,
+                "is_default": False,
+                # 平台明确标了不可用的，收进来但禁用——留着比消失好，用户能看到它存在过
+                "is_enabled": item.get("enabled") is not False,
+            }
+        )
+    for model_type, names in sorted(skipped.items()):
+        logger.info("模型目录跳过 %s 类 %d 个（本地无对应链路）: %s", model_type, len(names), ", ".join(sorted(names)))
+    return rows
+
+
+async def sync_gateway_models(session, *, provider_id: int, rows: list[dict]) -> None:
+    """把平台目录合并进已有模型表。
+
+    刻意不用 replace_models（删表重插）：那会把用户设的默认项一起抹掉。逐项合并：
+
+    - 平台新上架的：补进来
+    - 平台已下架的：标 is_enabled=False 而不是删除。项目里可能还引用着它，
+      删掉会让那些项目的模型字段指向空气；禁用是可逆的、而且用户看得见。
+    - 已有的：endpoint 与 display_name 跟平台走 —— endpoint 决定请求打到哪条路径，
+      错了就是必然失败，这不是"用户偏好"可以覆盖的东西。is_default 保留不动。
+    """
+    from lib.db.repositories.custom_provider_repo import CustomProviderRepository
+    from lib.db.models.custom_provider import CustomProviderModel
+
+    if not rows:
+        return
+    repo = CustomProviderRepository(session)
+    existing = {m.model_id: m for m in await repo.list_models(provider_id)}
+    incoming = {r["model_id"]: r for r in rows}
+
+    added = updated = disabled = 0
+    for model_id, row in incoming.items():
+        current = existing.get(model_id)
+        if current is None:
+            session.add(CustomProviderModel(provider_id=provider_id, **row))
+            added += 1
+            continue
+        changed = False
+        if current.endpoint != row["endpoint"]:
+            logger.info(
+                "模型 %s 的 endpoint 按平台目录纠正: %s → %s", model_id, current.endpoint, row["endpoint"]
+            )
+            current.endpoint = row["endpoint"]
+            # 换了链路，时长预设也要跟着换（视频→非视频时清空）
+            current.supported_durations = row["supported_durations"]
+            changed = True
+        if current.display_name != row["display_name"]:
+            current.display_name = row["display_name"]
+            changed = True
+        if not current.is_enabled and row["is_enabled"]:
+            # 之前因下架被禁用、现在又上架了：恢复
+            current.is_enabled = True
+            changed = True
+        updated += 1 if changed else 0
+
+    for model_id, current in existing.items():
+        if model_id not in incoming and current.is_enabled:
+            current.is_enabled = False
+            disabled += 1
+            logger.info("模型 %s 已不在平台目录，标记为禁用", model_id)
+
+    await session.flush()
+    if added or updated or disabled:
+        logger.info("模型目录同步: 新增 %d, 更新 %d, 禁用 %d", added, updated, disabled)
+
+
 async def _discover_gateway_models(*, base_url: str, api_key: str) -> list[dict]:
     """拉网关模型列表并纠偏 endpoint。失败不致命——供应商先建起来，用户可在 UI 手动补。"""
     from lib.custom_provider.discovery import discover_models
@@ -555,12 +692,17 @@ def pick_text_model(models: list[dict]) -> str | None:
     return text_ids[0] if text_ids else None
 
 
-async def seed_gateway_provider(session, *, gateway: str, api_key: str) -> None:
+async def seed_gateway_provider(
+    session, *, gateway: str, api_key: str, wallet_token: str | None = None
+) -> None:
     """把握手拿到的网关凭据写成全局唯一的 custom_provider。
 
-    幂等：按 ``GATEWAY_PROVIDER_DISPLAY_NAME`` 认领已有行，只更新 base_url / api_key，
-    不重复 discover——用户可能已经在 UI 里手工调过模型的 endpoint 与默认项，
-    每次握手都重刷会把这些调整冲掉。
+    幂等：按 ``GATEWAY_PROVIDER_DISPLAY_NAME`` 认领已有行，只更新 base_url / api_key。
+
+    模型清单每次握手都跟平台目录对一次（``wallet_token`` 可用时）。早先这里是
+    "已有就不再 discover"，理由是别冲掉用户手改——代价是目录永远停在首次握手
+    那一刻：平台新上架的看不到、已下架的还列着、分类修正也传不过来。现在改成
+    逐项合并（见 ``sync_gateway_models``），用户设的默认项照样保留。
     """
     from lib.db.repositories.custom_provider_repo import CustomProviderRepository
 
@@ -577,11 +719,13 @@ async def seed_gateway_provider(session, *, gateway: str, api_key: str) -> None:
             logger.info("网关供应商凭据已更新 (provider_id=%s)", existing.id)
         # 已有供应商也要补默认值：早期握手过、但那时还没有这段逻辑的租户，
         # 以及平台后来才上架某类模型的情况，都靠这里补齐。
+        await _sync_from_catalog(session, provider_id=existing.id, wallet_token=wallet_token)
         await backfill_video_durations(session, provider_id=existing.id)
         await seed_default_backends(session, provider_id=existing.id)
+        await session.commit()
         return
 
-    models = await _discover_gateway_models(base_url=gateway, api_key=api_key)
+    models = await _models_for_new_provider(gateway=gateway, api_key=api_key, wallet_token=wallet_token)
     provider = await repo.create_provider(
         display_name=GATEWAY_PROVIDER_DISPLAY_NAME,
         discovery_format="openai",
@@ -593,6 +737,32 @@ async def seed_gateway_provider(session, *, gateway: str, api_key: str) -> None:
     logger.info("网关供应商已创建 (provider_id=%s, models=%d)", provider.id, len(models))
     await backfill_video_durations(session, provider_id=provider.id)
     await seed_default_backends(session, provider_id=provider.id)
+
+
+async def _sync_from_catalog(session, *, provider_id: int, wallet_token: str | None) -> None:
+    """有 walletToken 就按平台目录对一次账；没有就维持现状。"""
+    if not wallet_token:
+        return
+    catalog = await fetch_model_catalog(wallet_token)
+    if catalog is None:
+        return
+    await sync_gateway_models(session, provider_id=provider_id, rows=catalog_to_models(catalog))
+
+
+async def _models_for_new_provider(*, gateway: str, api_key: str, wallet_token: str | None) -> list[dict]:
+    """首次建供应商时的模型清单。
+
+    优先用平台目录：它带 model_type，是平台侧算好的分类。拿不到才回落到
+    "网关 /v1/models + 按模型名猜"——上游的 supported_endpoint_types 普遍只回
+    ["openai"]，猜出来会把 TTS、embedding、OCR 混进对话模型里。
+    """
+    if wallet_token:
+        catalog = await fetch_model_catalog(wallet_token)
+        if catalog:
+            rows = catalog_to_models(catalog)
+            if rows:
+                return rows
+    return await _discover_gateway_models(base_url=gateway, api_key=api_key)
 
 
 async def seed_agent_credential_for_gateway(session, *, gateway: str, api_key: str) -> None:
