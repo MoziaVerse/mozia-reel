@@ -52,10 +52,17 @@ services:
       - apparmor:unconfined
     cap_add:
       - NET_ADMIN
+    # 数据目录放在代码树之外（与生产上 canvas 的 ZEO_DATA_DIR=/home/server/zeo-canvas-data
+    # 同一套做法）。理由是部署方式决定的：上线要重建镜像、拉新代码、必要时整目录
+    # 换一份，数据挂在代码目录底下迟早会被某次"清干净重来"连坐。放外面之后，
+    # 部署动的是代码，数据一动不动。
+    #
+    # 生产规模参考：canvas 411 个租户共 23G，最重的单租户 2.1G。视频比图更占地方，
+    # 上线前先确认目标盘的余量（当前 / 只剩 62G）。
     volumes:
-      - ./data/projects:/app/projects
-      - ./data/logs:/app/logs
-      - ./data/claude:/root/.claude
+      - ${MOZIA_REEL_DATA_DIR:-./data}/projects:/app/projects
+      - ${MOZIA_REEL_DATA_DIR:-./data}/logs:/app/logs
+      - ${MOZIA_REEL_DATA_DIR:-./data}/claude:/root/.claude
     restart: unless-stopped
     healthcheck:
       # /health 在 MatrixSessionGate 的公开白名单里，未握手也能探活

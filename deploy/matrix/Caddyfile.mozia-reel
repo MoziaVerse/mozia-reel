@@ -1,0 +1,9 @@
+# 生产站点片段。生产上 Caddy 各站点是**直接写在** /etc/caddy/Caddyfile 里的
+# （不是 import 片段），这份留在仓内只作留档与对照，改完记得两边一致。
+#
+# ⚠️ 别加 log 块。生产 caddy 以 caddy 用户运行，在 /var/log/caddy/ 建不了新文件，
+#    加了会让**整份配置**加载失败——旧配置继续服务，看起来像"改了没生效"。
+reel.mzsjai.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:1241
+}
