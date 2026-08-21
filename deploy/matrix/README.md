@@ -110,15 +110,20 @@ print(sorted(hosts))"
 
 ```bash
 # 宿主上准备名单，一行一个 ssoSub（# 后写原因和日期）
-cat > /home/server/mozia-reel-data/blocklist.txt <<'LIST'
+mkdir -p /home/server/mozia-reel-data/access
+cat > /home/server/mozia-reel-data/access/blocklist.txt <<'LIST'
 # 封禁记录
 # 6e8cbfe2-…   # 滥用 2026-08-21
 LIST
 
-# .env 里指向它
-MOZIA_REEL_BLOCKLIST=/home/server/mozia-reel-data/blocklist.txt
-MATRIX_BLOCKLIST_FILE=/app/blocklist.txt
+# .env 里指向它（挂的是目录，不是文件）
+MOZIA_REEL_ACCESS_DIR=/home/server/mozia-reel-data/access
+MATRIX_BLOCKLIST_FILE=/app/access/blocklist.txt
 ```
+
+⚠️ **挂目录不挂文件**。单文件 bind mount 绑的是 inode，任何"写新文件再替换"式的
+编辑（`mv` / `sed -i` / vim 默认写法）都会换掉 inode，容器从此一直读那个已删除的
+旧文件——**封禁看着生效、解封永远不生效，而且没有任何报错**。
 
 用 ssoSub 而不是用户名：ssoSub 由服务端签发、用户改不了，而且它同时就是租户键。
 用户名是 Casdoor 登录主键，用户能自己改，改完就绕过了。ssoSub 在「设置 → 账户 →

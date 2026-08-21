@@ -66,9 +66,13 @@ services:
       - ${MOZIA_REEL_DATA_DIR:-./data}/projects:/app/projects
       - ${MOZIA_REEL_DATA_DIR:-./data}/logs:/app/logs
       - ${MOZIA_REEL_DATA_DIR:-./data}/claude:/root/.claude
-      # 拒止名单：一行一个 ssoSub，支持 # 注释。只读挂载——名单是访问控制，
-      # 容器不该有改它的能力。改完下一个请求即生效，不用重启。
-      - ${MOZIA_REEL_BLOCKLIST:-/dev/null}:/app/blocklist.txt:ro
+      # 拒止名单所在目录。只读挂载——名单是访问控制，容器不该有改它的能力。
+      #
+      # ⚠️ 挂**目录**而不是单个文件。单文件 bind mount 绑的是 inode，任何
+      # "写新文件再替换"式的编辑（mv / sed -i / vim 默认写法）都会换掉 inode，
+      # 容器从此一直读那个已删除的旧文件——封禁看着生效、解封永远不生效，
+      # 而且没有任何报错。踩过一次，别改回去。
+      - ${MOZIA_REEL_ACCESS_DIR:-./data/access}:/app/access:ro
     restart: unless-stopped
     healthcheck:
       # /health 在 MatrixSessionGate 的公开白名单里，未握手也能探活
