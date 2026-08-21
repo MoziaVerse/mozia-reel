@@ -103,39 +103,39 @@ print(sorted(hosts))"
 注意这是"不列出"，不是访问控制：拿到 URL 的任何 matrix 账号都能进来用，花的是
 他自己的积分。要限人得另加白名单。
 
-## 受邀名单（可选）
+## 拒止名单（可选）
 
-限定只有指定的 matrix 用户能用。**不配就是不限制**，本地与测试服不受影响。
+**默认所有 matrix 用户都能用**，靠"不在应用市场列出"控制传播——那是隐蔽，不是
+访问控制。这份名单提供的是另一件事：**出事了能把某个人立刻踢掉**。
 
 ```bash
-# 宿主上准备名单，一行一个 ssoSub（# 后是注释）
-cat > /home/server/mozia-reel-data/allowlist.txt <<'LIST'
-# 灰度名单
-1f917403-5af6-4b8b-9f16-59636f3af474   # 张三
-6e8cbfe2-e486-4758-9c39-c5abc3c382a8   # 李四
+# 宿主上准备名单，一行一个 ssoSub（# 后写原因和日期）
+cat > /home/server/mozia-reel-data/blocklist.txt <<'LIST'
+# 封禁记录
+# 6e8cbfe2-…   # 滥用 2026-08-21
 LIST
 
 # .env 里指向它
-MOZIA_REEL_ALLOWLIST=/home/server/mozia-reel-data/allowlist.txt
-MATRIX_ALLOWLIST_FILE=/app/allowlist.txt
+MOZIA_REEL_BLOCKLIST=/home/server/mozia-reel-data/blocklist.txt
+MATRIX_BLOCKLIST_FILE=/app/blocklist.txt
 ```
 
 用 ssoSub 而不是用户名：ssoSub 由服务端签发、用户改不了，而且它同时就是租户键。
-用户名是 Casdoor 登录主键，用户能在 matrix 个人资料页自己改——改了就把自己锁在
-外面，腾出来的旧名被别人注册后那个人会继承访问权。
+用户名是 Casdoor 登录主键，用户能自己改，改完就绕过了。ssoSub 在「设置 → 账户 →
+用户 ID」页面上。
 
-ssoSub 在「设置 → 账户 → 用户 ID」页面上，用户自己就能复制给你。
-
-两处执行：握手时拒绝（给明确文案），门禁每请求再查一次（**移出名单立即生效**，
+两处执行：握手时拒绝（给明确文案），门禁每请求再查一次（**封禁立即生效**，
 不必重启，也就不会打断正在跑的生成任务）。
 
-文件读不到时**放行并告警**，不是全拒——挂载出问题会把所有人锁在外面，比名单
-暂时失效更糟。靠日志里的 WARNING 发现。
+文件读不到时**谁都不拒**，不是全拒——全拒会把所有人挡在外面，而名单要挡的通常
+只是个位数。代价是被封的人在故障期间能回来，靠日志里的 WARNING 发现。
 
 ⚠️ `DEV_BOUND_*`（绑定生产账号模式）会跳过整条门禁，名单一并失效。那是本地
 开发用的，生产上绝不能配。
 
 ## AGPL
 
-`VITE_SOURCE_URL` 必须填**本发行版自己**的源码公开地址。留空会渲染成上游仓库
-地址——对修改版而言那不是"对应源码"，等于违约（§13）。
+`VITE_SOURCE_URL` 指向 <https://github.com/MoziaVerse/mozia-reel>（公开仓）。
+
+本站对所有 matrix 用户开放，使用者不是一个可枚举的小集合，所以只有公开仓能稳妥
+履约。⚠️ 地址须与线上运行的版本对应——**发版后忘了推同样构成违约**。

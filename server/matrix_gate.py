@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 
-from lib.matrix_allowlist import is_allowed
+from lib.matrix_blocklist import is_allowed
 from lib.tenant_context import set_current_tenant
 from lib.matrix_session import (
     SESSION_COOKIE_NAME,
@@ -98,15 +98,16 @@ class MatrixSessionGate:
             # 设在这里而不是路由层：ContextVar 沿本请求的整个调用链生效，
             # app_data_dir / DB engine / ProjectManager 会自动指向该租户的数据。
             sub = payload.get("sub")
-            # 名单在这里也查一遍（而不是只在握手时查）：否则把人移出名单后，
-            # 他手上那张 cookie 在整个 TTL 内仍然有效，踢不掉。
+            # 每请求查一遍（而不是只在握手时查）：否则把人加进拒止名单后，
+            # 他手上那张 cookie 在整个 TTL 内仍然有效，踢不掉——而"能立刻踢掉"
+            # 正是这份名单存在的唯一理由。
             if not is_allowed(sub):
-                logger.info("受邀名单外的用户被拒: sub=%s path=%s", sub, path)
+                logger.info("拒止名单内的用户被拒: sub=%s path=%s", sub, path)
                 headers = {k.lower(): v for k, v in raw_headers}
                 if _is_browser_navigation(headers):
-                    await self._not_invited_page(send)
+                    await self._access_denied_page(send)
                 else:
-                    await self._not_invited(send)
+                    await self._access_denied(send)
                 return
             set_current_tenant(sub)
             await self.app(scope, receive, send)
@@ -142,10 +143,10 @@ class MatrixSessionGate:
 
     # 被拒的人不能再往 matrix 跳：那边会把他登录后原样送回来，来回弹一遍还是这一页。
     # 所以直接给一个说明白的终点页 / JSON。
-    _NOT_INVITED_HTML = (
+    _ACCESS_DENIED_HTML = (
         "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-        "<title>暂未开放</title><style>:root{color-scheme:light dark}"
+        "<title>访问受限</title><style>:root{color-scheme:light dark}"
         "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;"
         "font:15px/1.6 system-ui,-apple-system,'PingFang SC',sans-serif;background:#fafafa;color:#18181b}"
         "@media(prefers-color-scheme:dark){body{background:#09090b;color:#fafafa}}"
@@ -154,23 +155,23 @@ class MatrixSessionGate:
         "<p class=\"m\">如需使用，请联系管理员开通。</p></div></body></html>"
     ).encode("utf-8")
 
-    async def _not_invited_page(self, send) -> None:
+    async def _access_denied_page(self, send) -> None:
         await send(
             {
                 "type": "http.response.start",
                 "status": 403,
                 "headers": [
                     (b"content-type", b"text/html; charset=utf-8"),
-                    (b"content-length", str(len(self._NOT_INVITED_HTML)).encode("ascii")),
+                    (b"content-length", str(len(self._ACCESS_DENIED_HTML)).encode("ascii")),
                     (b"cache-control", b"no-store"),
                 ],
             }
         )
-        await send({"type": "http.response.body", "body": self._NOT_INVITED_HTML})
+        await send({"type": "http.response.body", "body": self._ACCESS_DENIED_HTML})
 
-    async def _not_invited(self, send) -> None:
+    async def _access_denied(self, send) -> None:
         body = json.dumps(
-            {"error": "not_invited", "message": "本应用当前仅对受邀用户开放"},
+            {"error": "access_denied", "message": "你的账号暂时无法使用本应用"},
             ensure_ascii=False,
         ).encode("utf-8")
         await send(

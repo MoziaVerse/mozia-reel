@@ -30,10 +30,9 @@ services:
         VITE_BRAND_DESCRIPTION: AI 视频创作工作台，把小说、剧本或商品素材转化为角色一致、过程可控的短视频。
         # AGPL §13：使用者要能取得本运行版本对应的完整源码。指向本发行版自己的仓库。
         #
-        # 仓库是 private：§13 的义务对象是**本服务的使用者**，不是公众。配合受邀
-        # 名单（见 README「受邀名单」），名单内的人都能访问该仓即已履约。
-        # ⚠️ 哪天把服务开放给名单外的人，这条就不成立了——那时要么转公开仓，
-        #    要么在站内给已登录用户一个源码获取入口。
+        # 仓库公开。本站对所有 matrix 用户开放（靠"不在应用市场列出"控制传播，
+        # 不是访问控制），使用者不是一个可枚举的小集合，只有公开仓能稳妥履约。
+        # ⚠️ 地址须与线上运行的版本对应——发版后忘了推同样构成违约。
         VITE_SOURCE_URL: "https://github.com/MoziaVerse/mozia-reel"
     ports:
       - "1241:1241"
@@ -67,9 +66,9 @@ services:
       - ${MOZIA_REEL_DATA_DIR:-./data}/projects:/app/projects
       - ${MOZIA_REEL_DATA_DIR:-./data}/logs:/app/logs
       - ${MOZIA_REEL_DATA_DIR:-./data}/claude:/root/.claude
-      # 受邀名单：一行一个 ssoSub，支持 # 注释。只读挂载——名单是访问控制，
+      # 拒止名单：一行一个 ssoSub，支持 # 注释。只读挂载——名单是访问控制，
       # 容器不该有改它的能力。改完下一个请求即生效，不用重启。
-      - ${MOZIA_REEL_ALLOWLIST:-/dev/null}:/app/allowlist.txt:ro
+      - ${MOZIA_REEL_BLOCKLIST:-/dev/null}:/app/blocklist.txt:ro
     restart: unless-stopped
     healthcheck:
       # /health 在 MatrixSessionGate 的公开白名单里，未握手也能探活

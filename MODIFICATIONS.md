@@ -49,13 +49,10 @@ complete corresponding source code of this modified version.
 - 源码获取地址 / Source URL：<https://github.com/MoziaVerse/mozia-reel>
 - 获取方式同样在产品内「设置 → 关于」页给出（构建期经 `VITE_SOURCE_URL` 注入）。
 
-该仓库为私有。§13 的义务对象是**本服务的使用者**，不是公众：本发行版配合
-受邀名单运行（见 `deploy/matrix/README.md`），名单内的使用者均可访问该仓库，
-即已履行"使用者能取得对应源码"的要求。
+该仓库公开。本发行版对平台上的所有使用者开放（未在应用市场列出，但那是隐蔽
+而非访问控制），使用者不是一个可枚举的小集合，因此只有公开仓库能稳妥履行
+"使用者能取得对应源码"的要求。
 
-> ⚠️ 一旦把服务开放给名单外的使用者，上述前提即不成立。届时必须改为公开仓库，
-> 或在站内为已登录使用者提供对应版本的源码获取入口。
->
 > ⚠️ 该地址须与线上运行的版本对应。发版后未推送，同样构成违约。
 
 ## 修改清单 / List of changes
@@ -172,9 +169,11 @@ complete corresponding source code of this modified version.
   该功能在托管形态下不完整，留着半条链路只会把人引到不存在的页面
 - 修改 `frontend/src/stores/config-status-store.ts` — 暴露 `managed`，
   各处复用同一次总览请求判断托管态
-- 新增 `lib/matrix_allowlist.py` — 可选的受邀名单，按 ssoSub 限定可用用户。
-  文件形式（改完下一个请求即生效，不必重启，也就不会打断在跑的生成任务），
-  握手与门禁两处执行，未配置时不限制；文件读不到时放行并告警而非全拒
+- 新增 `lib/matrix_blocklist.py` — 可选的拒止名单，按 ssoSub 封禁指定用户。
+  默认全部放行（本站靠"不在应用市场列出"控制传播，那是隐蔽而非访问控制），
+  名单提供的是"出事能立刻踢人"。文件形式（改完下一个请求即生效，不必重启，
+  也就不会打断在跑的生成任务），握手与门禁两处执行；文件读不到时谁都不拒
+  并告警——全拒会挡住所有人，而名单要挡的通常只是个位数
 - 新增 `frontend/src/components/pages/settings/MatrixUsageSection.tsx` 与
   `GET /matrix-session/usage`（代理 matrix `/api/external/logs`）—— 托管态用量页
   改用平台账务数据。本地账本记的是「我们以为花了多少」，平台记的是实际扣费，
@@ -196,7 +195,7 @@ complete corresponding source code of this modified version.
 
 上述改动附带的测试：`tests/test_tenant_isolation.py`、
 `tests/test_matrix_session_gate.py`、`tests/test_h3_video_via_gateway.py`、
-`tests/test_voice_library.py`、`tests/test_skill_md.py`、`tests/test_matrix_usage.py`、`tests/test_matrix_model_catalog.py`、`tests/test_matrix_allowlist.py`，
+`tests/test_voice_library.py`、`tests/test_skill_md.py`、`tests/test_matrix_usage.py`、`tests/test_matrix_model_catalog.py`、`tests/test_matrix_blocklist.py`，
 以及 `tests/conftest.py`、`tests/test_app_module.py`、
 `tests/test_auth_coverage.py`、`tests/test_custom_provider_endpoints.py`
 的相应调整。
