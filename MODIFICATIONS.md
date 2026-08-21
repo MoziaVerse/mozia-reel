@@ -46,10 +46,17 @@ AGPL-3.0.
 Users interacting with this service over a network are entitled to the
 complete corresponding source code of this modified version.
 
-- 源码获取地址 / Source URL：**（待填写：面向服务使用者公开的仓库或下载地址）**
-- 获取方式同样在产品内「设置 → 关于」页给出。
+- 源码获取地址 / Source URL：<https://github.com/MoziaVerse/mozia-reel>
+- 获取方式同样在产品内「设置 → 关于」页给出（构建期经 `VITE_SOURCE_URL` 注入）。
 
-> ⚠️ 该地址在对外提供服务前必须填写并可访问，否则本发行版处于 AGPL §13 违约状态。
+该仓库为私有。§13 的义务对象是**本服务的使用者**，不是公众：本发行版配合
+受邀名单运行（见 `deploy/matrix/README.md`），名单内的使用者均可访问该仓库，
+即已履行"使用者能取得对应源码"的要求。
+
+> ⚠️ 一旦把服务开放给名单外的使用者，上述前提即不成立。届时必须改为公开仓库，
+> 或在站内为已登录使用者提供对应版本的源码获取入口。
+>
+> ⚠️ 该地址须与线上运行的版本对应。发版后未推送，同样构成违约。
 
 ## 修改清单 / List of changes
 

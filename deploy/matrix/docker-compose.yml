@@ -28,9 +28,13 @@ services:
         VITE_BRAND_NAME: MoziaReel
         VITE_BRAND_TAGLINE: AI 视频创作工作台
         VITE_BRAND_DESCRIPTION: AI 视频创作工作台，把小说、剧本或商品素材转化为角色一致、过程可控的短视频。
-        # ⚠️ 对外提供服务前必须填：AGPL §13 要求使用者能取得本运行版本对应的完整源码。
-        #    留空会渲染成上游仓库地址——对本修改版而言那不是"对应源码"，等于违约。
-        VITE_SOURCE_URL: ""
+        # AGPL §13：使用者要能取得本运行版本对应的完整源码。指向本发行版自己的仓库。
+        #
+        # 仓库是 private：§13 的义务对象是**本服务的使用者**，不是公众。配合受邀
+        # 名单（见 README「受邀名单」），名单内的人都能访问该仓即已履约。
+        # ⚠️ 哪天把服务开放给名单外的人，这条就不成立了——那时要么转公开仓，
+        #    要么在站内给已登录用户一个源码获取入口。
+        VITE_SOURCE_URL: "https://github.com/MoziaVerse/mozia-reel"
     ports:
       - "1241:1241"
     env_file: .env
