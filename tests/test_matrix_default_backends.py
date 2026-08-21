@@ -201,3 +201,34 @@ class TestVideoDurations:
 
         d = infer_supported_durations("minimax/minimax-h3-ref2va")
         assert min(d) == 4 and max(d) == 15
+
+
+class TestTextModelPreference:
+    """默认文本模型不能按字典序挑。
+
+    字典序第一个恰好是 GLM-4.7，而它在 Agent 的多层子任务嵌套下会**静默死锁**
+    ——不报错、不超时，就是没有输出。同一段 prompt 换 glm-5.2 立刻跑通。
+    按字典序挑等于每个新用户开箱就踩，症状还是最难查的那种。
+    """
+
+    def test_prefers_glm52_over_alphabetical_first(self):
+        from lib.matrix_session import preferred_model
+
+        available = {"GLM-4.7", "z-ai/glm-5.2", "deepseek/deepseek-v4-pro"}
+        assert preferred_model("text", available) == "z-ai/glm-5.2"
+
+    def test_falls_through_the_preference_list(self):
+        from lib.matrix_session import preferred_model
+
+        assert preferred_model("text", {"GLM-4.7", "z-ai/glm-5.1"}) == "z-ai/glm-5.1"
+
+    def test_returns_none_when_no_preference_available(self):
+        """偏好项一个都没上架时交给调用方回落，而不是硬塞一个不存在的模型。"""
+        from lib.matrix_session import preferred_model
+
+        assert preferred_model("text", {"GLM-4.7", "some/other"}) is None
+
+    def test_unknown_media_has_no_preference(self):
+        from lib.matrix_session import preferred_model
+
+        assert preferred_model("nosuch", {"a", "b"}) is None

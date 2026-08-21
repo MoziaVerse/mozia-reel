@@ -436,7 +436,17 @@ _DEFAULT_BACKEND_KEYS = {
 # 表里的模型不存在时自动跳过，不会因为它下架而让 seed 失败。
 _PREFERRED_DEFAULT_MODELS: dict[str, tuple[str, ...]] = {
     "image": ("mozia/image-2",),
+    # 文本这条是拿实测换来的：GLM-4.7 在 Agent 的多层子任务嵌套下会**静默死锁**
+    # ——不报错、不超时，就是没有输出。同一段 prompt 换成 glm-5.2 立刻跑通，
+    # 不必改上游代码。而按字典序挑默认值恰好会挑中 GLM-4.7，等于每个新用户
+    # 开箱就踩。列表按优先级取第一个存在的。
+    "text": ("z-ai/glm-5.2", "z-ai/glm-5.1", "deepseek/deepseek-v4-pro"),
 }
+
+
+def preferred_model(media: str, available: set[str]) -> str | None:
+    """按偏好挑一个存在的模型；都不在就返回 None，由调用方回落。"""
+    return next((m for m in _PREFERRED_DEFAULT_MODELS.get(media, ()) if m in available), None)
 
 
 async def backfill_video_durations(session, *, provider_id: int) -> int:
@@ -503,10 +513,7 @@ async def seed_default_backends(session, *, provider_id: int) -> dict[str, str]:
         model_ids = sorted(by_media.get(media, []))
         if not model_ids:
             continue
-        preferred = next(
-            (m for m in _PREFERRED_DEFAULT_MODELS.get(media, ()) if m in model_ids),
-            None,
-        )
+        preferred = preferred_model(media, set(model_ids))
         current = (await svc.get_setting(key, "")).strip()
         if current:
             continue  # 用户已有选择，不覆盖
@@ -776,12 +783,12 @@ async def seed_agent_credential_for_gateway(session, *, gateway: str, api_key: s
     )
     text_model = None
     if provider is not None:
-        text_model = next(
-            (
-                m.model_id
-                for m in sorted(await repo.list_models(provider.id), key=lambda x: x.model_id)
-                if m.endpoint == "openai-chat" and m.is_enabled
-            ),
-            None,
-        )
+        chat_models = [
+            m.model_id
+            for m in await repo.list_models(provider.id)
+            if m.endpoint == "openai-chat" and m.is_enabled
+        ]
+        # 与 default_text_backend 用同一张偏好表：Agent 是子任务嵌套最深的地方，
+        # 挑中会死锁的那个模型，症状是"点了没反应"，最难查。
+        text_model = preferred_model("text", set(chat_models)) or next(iter(sorted(chat_models)), None)
     await seed_agent_credential(session, gateway=gateway, api_key=api_key, text_model=text_model)

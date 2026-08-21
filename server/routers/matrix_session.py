@@ -276,7 +276,10 @@ async def session_overview(
     identity = verify_session_cookie(request.cookies.get(SESSION_COOKIE_NAME)) or {}
     bound = dev_bound_account()
     user = {
-        "username": (bound or {}).get("username") or identity.get("username"),
+        # cookie 里这个字段叫 "name"（见 issue_session_cookie），不是 "username"。
+        # 写错的后果不报错，只是账户页每个真实用户都显示"未设置"——本地绑定账号
+        # 模式恰好从 env 拿到了用户名，把这个错盖住了。
+        "username": (bound or {}).get("username") or identity.get("name"),
         "sso_sub": (bound or {}).get("sso_sub") or identity.get("sub"),
     }
 

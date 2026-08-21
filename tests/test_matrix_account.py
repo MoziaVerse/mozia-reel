@@ -73,3 +73,18 @@ class TestWalletTokenStorage:
         payload = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
         assert set(payload) == {"sub", "name", "exp"}
         assert "wt-abc" not in cookie
+
+
+class TestOverviewUsername:
+    """账户页的用户名取自 cookie，而 cookie 里那个字段叫 name 不叫 username。
+
+    取错不报错，只是每个真实用户的账户页都显示"未设置"——本地绑定账号模式
+    恰好从 env 拿得到用户名，会把这个错盖住，所以专门钉一条。
+    """
+
+    def test_cookie_carries_username_under_name(self):
+        from lib.matrix_session import issue_session_cookie, verify_session_cookie
+
+        payload = verify_session_cookie(issue_session_cookie(sso_sub="s-1", username="Zeo"))
+        assert payload["name"] == "Zeo"
+        assert "username" not in payload
