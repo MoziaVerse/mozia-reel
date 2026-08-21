@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.db import ensure_tenant_db, get_async_session, safe_session_factory
+from lib.matrix_allowlist import is_allowed
 from lib.tenant_context import is_valid_tenant, tenant_scope
 from lib.matrix_session import (
     SESSION_COOKIE_NAME,
@@ -75,6 +76,14 @@ async def init_session(
         )
 
     sso_sub = user.get("ssoSub") or user.get("id") or ""
+    # 名单在这里先挡一道：不在名单的人连 cookie 都拿不到，也就不会在站内到处
+    # 撞 403 而不知道为什么。门禁那边每请求还会再查一次，用于撤权即时生效。
+    if not is_allowed(sso_sub):
+        logger.info("受邀名单外的用户尝试握手: sub=%s", sso_sub)
+        return JSONResponse(
+            {"error": "not_invited", "message": "本应用当前仅对受邀用户开放"},
+            status_code=403,
+        )
     if not is_valid_tenant(sso_sub):
         logger.error("matrix 返回的 ssoSub 不能作为租户标识: %r", sso_sub)
         return JSONResponse(

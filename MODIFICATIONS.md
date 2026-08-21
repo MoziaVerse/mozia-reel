@@ -165,6 +165,9 @@ complete corresponding source code of this modified version.
   该功能在托管形态下不完整，留着半条链路只会把人引到不存在的页面
 - 修改 `frontend/src/stores/config-status-store.ts` — 暴露 `managed`，
   各处复用同一次总览请求判断托管态
+- 新增 `lib/matrix_allowlist.py` — 可选的受邀名单，按 ssoSub 限定可用用户。
+  文件形式（改完下一个请求即生效，不必重启，也就不会打断在跑的生成任务），
+  握手与门禁两处执行，未配置时不限制；文件读不到时放行并告警而非全拒
 - 新增 `frontend/src/components/pages/settings/MatrixUsageSection.tsx` 与
   `GET /matrix-session/usage`（代理 matrix `/api/external/logs`）—— 托管态用量页
   改用平台账务数据。本地账本记的是「我们以为花了多少」，平台记的是实际扣费，
@@ -186,7 +189,7 @@ complete corresponding source code of this modified version.
 
 上述改动附带的测试：`tests/test_tenant_isolation.py`、
 `tests/test_matrix_session_gate.py`、`tests/test_h3_video_via_gateway.py`、
-`tests/test_voice_library.py`、`tests/test_skill_md.py`、`tests/test_matrix_usage.py`、`tests/test_matrix_model_catalog.py`，
+`tests/test_voice_library.py`、`tests/test_skill_md.py`、`tests/test_matrix_usage.py`、`tests/test_matrix_model_catalog.py`、`tests/test_matrix_allowlist.py`，
 以及 `tests/conftest.py`、`tests/test_app_module.py`、
 `tests/test_auth_coverage.py`、`tests/test_custom_provider_endpoints.py`
 的相应调整。

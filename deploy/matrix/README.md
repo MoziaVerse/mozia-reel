@@ -63,6 +63,38 @@ caddy reload --config /etc/caddy/Caddyfile --force
 注意这是"不列出"，不是访问控制：拿到 URL 的任何 matrix 账号都能进来用，花的是
 他自己的积分。要限人得另加白名单。
 
+## 受邀名单（可选）
+
+限定只有指定的 matrix 用户能用。**不配就是不限制**，本地与测试服不受影响。
+
+```bash
+# 宿主上准备名单，一行一个 ssoSub（# 后是注释）
+cat > /home/server/mozia-reel-data/allowlist.txt <<'LIST'
+# 灰度名单
+1f917403-5af6-4b8b-9f16-59636f3af474   # 张三
+6e8cbfe2-e486-4758-9c39-c5abc3c382a8   # 李四
+LIST
+
+# .env 里指向它
+MOZIA_REEL_ALLOWLIST=/home/server/mozia-reel-data/allowlist.txt
+MATRIX_ALLOWLIST_FILE=/app/allowlist.txt
+```
+
+用 ssoSub 而不是用户名：ssoSub 由服务端签发、用户改不了，而且它同时就是租户键。
+用户名是 Casdoor 登录主键，用户能在 matrix 个人资料页自己改——改了就把自己锁在
+外面，腾出来的旧名被别人注册后那个人会继承访问权。
+
+ssoSub 在「设置 → 账户 → 用户 ID」页面上，用户自己就能复制给你。
+
+两处执行：握手时拒绝（给明确文案），门禁每请求再查一次（**移出名单立即生效**，
+不必重启，也就不会打断正在跑的生成任务）。
+
+文件读不到时**放行并告警**，不是全拒——挂载出问题会把所有人锁在外面，比名单
+暂时失效更糟。靠日志里的 WARNING 发现。
+
+⚠️ `DEV_BOUND_*`（绑定生产账号模式）会跳过整条门禁，名单一并失效。那是本地
+开发用的，生产上绝不能配。
+
 ## AGPL
 
 `VITE_SOURCE_URL` 必须填**本发行版自己**的源码公开地址。留空会渲染成上游仓库

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 
+from lib.matrix_allowlist import is_allowed
 from lib.tenant_context import set_current_tenant
 from lib.matrix_session import (
     SESSION_COOKIE_NAME,
@@ -69,6 +70,9 @@ class MatrixSessionGate:
             return
 
         # 绑定生产账号模式：本地开发直接以该账号身份运行，不走握手。
+        # 注意它也跳过受邀名单——这条分支本来就把所有访问者当成同一个账号，
+        # 名单在这里没有意义。**它只该出现在本地开发**：生产上一旦配了
+        # DEV_BOUND_*，整条访问控制（不止名单）就形同虚设。
         # 放在最前面 —— 它同时也配了 MATRIX_BACKEND_URL（要用生产网关），
         # 落到下面的常规分支会被要求握手，而本地拿不到 ticket。
         bound = dev_bound_account()
@@ -93,7 +97,18 @@ class MatrixSessionGate:
             # 租户 = ssoSub，由服务端从签名 cookie 解出，前端伪造不了。
             # 设在这里而不是路由层：ContextVar 沿本请求的整个调用链生效，
             # app_data_dir / DB engine / ProjectManager 会自动指向该租户的数据。
-            set_current_tenant(payload.get("sub"))
+            sub = payload.get("sub")
+            # 名单在这里也查一遍（而不是只在握手时查）：否则把人移出名单后，
+            # 他手上那张 cookie 在整个 TTL 内仍然有效，踢不掉。
+            if not is_allowed(sub):
+                logger.info("受邀名单外的用户被拒: sub=%s path=%s", sub, path)
+                headers = {k.lower(): v for k, v in raw_headers}
+                if _is_browser_navigation(headers):
+                    await self._not_invited_page(send)
+                else:
+                    await self._not_invited(send)
+                return
+            set_current_tenant(sub)
             await self.app(scope, receive, send)
             return
 
@@ -124,6 +139,51 @@ class MatrixSessionGate:
             }
         )
         await send({"type": "http.response.body", "body": b""})
+
+    # 被拒的人不能再往 matrix 跳：那边会把他登录后原样送回来，来回弹一遍还是这一页。
+    # 所以直接给一个说明白的终点页 / JSON。
+    _NOT_INVITED_HTML = (
+        "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        "<title>暂未开放</title><style>:root{color-scheme:light dark}"
+        "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;"
+        "font:15px/1.6 system-ui,-apple-system,'PingFang SC',sans-serif;background:#fafafa;color:#18181b}"
+        "@media(prefers-color-scheme:dark){body{background:#09090b;color:#fafafa}}"
+        ".b{text-align:center;padding:2rem;max-width:30rem}.m{opacity:.7;font-size:13px;margin-top:.5rem}"
+        "</style></head><body><div class=\"b\"><p>本应用当前仅对受邀用户开放。</p>"
+        "<p class=\"m\">如需使用，请联系管理员开通。</p></div></body></html>"
+    ).encode("utf-8")
+
+    async def _not_invited_page(self, send) -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 403,
+                "headers": [
+                    (b"content-type", b"text/html; charset=utf-8"),
+                    (b"content-length", str(len(self._NOT_INVITED_HTML)).encode("ascii")),
+                    (b"cache-control", b"no-store"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": self._NOT_INVITED_HTML})
+
+    async def _not_invited(self, send) -> None:
+        body = json.dumps(
+            {"error": "not_invited", "message": "本应用当前仅对受邀用户开放"},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 403,
+                "headers": [
+                    (b"content-type", b"application/json; charset=utf-8"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
 
     async def _unauthorized(self, send) -> None:
         body = json.dumps(

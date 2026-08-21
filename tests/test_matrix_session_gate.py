@@ -197,3 +197,53 @@ class TestHandoffEndpointIsNotOpen:
         resp = client.post("/api/v1/matrix-session/init", json={"ticket": "forged"})
         assert resp.status_code == 401
         assert SESSION_COOKIE_NAME not in resp.cookies
+
+
+class TestAllowlistAtTheGate:
+    """名单在门禁上每请求查一次。
+
+    只在握手时查是不够的：把人移出名单后，他手上那张 cookie 在整个 TTL 内仍然
+    有效，踢不掉——而"踢不掉"正是加名单要解决的事之一。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset(self):
+        from lib import matrix_allowlist
+
+        matrix_allowlist._reset_for_tests()
+        yield
+        matrix_allowlist._reset_for_tests()
+
+    def _list(self, tmp_path, monkeypatch, *subs):
+        f = tmp_path / "allow.txt"
+        f.write_text("\n".join(subs) + "\n", encoding="utf-8")
+        monkeypatch.setenv("MATRIX_ALLOWLIST_FILE", str(f))
+        return f
+
+    def test_listed_user_passes(self, tmp_path, monkeypatch):
+        self._list(tmp_path, monkeypatch, "user-1")
+        reached, status = asyncio.run(_probe("/api/v1/projects", API + _with_session()))
+        assert reached and status == 200
+
+    def test_unlisted_user_rejected_even_with_valid_cookie(self, tmp_path, monkeypatch):
+        self._list(tmp_path, monkeypatch, "someone-else")
+        reached, status = asyncio.run(_probe("/api/v1/projects", API + _with_session()))
+        assert not reached and status == 403
+
+    def test_rejection_page_is_a_terminus_not_a_redirect(self, tmp_path, monkeypatch):
+        """不能再往 matrix 跳：那边会把他登录后原样送回来，来回弹一遍还是这一页。"""
+        self._list(tmp_path, monkeypatch, "someone-else")
+        reached, status = asyncio.run(_probe("/", NAV + _with_session()))
+        assert not reached and status == 403
+
+    def test_no_allowlist_keeps_current_behaviour(self, monkeypatch):
+        monkeypatch.delenv("MATRIX_ALLOWLIST_FILE", raising=False)
+        reached, status = asyncio.run(_probe("/api/v1/projects", API + _with_session()))
+        assert reached and status == 200
+
+    def test_public_paths_stay_public(self, tmp_path, monkeypatch):
+        """名单不该锁死握手本身——否则新人连"你不在名单"这句话都看不到，
+        而是撞在一个语焉不详的 401 上。"""
+        self._list(tmp_path, monkeypatch, "someone-else")
+        reached, status = asyncio.run(_probe("/health", API))
+        assert reached and status == 200

@@ -63,6 +63,9 @@ services:
       - ${MOZIA_REEL_DATA_DIR:-./data}/projects:/app/projects
       - ${MOZIA_REEL_DATA_DIR:-./data}/logs:/app/logs
       - ${MOZIA_REEL_DATA_DIR:-./data}/claude:/root/.claude
+      # 受邀名单：一行一个 ssoSub，支持 # 注释。只读挂载——名单是访问控制，
+      # 容器不该有改它的能力。改完下一个请求即生效，不用重启。
+      - ${MOZIA_REEL_ALLOWLIST:-/dev/null}:/app/allowlist.txt:ro
     restart: unless-stopped
     healthcheck:
       # /health 在 MatrixSessionGate 的公开白名单里，未握手也能探活
