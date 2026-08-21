@@ -42,6 +42,46 @@ caddy reload --config /etc/caddy/Caddyfile --force
 #    ⚠️ 不要用 systemctl reload caddy —— 会挂在 reloading 状态。
 ```
 
+## 构建踩过的坑
+
+**构建失败报 `failed to compute cache key: short read ... unexpected EOF`**
+= buildkit 缓存里的层坏了，不是网络问题。清掉重来：
+
+```bash
+docker builder prune -af
+```
+
+⚠️ 顺带说个量级：生产上第一次跑这条清出了 **216GB**。那些陈年缓存在
+`docker images` 里完全看不见（镜像实存 `/var/lib/containerd`，`docker rmi` 与
+`docker system prune` 都回收不到），部署前值得先看一眼 `docker system df`。
+
+**基础镜像 `ghcr.io/astral-sh/uv` 拉得很慢**（实测 ~30KB/s）。apt / pip / npm
+都走了阿里源，只有这个没有镜像源可用，首次构建要等。已构建过就命中缓存。
+
+**容器里的 `python3` 不是应用的解释器**。应用跑在 uv 管理的 venv 里，要用
+`/app/.venv/bin/python`；直接 `python3` 会 `ModuleNotFoundError: pydantic`。
+
+```bash
+docker exec -w /app matrix-mozia-reel-1 /app/.venv/bin/python -c '...'
+```
+
+## Caddy 的真实情况
+
+`caddy validate` / `caddy reload` 以 `server` 身份跑时，会因为读不了 caddy 用户
+拥有的日志文件而报 `permission denied` —— **那不代表配置有问题**。reload 的
+provisioning 发生在运行中的 caddy 进程里（caddy 身份），照样能成功。判断是否
+真的生效，看运行中的配置而不是 validate 的输出：
+
+```bash
+curl -s http://127.0.0.1:2019/config/apps/http/servers | python3 -c "
+import json,sys
+hosts=set()
+for srv in json.load(sys.stdin).values():
+    for r in srv.get('routes',[]):
+        for m in r.get('match',[]): hosts.update(m.get('host',[]))
+print(sorted(hosts))"
+```
+
 ## 蓝绿切换（版本更新）
 
 沿用 canvas 的做法，切换零中断、回滚一步到位：
