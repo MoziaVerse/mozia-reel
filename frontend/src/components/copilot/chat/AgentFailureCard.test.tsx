@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { Router } from "wouter";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FailureObservation } from "@/types";
 import { copyText } from "@/utils/clipboard";
@@ -59,6 +60,20 @@ describe("AgentFailureCard", () => {
       .toHaveAttribute("href", "/app/settings?section=agent");
     expect(screen.queryByText(/下载.*日志/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "重试" })).not.toBeInTheDocument();
+  });
+
+  it("在工作区嵌套路由下，设置入口仍指向站点根的设置页", () => {
+    // 本卡片实际渲染在 router.tsx 的 `/app/projects/:projectName` nest 路由内。
+    // nest 里的 href 是相对 base 解析的，写成 "/app/settings" 会得到
+    // /app/projects/demo/app/settings —— 用户点了跳进 404。带 `~` 才跳出 base。
+    render(
+      <Router base="/app/projects/demo">
+        <AgentFailureCard failure={turnFailure} />
+      </Router>,
+    );
+
+    expect(screen.getByRole("link", { name: "打开智能体设置" }))
+      .toHaveAttribute("href", "/app/settings?section=agent");
   });
 
   it("offers retry only when the caller supplies a startup retry", () => {

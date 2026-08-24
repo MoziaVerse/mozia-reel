@@ -89,7 +89,9 @@ export function AgentFailureCard({ failure, onRetry }: Readonly<AgentFailureCard
           {copied ? <Check aria-hidden className="h-3.5 w-3.5" /> : <Copy aria-hidden className="h-3.5 w-3.5" />}
           {t(copied ? "agent_failure_copied" : "agent_failure_copy")}
         </button>
-        <Link href="/app/settings?section=agent" className={GHOST_BTN_CLS}>
+        {/* `~` 前缀跳出 nest：本卡片渲染在工作区嵌套路由内，相对路径会落到
+            /app/projects/<名>/app/settings。与 StudioLayout / GlobalHeader 同口径。 */}
+        <Link href="~/app/settings?section=agent" className={GHOST_BTN_CLS}>
           <Settings aria-hidden className="h-3.5 w-3.5" />
           {t("agent_failure_open_settings")}
         </Link>
