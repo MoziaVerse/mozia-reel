@@ -144,11 +144,11 @@ function extractSkillArgs(input: Record<string, unknown> | undefined): string {
 function StandaloneToolResult({ block }: Readonly<{ block: ContentBlock }>) {
   const { t } = useTranslation("dashboard");
   return (
-    <div className="my-1.5 rounded-lg border border-white/10 bg-ink-800/30 px-3 py-2">
-      <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">
+    <div className="my-1.5 rounded-lg border border-hairline bg-ink-800/30 px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wide text-text-4 mb-1">
         {block.is_error ? t("tool_call_error_label") : t("tool_call_result_label")}
       </div>
-      <pre className="text-xs text-slate-300 overflow-x-auto whitespace-pre-wrap">
+      <pre className="text-xs text-text-2 overflow-x-auto whitespace-pre-wrap">
         {typeof block.content === "string"
           ? block.content
           : block.content

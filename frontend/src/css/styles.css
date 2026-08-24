@@ -32,14 +32,18 @@
     background: transparent;
 }
 
+/* 滑块在浅色下取深色、深色下取浅色——固定白色滑块在浅底上等于不可见 */
 ::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, calc(0.12 * var(--scrollbar-opacity)));
+    background: light-dark(
+        oklch(0.2 0.02 260 / calc(0.22 * var(--scrollbar-opacity))),
+        oklch(1 0 0 / calc(0.12 * var(--scrollbar-opacity)))
+    );
     border-radius: 9999px;
 }
 
 /* 悬停在滑块上：提亮 */
 [data-scrolling]::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.25);
+    background: light-dark(oklch(0.2 0.02 260 / 0.38), oklch(1 0 0 / 0.25));
 }
 
 /* 卡片悬停效果 — 仅颜色过渡，禁止位移 */
@@ -188,11 +192,14 @@
 
 /* ==================== Markdown 渲染样式 ==================== */
 
+/* 色值一律走主题变量或 light-dark()：这里的底色（代码块、表头、斑马纹）
+ * 与正文字色同属一套主题，硬编码深灰会在浅色主题下把深色底压在深色字上。 */
+
 .markdown-body h1 {
     font-size: 1.75rem;
     font-weight: 700;
     margin: 1rem 0 0.5rem;
-    border-bottom: 1px solid #4b5563;
+    border-bottom: 1px solid var(--color-hairline);
     padding-bottom: 0.25rem;
 }
 
@@ -250,7 +257,8 @@
 }
 
 .markdown-body code {
-    background-color: #1f2937;
+    background-color: light-dark(oklch(0.94 0.012 255), oklch(0.24 0.025 260));
+    color: var(--color-text);
     padding: 0.125rem 0.375rem;
     border-radius: 0.25rem;
     font-family: ui-monospace, monospace;
@@ -260,24 +268,25 @@
 }
 
 .markdown-body pre {
-    background-color: #1f2937;
+    background-color: light-dark(oklch(0.965 0.006 255), oklch(0.19 0.02 260));
     padding: 0.75rem 1rem;
     border-radius: 0.375rem;
     overflow-x: auto;
     margin: 0.5rem 0;
-    border-left: 3px solid #3b82f6;
+    border-left: 3px solid var(--color-accent);
 }
 
 .markdown-body pre code {
     background-color: transparent;
+    color: inherit;
     padding: 0;
 }
 
 .markdown-body blockquote {
-    border-left: 3px solid #6b7280;
+    border-left: 3px solid var(--color-hairline-strong);
     padding-left: 1rem;
     margin: 0.5rem 0;
-    color: #9ca3af;
+    color: var(--color-text-3);
     font-style: italic;
 }
 
@@ -296,22 +305,23 @@
 
 .markdown-body th,
 .markdown-body td {
-    border: 1px solid #4b5563;
+    border: 1px solid var(--color-hairline);
     padding: 0.5rem;
     text-align: left;
 }
 
 .markdown-body th {
-    background-color: #374151;
+    background-color: var(--color-surface-2);
+    color: var(--color-text);
     font-weight: 600;
 }
 
 .markdown-body tr:nth-child(even) {
-    background-color: #374151;
+    background-color: light-dark(oklch(0.96 0.006 255), oklch(0.21 0.022 260));
 }
 
 .markdown-body a {
-    color: #60a5fa;
+    color: var(--color-accent-2);
 }
 
 .markdown-body a:hover {
@@ -320,7 +330,7 @@
 
 .markdown-body hr {
     border: none;
-    border-top: 1px solid #4b5563;
+    border-top: 1px solid var(--color-hairline);
     margin: 1rem 0;
 }
 

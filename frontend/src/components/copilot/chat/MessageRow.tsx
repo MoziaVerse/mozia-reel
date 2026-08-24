@@ -104,7 +104,7 @@ export function MessageRow({
             onClick={() => onStartEdit?.(turnUuid, text)}
             title={t("message_edit")}
             aria-label={t("message_edit")}
-            className="focus-ring grid h-6 w-6 place-items-center rounded-md transition-colors hover:bg-white/10"
+            className="focus-ring grid h-6 w-6 place-items-center rounded-md transition-colors hover:bg-surface-2"
             style={{ color: "var(--color-text-3)" }}
           >
             <Pencil aria-hidden className="h-3.5 w-3.5" />
@@ -150,7 +150,7 @@ function CopyButton({ text }: { text: string }) {
       }}
       title={label}
       aria-label={label}
-      className="focus-ring grid h-6 w-6 place-items-center rounded-md transition-colors hover:bg-white/10"
+      className="focus-ring grid h-6 w-6 place-items-center rounded-md transition-colors hover:bg-surface-2"
       style={{ color: copied ? "var(--color-accent-2)" : "var(--color-text-3)" }}
     >
       <Icon aria-hidden className="h-3.5 w-3.5" />
