@@ -21,13 +21,39 @@ from lib.custom_provider.backends import (
 )
 from lib.custom_provider.endpoints import endpoint_to_media_type
 from lib.custom_provider.factory import create_custom_backend
-from lib.db.models.custom_provider import CustomProviderModel
+from lib.db.models.custom_provider import CustomProvider, CustomProviderModel
 from lib.db.repositories.custom_provider_repo import CustomProviderRepository
+from lib.tenant_context import current_tenant
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+
+class TenantOwnershipMismatchError(RuntimeError):
+    """``custom_provider`` 行的 ``owner_sso_sub`` 与当前租户不一致。
+
+    每个租户各自一份 SQLite，本表天然按库隔离——正常路径下这个断言恒成立。
+    炸出这个异常只可能是装载凭据这一刻 ``current_tenant()`` 被错误地设成了别的
+    租户（或落回了共享默认根），不吞掉、不悄悄换成默认凭据：那等于把生成计入
+    了别人的账单，且事后无法从任何日志里看出发生过什么。
+    """
+
+
+def _assert_owner_matches_current_tenant(provider: CustomProvider) -> None:
+    owner = provider.owner_sso_sub
+    # None：matrix 迁移前的存量行，或非 matrix 单租户部署（current_tenant() 恒
+    # None，seed_gateway_provider 也从未被传过 sso_sub）——两种都没有可比对的
+    # 所有权信息，放行。
+    if owner is None:
+        return
+    tenant = current_tenant()
+    if tenant != owner:
+        raise TenantOwnershipMismatchError(
+            f"custom_provider id={provider.id} 属于租户 {owner!r}，"
+            f"但当前租户上下文是 {tenant!r}——拒绝跨租户读取网关凭据"
+        )
 
 
 async def load_custom_backend(
@@ -50,6 +76,7 @@ async def load_custom_backend(
     provider = await repo.get_provider(db_id)
     if provider is None:
         raise ValueError(f"自定义供应商 {provider_id} 不存在")
+    _assert_owner_matches_current_tenant(provider)
 
     model = None
     if model_id:

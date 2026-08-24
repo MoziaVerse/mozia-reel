@@ -16,22 +16,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.db import ensure_tenant_db, get_async_session, safe_session_factory
 from lib.matrix_blocklist import is_allowed
-from lib.tenant_context import is_valid_tenant, tenant_scope
 from lib.matrix_session import (
     SESSION_COOKIE_NAME,
-    fetch_wallet_balance,
-    fetch_wallet_logs,
-    get_wallet_token,
-    save_wallet_token,
     MatrixHandoffError,
     cookie_secure,
     exchange_ticket,
+    fetch_wallet_balance,
+    fetch_wallet_logs,
+    get_wallet_token,
     issue_session_cookie,
     matrix_launch_url,
+    save_wallet_token,
     seed_agent_credential_for_gateway,
     seed_gateway_provider,
     session_ttl_seconds,
 )
+from lib.tenant_context import is_valid_tenant, tenant_scope
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +71,7 @@ async def init_session(
         # matrix 返 200 但缺字段：属于契约破裂，明确报出来而不是让用户进到一个
         # "能进但生成全失败" 的站点——后者的报错会散落在每次生成里，指不到根因。
         logger.error("matrix session-init 响应缺少 apiKey/gateway")
-        return JSONResponse(
-            {"error": "handoff_incomplete", "message": "matrix 未返回网关凭据"}, status_code=502
-        )
+        return JSONResponse({"error": "handoff_incomplete", "message": "matrix 未返回网关凭据"}, status_code=502)
 
     sso_sub = user.get("ssoSub") or user.get("id") or ""
     # 名单在这里先挡一道：被拒的人连 cookie 都拿不到，也就不会在站内到处撞 403
@@ -86,9 +84,7 @@ async def init_session(
         )
     if not is_valid_tenant(sso_sub):
         logger.error("matrix 返回的 ssoSub 不能作为租户标识: %r", sso_sub)
-        return JSONResponse(
-            {"error": "invalid_tenant", "message": "身份标识非法"}, status_code=502
-        )
+        return JSONResponse({"error": "invalid_tenant", "message": "身份标识非法"}, status_code=502)
 
     # 切到该租户后再建库与 seed —— 否则会写到部署级默认库上。
     # 注意 seed 用的 session 是请求依赖注入的，绑在**切换前**的 engine 上，
@@ -102,6 +98,7 @@ async def init_session(
                 tenant_session,
                 gateway=gateway,
                 api_key=api_key,
+                sso_sub=sso_sub,
                 wallet_token=payload.get("walletToken"),
             )
             # Agent 编排走同一把 key（网关支持 Anthropic 格式的 /v1/messages）。

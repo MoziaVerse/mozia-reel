@@ -442,10 +442,10 @@ async def lifespan(app: FastAPI):
         with tenant_scope(_bound["sso_sub"]):
             await ensure_tenant_db()
             async with safe_session_factory() as _s:
-                await seed_gateway_provider(_s, gateway=_bound["gateway"], api_key=_bound["api_key"])
-                await seed_agent_credential_for_gateway(
-                    _s, gateway=_bound["gateway"], api_key=_bound["api_key"]
+                await seed_gateway_provider(
+                    _s, gateway=_bound["gateway"], api_key=_bound["api_key"], sso_sub=_bound["sso_sub"]
                 )
+                await seed_agent_credential_for_gateway(_s, gateway=_bound["gateway"], api_key=_bound["api_key"])
                 await save_wallet_token(_s, _bound.get("wallet_token"))
 
     # 参考素材外链托管：默认走网关的 /v1/sd/upload。没有它的话，需要参考图的

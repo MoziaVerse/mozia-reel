@@ -49,6 +49,7 @@ class TestCustomProviderTable:
             "image_max_workers",
             "video_max_workers",
             "audio_max_workers",
+            "owner_sso_sub",
             "created_at",
             "updated_at",
         }

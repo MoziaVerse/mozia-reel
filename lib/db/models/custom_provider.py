@@ -46,6 +46,11 @@ class CustomProvider(TimestampMixin, Base):
     discovery_format: Mapped[str] = mapped_column(String(32), nullable=False)  # "openai" | "google"
     base_url: Mapped[str] = mapped_column(Text, nullable=False)
     api_key: Mapped[str] = mapped_column(Text, nullable=False)  # sensitive, masked in API responses
+    # 租户指纹：每个租户各自一份 SQLite，本表天然按库隔离，id 在库间可撞（都从 1 起）——
+    # 这一列不参与路由，只在装载 backend 时核对"这行确实是当前租户自己的"，把任何上游
+    # ContextVar 传递失误从"跨租户静默串账单"变成立刻报错。NULL = matrix 握手迁移前的
+    # 存量行，握手时随手补齐，不为它单独写回填脚本。
+    owner_sso_sub: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # 按 lane 命名的并发上限定型列；NULL = 未设置 → 容量装载回退全局默认。自定义供应商不在
     # 内置注册表，故无声明默认层，回退为两层（用户列值 → 全局默认）。
     image_max_workers: Mapped[int | None] = mapped_column(Integer, nullable=True)

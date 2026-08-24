@@ -14,9 +14,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from lib.custom_provider import make_provider_id
 from lib.custom_provider.backends import CustomImageBackend
 from lib.custom_provider.capabilities import system_video_capabilities
-from lib.custom_provider.loader import load_custom_backend
+from lib.custom_provider.loader import TenantOwnershipMismatchError, load_custom_backend
 from lib.db.base import Base
 from lib.db.repositories.custom_provider_repo import CustomProviderRepository
+from lib.tenant_context import tenant_scope
 
 
 @pytest.fixture()
@@ -30,7 +31,7 @@ async def session():
     await engine.dispose()
 
 
-async def _seed(session, *, models: list[dict]) -> str:
+async def _seed(session, *, models: list[dict], owner_sso_sub: str | None = None) -> str:
     repo = CustomProviderRepository(session)
     # display_name 列 NOT NULL：缺省补 model_id 作显示名
     for m in models:
@@ -41,6 +42,7 @@ async def _seed(session, *, models: list[dict]) -> str:
         base_url="https://relay.test/v1",
         api_key="sk-relay",
         models=models,
+        owner_sso_sub=owner_sso_sub,
     )
     await session.commit()
     return make_provider_id(provider.id)
@@ -89,6 +91,69 @@ class TestLoadCustomBackend:
         )
         with pytest.raises(ValueError, match="没有默认"):
             await load_custom_backend(session=session, provider_id=pid, model_id=None, media_type="video")
+
+
+class TestTenantOwnershipCheck:
+    """custom_provider 的 owner_sso_sub 必须和读取它的租户上下文一致，否则拒装。
+
+    provider_id 在每个租户各自的 SQLite 里都独立从 1 起——生产上曾出现过
+    current_tenant() 在读取凭据那一刻错落到另一个租户，把生成计入了别人账单
+    的真实事故（task 提交给了 A 账号的网关 key，本地账本却记在 B 账号名下）。
+    这个断言把那类错误从"静默算错账"变成"立刻抛异常"。
+    """
+
+    @pytest.mark.unit
+    @patch("lib.custom_provider.endpoints.OpenAIImageBackend")
+    async def test_matching_owner_loads_normally(self, _mock_cls, session):
+        pid = await _seed(
+            session,
+            models=[{"model_id": "dall-e-3", "endpoint": "openai-images", "is_enabled": True}],
+            owner_sso_sub="tenant-a",
+        )
+        with tenant_scope("tenant-a"):
+            result = await load_custom_backend(
+                session=session, provider_id=pid, model_id="dall-e-3", media_type="image"
+            )
+        assert isinstance(result, CustomImageBackend)
+
+    @pytest.mark.unit
+    async def test_mismatched_tenant_context_raises(self, session):
+        pid = await _seed(
+            session,
+            models=[{"model_id": "dall-e-3", "endpoint": "openai-images", "is_enabled": True}],
+            owner_sso_sub="tenant-a",
+        )
+        with tenant_scope("tenant-b"):
+            with pytest.raises(TenantOwnershipMismatchError, match="tenant-a"):
+                await load_custom_backend(session=session, provider_id=pid, model_id="dall-e-3", media_type="image")
+
+    @pytest.mark.unit
+    async def test_owned_row_read_with_no_tenant_context_raises(self, session):
+        # current_tenant() 落回 None（=「共享默认根」）同样是跨租户串数据的表现形式
+        # 之一，不因为"另一边是 None"就当作无害而放行。
+        pid = await _seed(
+            session,
+            models=[{"model_id": "dall-e-3", "endpoint": "openai-images", "is_enabled": True}],
+            owner_sso_sub="tenant-a",
+        )
+        with pytest.raises(TenantOwnershipMismatchError, match="tenant-a"):
+            await load_custom_backend(session=session, provider_id=pid, model_id="dall-e-3", media_type="image")
+
+    @pytest.mark.unit
+    @patch("lib.custom_provider.endpoints.OpenAIImageBackend")
+    async def test_legacy_row_without_owner_is_not_checked(self, _mock_cls, session):
+        # 迁移前的存量行 owner_sso_sub 为 NULL：没有可比对的所有权信息，放行，
+        # 直到下次握手把它补齐（seed_gateway_provider 每次都会回填）。
+        pid = await _seed(
+            session,
+            models=[{"model_id": "dall-e-3", "endpoint": "openai-images", "is_enabled": True}],
+            owner_sso_sub=None,
+        )
+        with tenant_scope("tenant-anything"):
+            result = await load_custom_backend(
+                session=session, provider_id=pid, model_id="dall-e-3", media_type="image"
+            )
+        assert isinstance(result, CustomImageBackend)
 
 
 class TestVideoCapabilityOverridesReachExecution:

@@ -118,10 +118,7 @@ def _session_secret() -> bytes:
     """
     secret = os.environ.get("SESSION_COOKIE_SECRET", "").strip()
     if len(secret) < 32:
-        raise RuntimeError(
-            "SESSION_COOKIE_SECRET 必须配置且不短于 32 字符"
-            "（生成：openssl rand -base64 32）"
-        )
+        raise RuntimeError("SESSION_COOKIE_SECRET 必须配置且不短于 32 字符（生成：openssl rand -base64 32）")
     return secret.encode("utf-8")
 
 
@@ -331,8 +328,8 @@ async def sync_gateway_models(session, *, provider_id: int, rows: list[dict]) ->
     - 已有的：endpoint 与 display_name 跟平台走 —— endpoint 决定请求打到哪条路径，
       错了就是必然失败，这不是"用户偏好"可以覆盖的东西。is_default 保留不动。
     """
-    from lib.db.repositories.custom_provider_repo import CustomProviderRepository
     from lib.db.models.custom_provider import CustomProviderModel
+    from lib.db.repositories.custom_provider_repo import CustomProviderRepository
 
     if not rows:
         return
@@ -349,9 +346,7 @@ async def sync_gateway_models(session, *, provider_id: int, rows: list[dict]) ->
             continue
         changed = False
         if current.endpoint != row["endpoint"]:
-            logger.info(
-                "模型 %s 的 endpoint 按平台目录纠正: %s → %s", model_id, current.endpoint, row["endpoint"]
-            )
+            logger.info("模型 %s 的 endpoint 按平台目录纠正: %s → %s", model_id, current.endpoint, row["endpoint"])
             current.endpoint = row["endpoint"]
             # 换了链路，时长预设也要跟着换（视频→非视频时清空）
             current.supported_durations = row["supported_durations"]
@@ -700,7 +695,7 @@ def pick_text_model(models: list[dict]) -> str | None:
 
 
 async def seed_gateway_provider(
-    session, *, gateway: str, api_key: str, wallet_token: str | None = None
+    session, *, gateway: str, api_key: str, sso_sub: str, wallet_token: str | None = None
 ) -> None:
     """把握手拿到的网关凭据写成全局唯一的 custom_provider。
 
@@ -710,6 +705,11 @@ async def seed_gateway_provider(
     "已有就不再 discover"，理由是别冲掉用户手改——代价是目录永远停在首次握手
     那一刻：平台新上架的看不到、已下架的还列着、分类修正也传不过来。现在改成
     逐项合并（见 ``sync_gateway_models``），用户设的默认项照样保留。
+
+    ``sso_sub`` 写入 ``owner_sso_sub``：每次握手都盖一遍——既补上迁移前的存量
+    NULL 行，也让该字段永远跟"这次握手认领它的到底是谁"同步，供
+    ``load_custom_backend`` 在装载时核对当前租户与这行的所有者是否一致
+    （见该函数 docstring）。
     """
     from lib.db.repositories.custom_provider_repo import CustomProviderRepository
 
@@ -720,8 +720,8 @@ async def seed_gateway_provider(
     )
 
     if existing is not None:
-        if existing.base_url != gateway or existing.api_key != api_key:
-            await repo.update_provider(existing.id, base_url=gateway, api_key=api_key)
+        if existing.base_url != gateway or existing.api_key != api_key or existing.owner_sso_sub != sso_sub:
+            await repo.update_provider(existing.id, base_url=gateway, api_key=api_key, owner_sso_sub=sso_sub)
             await session.commit()
             logger.info("网关供应商凭据已更新 (provider_id=%s)", existing.id)
         # 已有供应商也要补默认值：早期握手过、但那时还没有这段逻辑的租户，
@@ -739,6 +739,7 @@ async def seed_gateway_provider(
         base_url=gateway,
         api_key=api_key,
         models=models or None,
+        owner_sso_sub=sso_sub,
     )
     await session.commit()
     logger.info("网关供应商已创建 (provider_id=%s, models=%d)", provider.id, len(models))
@@ -784,9 +785,7 @@ async def seed_agent_credential_for_gateway(session, *, gateway: str, api_key: s
     text_model = None
     if provider is not None:
         chat_models = [
-            m.model_id
-            for m in await repo.list_models(provider.id)
-            if m.endpoint == "openai-chat" and m.is_enabled
+            m.model_id for m in await repo.list_models(provider.id) if m.endpoint == "openai-chat" and m.is_enabled
         ]
         # 与 default_text_backend 用同一张偏好表：Agent 是子任务嵌套最深的地方，
         # 挑中会死锁的那个模型，症状是"点了没反应"，最难查。

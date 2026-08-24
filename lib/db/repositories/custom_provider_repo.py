@@ -45,6 +45,7 @@ class CustomProviderRepository(BaseRepository):
         image_max_workers: int | None = None,
         video_max_workers: int | None = None,
         audio_max_workers: int | None = None,
+        owner_sso_sub: str | None = None,
     ) -> CustomProvider:
         """创建供应商，可选同时创建模型列表。"""
         provider = CustomProvider(
@@ -55,6 +56,7 @@ class CustomProviderRepository(BaseRepository):
             image_max_workers=image_max_workers,
             video_max_workers=video_max_workers,
             audio_max_workers=audio_max_workers,
+            owner_sso_sub=owner_sso_sub,
         )
         self.session.add(provider)
         await self.session.flush()  # 获取 provider.id
