@@ -204,23 +204,34 @@ class TestVideoDurations:
 
 
 class TestTextModelPreference:
-    """默认文本模型不能按字典序挑。
+    """默认文本模型不能按字典序挑，也不能落在只收 paid 的模型上。
 
     字典序第一个恰好是 GLM-4.7，而它在 Agent 的多层子任务嵌套下会**静默死锁**
-    ——不报错、不超时，就是没有输出。同一段 prompt 换 glm-5.2 立刻跑通。
-    按字典序挑等于每个新用户开箱就踩，症状还是最难查的那种。
+    ——不报错、不超时，就是没有输出。按字典序挑等于每个新用户开箱就踩，症状
+    还是最难查的那种。
+
+    另一条约束是钱包分区：新用户手里通常只有赠送额度，而网关只给少数模型开了
+    gift 授权，默认值落在 paid-only 的模型上等于开箱就欠费。
     """
 
-    def test_prefers_glm52_over_alphabetical_first(self):
+    def test_prefers_gift_capable_over_alphabetical_first(self):
+        from lib.matrix_session import preferred_model
+
+        available = {"GLM-4.7", "qwen/qwen3.8-27b", "z-ai/glm-5.2"}
+        assert preferred_model("text", available) == "qwen/qwen3.8-27b"
+
+    def test_never_picks_the_deadlocking_model(self):
+        """GLM-4.7 虽然也允许 gift，但它会静默死锁，不能进偏好表。"""
+        from lib.matrix_session import preferred_model
+
+        assert preferred_model("text", {"GLM-4.7", "z-ai/glm-5.1"}) == "z-ai/glm-5.1"
+
+    def test_falls_back_to_paid_only_when_no_gift_model_listed(self):
+        """gift 档都没上架时回落到 paid-only 的兜底项，而不是返回 None。"""
         from lib.matrix_session import preferred_model
 
         available = {"GLM-4.7", "z-ai/glm-5.2", "deepseek/deepseek-v4-pro"}
         assert preferred_model("text", available) == "z-ai/glm-5.2"
-
-    def test_falls_through_the_preference_list(self):
-        from lib.matrix_session import preferred_model
-
-        assert preferred_model("text", {"GLM-4.7", "z-ai/glm-5.1"}) == "z-ai/glm-5.1"
 
     def test_returns_none_when_no_preference_available(self):
         """偏好项一个都没上架时交给调用方回落，而不是硬塞一个不存在的模型。"""

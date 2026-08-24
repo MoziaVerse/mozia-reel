@@ -431,11 +431,23 @@ _DEFAULT_BACKEND_KEYS = {
 # 表里的模型不存在时自动跳过，不会因为它下架而让 seed 失败。
 _PREFERRED_DEFAULT_MODELS: dict[str, tuple[str, ...]] = {
     "image": ("mozia/image-2",),
-    # 文本这条是拿实测换来的：GLM-4.7 在 Agent 的多层子任务嵌套下会**静默死锁**
-    # ——不报错、不超时，就是没有输出。同一段 prompt 换成 glm-5.2 立刻跑通，
-    # 不必改上游代码。而按字典序挑默认值恰好会挑中 GLM-4.7，等于每个新用户
-    # 开箱就踩。列表按优先级取第一个存在的。
-    "text": ("z-ai/glm-5.2", "z-ai/glm-5.1", "deepseek/deepseek-v4-pro"),
+    # 文本这条排序同时受两个约束，缺一个都会给新用户一个开箱不可用的默认值：
+    #
+    # 1) 死锁：GLM-4.7 在 Agent 的多层子任务嵌套下会**静默死锁**——不报错、
+    #    不超时，就是没有输出。它绝不能进这张表；而按字典序挑恰好挑中它。
+    # 2) 赠送额度：网关按模型限定可消耗的钱包分区，只有少数模型允许 gift。
+    #    新用户手里通常只有赠送额度，默认值若落在 paid-only 的模型上，等于
+    #    开箱就欠费。前两项是网关上显式配了 gift 的文本模型，排在最前。
+    #
+    # 后三项是 paid-only 的兜底：赠送额度用完或平台撤掉 gift 授权时仍能跑。
+    # ⚠️ gift 授权同样会漂移，改动前先核对网关的 mozia_model_quota_policies。
+    "text": (
+        "qwen/qwen3.8-27b",
+        "qwen/qwen3.6-35b-a3b",
+        "z-ai/glm-5.2",
+        "z-ai/glm-5.1",
+        "deepseek/deepseek-v4-pro",
+    ),
 }
 
 
