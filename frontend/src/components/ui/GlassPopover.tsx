@@ -24,7 +24,8 @@ export function GlassPopover({
   return (
     <Popover
       {...rest}
-      backgroundColor="transparent"
+      // null = 不写行内背景色，底色由 .arc-glass-panel 给（行内会压过类）
+      backgroundColor={null}
       className={`arc-glass-panel relative overflow-hidden rounded-lg ${className}`.trim()}
     >
       {showHairline && (

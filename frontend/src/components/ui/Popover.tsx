@@ -55,8 +55,12 @@ interface PopoverProps {
   placement?: Placement;
   /** z-index 层级，默认 "workspacePopover" */
   layer?: PopoverLayer;
-  /** 自定义背景色，默认 POPOVER_BG */
-  backgroundColor?: string;
+  /**
+   * 自定义背景色，默认 POPOVER_BG。
+   * 传 null 表示不写行内背景色，由 className 供底色——行内样式压过类选择器，
+   * 写死 "transparent" 会把 className 里的底色一并盖掉，面板变全透明。
+   */
+  backgroundColor?: string | null;
   /** 传入时启用 size middleware，把面板 max-height 夹到 min(maxHeight, availableHeight) */
   maxHeight?: number;
 }
@@ -128,7 +132,7 @@ export function Popover({
         className={`isolate ${width} ${UI_LAYERS[layer]} ${className}`}
         style={{
           ...floatingStyles,
-          backgroundColor,
+          ...(backgroundColor === null ? {} : { backgroundColor }),
           ...style,
         }}
       >
