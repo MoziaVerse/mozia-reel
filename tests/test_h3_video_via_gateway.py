@@ -70,6 +70,62 @@ class TestSubmitTimeout:
         assert OpenAIVideoBackend._H3_SUBMIT_TIMEOUT_SEC >= 240.0
 
 
+class TestSubmitPayloadContract:
+    """提交体的时长字段：名字是 duration、值是数字，与画布（ZeoCanvasLite）同口径。
+
+    网关 adaptor 的 resolveDuration 依次取 duration → seconds → metadata.duration。
+    沿用 Sora SDK 的 `"seconds": "5"`（字符串）会被 Go 侧拒成 `cannot unmarshal string
+    into Go struct field clientRequest.seconds of type float64`，H3 提交必 400。
+    """
+
+    def _captured_payload(self, monkeypatch) -> dict:
+        import asyncio
+
+        captured: dict = {}
+
+        class _Resp:
+            is_error = False
+            status_code = 200
+
+            @staticmethod
+            def json() -> dict:
+                return {"task_id": "t-1"}
+
+        class _Client:
+            def __init__(self, *a, **kw) -> None:
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a) -> bool:
+                return False
+
+            async def post(self, _url, *, headers=None, json=None):
+                captured.update(json or {})
+                return _Resp()
+
+        monkeypatch.setattr("lib.video_backends.openai.httpx.AsyncClient", _Client)
+        backend = OpenAIVideoBackend(
+            model="minimax/minimax-h3-fl2va",
+            api_key="k",
+            base_url="https://example.invalid/v1",
+        )
+        asyncio.run(
+            backend._create_h3_video(prompt="p", model="minimax/minimax-h3-fl2va", seconds="5", size="768x1344")
+        )
+        return captured
+
+    def test_duration_is_numeric_not_string(self, monkeypatch):
+        payload = self._captured_payload(monkeypatch)
+        assert payload["duration"] == 5
+        assert not isinstance(payload["duration"], str)
+
+    def test_seconds_key_is_not_sent(self, monkeypatch):
+        """留着字符串版 seconds 会被 adaptor 当次优先级读到，等于把坑留在原地。"""
+        assert "seconds" not in self._captured_payload(monkeypatch)
+
+
 class TestReferenceHostingContract:
     def test_unconfigured_hosting_raises_not_silently_skips(self):
         """没有外链托管时必须报错。
@@ -117,9 +173,9 @@ class TestPollingTimeout:
     def _max_wait(self, model: str, duration: int) -> float:
         from lib.video_backends.openai import (
             _H3_MIN_POLL_TIMEOUT_SECONDS,
-            _is_minimax_h3,
             _MIN_POLL_TIMEOUT_SECONDS,
             _POLL_TIMEOUT_PER_SECOND,
+            _is_minimax_h3,
         )
 
         floor = _H3_MIN_POLL_TIMEOUT_SECONDS if _is_minimax_h3(model) else _MIN_POLL_TIMEOUT_SECONDS

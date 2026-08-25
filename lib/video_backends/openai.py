@@ -11,10 +11,10 @@ from types import SimpleNamespace
 import httpx
 
 from lib.aspect_size import VIDEO_TIER_SHORT_EDGE, parse_aspect_ratio, resolution_to_short_edge
-from lib.reference_image_hosting import upload_reference_images
 from lib.logging_utils import format_kwargs_for_log
 from lib.openai_shared import OPENAI_RETRYABLE_ERRORS, create_openai_client
 from lib.providers import PROVIDER_OPENAI
+from lib.reference_image_hosting import upload_reference_images
 from lib.retry import DOWNLOAD_BACKOFF_SECONDS, DOWNLOAD_MAX_ATTEMPTS, with_retry_async
 from lib.video_backends.base import (
     IMAGE_MIME_TYPES,
@@ -60,6 +60,7 @@ _SORA_SIZES_1080P: tuple[str, ...] = ("1080x1920", "1920x1080")
 _SORA_LEGAL_SIZES: tuple[str, ...] = _SORA_SIZES_720P + _SORA_SIZES_1080P
 _SORA_1080P_MIN_SHORT = 1080
 _CUSTOM_SIZE_RE = re.compile(r"^\s*(\d+)\s*[xX×*]\s*(\d+)\s*$")
+
 
 # H3 走 OpenAI 兼容网关的 /v1/videos，但请求形态与 Sora 不同：参考图要 JSON 里的
 # 公网 URL 数组，不是 SDK 的 multipart 文件槽。按 model id 判定而不是按 endpoint：
@@ -335,10 +336,15 @@ class OpenAIVideoBackend(ProviderJobIdPersistenceMixin):
         """以 H3 要求的 JSON 合同提交，绕开 Sora SDK 固定的 multipart 编码。"""
         if not self._base_url or not self._api_key:
             raise RuntimeError("MiniMax H3 需要显式的 base_url 与 API key")
+        # 时长字段与画布（ZeoCanvasLite）对齐：用 `duration` 且必须是数字。
+        # 网关 adaptor 的 resolveDuration 依次取 duration → seconds → metadata.duration，
+        # duration 是第一优先级；而 `seconds` 沿用 Sora SDK 的字符串写法会被 Go 侧拒成
+        # `cannot unmarshal string into Go struct field clientRequest.seconds of type float64`
+        # ——H3 提交必 400，且错误只在响应体里、httpx 的 raise_for_status 不带出来。
         payload = {
             "prompt": kwargs["prompt"],
             "model": kwargs["model"],
-            "seconds": kwargs["seconds"],
+            "duration": int(kwargs["seconds"]),
             "size": kwargs["size"],
         }
         if kwargs.get("images"):
@@ -352,7 +358,10 @@ class OpenAIVideoBackend(ProviderJobIdPersistenceMixin):
                 },
                 json=payload,
             )
-            response.raise_for_status()
+            if response.is_error:
+                # 网关把拒绝原因只放响应体（如 `conditions requires at least one entry`、
+                # 字段类型不符），raise_for_status 只带状态码——不附上就得靠抓包才能查。
+                raise RuntimeError(f"MiniMax H3 提交失败: HTTP {response.status_code} {response.text[:400]}")
             body = response.json()
         # 中转网关对 id 字段的写法不统一，两种都收。
         task_id = (body.get("id") or body.get("task_id")) if isinstance(body, dict) else None
