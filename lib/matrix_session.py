@@ -468,6 +468,24 @@ _PREFERRED_DEFAULT_MODELS: dict[str, tuple[str, ...]] = {
         "z-ai/glm-5.1",
         "deepseek/deepseek-v4-pro",
     ),
+    # 视频只挑 H3，与画布（ZeoCanvasLite）同口径——那边实测下来也是只用 H3 出片。
+    #
+    # 不是"H3 更好"，是别的型号在这条链路上根本调不通：`openai-video` endpoint 底下
+    # 既有真 Sora 也有中转来的各家型号，而 `_resolve_size` 只对 H3 做了特例，其余一律
+    # 套 Sora 的固定档。seedance-2.0 收到 Sora 档的 size 后被上游拒成
+    # `InvalidParameter: the parameter ratio ... not valid ... in t2v`（t2v/i2v 都拒），
+    # 而它恰好在字典序第一位——没有这张表时每个新租户开箱拿到的就是它。
+    # 画布那边 seedance 走的是另一套 provider（`/v2/videos/generations`），本地没实现。
+    #
+    # H3 另外两个好处正好对上前面两条约束：网关策略 `minimax/minimax-h3` 前缀是
+    # gift,paid（新用户的赠送额度花得动），且按秒计价比 seedance 各档都便宜。
+    #
+    # ⚠️ 只列基座两款。`-fl2va-lora` / `-ref2va-lora` 已随 H3 更新下线（网关上启用渠道
+    # 归零），画布侧也已从选择列表移除、默认档回到 fl2va——这里保持一致。
+    "video": (
+        "minimax/minimax-h3-fl2va",
+        "minimax/minimax-h3-ref2va",
+    ),
 }
 
 

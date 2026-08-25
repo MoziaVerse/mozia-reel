@@ -243,3 +243,38 @@ class TestTextModelPreference:
         from lib.matrix_session import preferred_model
 
         assert preferred_model("nosuch", {"a", "b"}) is None
+
+
+class TestVideoModelPreference:
+    """视频默认只挑 H3，与画布（ZeoCanvasLite）同口径。
+
+    别的型号在 `openai-video` 这条链路上调不通：`_resolve_size` 只对 H3 做了特例，
+    其余一律套 Sora 固定档，seedance 收到后被上游拒成 InvalidParameter（t2v/i2v 都拒）。
+    而 seedance 恰好在字典序第一位——没有偏好表时新租户开箱拿到的就是它。
+    """
+
+    def test_prefers_h3_over_alphabetically_first_seedance(self):
+        from lib.matrix_session import preferred_model
+
+        available = {"doubao/seedance-2.0", "minimax/minimax-h3-fl2va", "mozia/video-2.0-720p-900"}
+        assert preferred_model("video", available) == "minimax/minimax-h3-fl2va"
+
+    def test_never_picks_the_retired_lora_variants(self):
+        """lora 两档已随 H3 更新下线（网关启用渠道归零），即便还留在目录里也不能选。"""
+        from lib.matrix_session import preferred_model
+
+        available = {"minimax/minimax-h3-fl2va-lora", "minimax/minimax-h3-ref2va-lora", "minimax/minimax-h3-ref2va"}
+        assert preferred_model("video", available) == "minimax/minimax-h3-ref2va"
+
+    def test_falls_through_to_ref2va(self):
+        from lib.matrix_session import preferred_model
+
+        assert preferred_model("video", {"doubao/seedance-2.0", "minimax/minimax-h3-ref2va"}) == (
+            "minimax/minimax-h3-ref2va"
+        )
+
+    def test_returns_none_when_no_h3_available(self):
+        """H3 一款都没上架时交给调用方回落，不硬塞一个调不通的型号。"""
+        from lib.matrix_session import preferred_model
+
+        assert preferred_model("video", {"doubao/seedance-2.0", "mozia/video-2.0-720p-900"}) is None
