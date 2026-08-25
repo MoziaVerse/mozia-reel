@@ -58,10 +58,25 @@ class TestCatalogToModels:
         assert json.loads(video["supported_durations"])
         assert chat["supported_durations"] is None
 
-    def test_platform_disabled_model_is_kept_but_disabled(self):
-        """留着比消失好——用户能看到它存在过，而不是纳闷模型去哪了。"""
+    def test_unaffordable_model_stays_selectable(self):
+        """平台的 enabled 是 access.available（此刻付不付得起），不是上下架。
+
+        把它写进 is_enabled 会让「余额不够」固化成「模型被禁用」：禁用项在下拉里
+        不渲染，用户充值后也不会自己回来，表现为模型莫名少了一半。付不起要在生成
+        时按网关的 requires_paid_quota 失败，那里才有明确原因。
+        """
         rows = catalog_to_models([_m("x/y", "chat", enabled=False)])
-        assert rows[0]["is_enabled"] is False
+        assert rows[0]["is_enabled"] is True
+
+    @pytest.mark.parametrize("enabled", [True, False, None])
+    def test_is_enabled_never_tracks_platform_access(self, enabled):
+        """收录即可选，与平台给的 access 值无关——上下架另由「不在目录里」判定。"""
+        item = _m("x/y", "chat")
+        if enabled is None:
+            item.pop("enabled", None)
+        else:
+            item["enabled"] = enabled
+        assert catalog_to_models([item])[0]["is_enabled"] is True
 
     def test_display_name_falls_back_to_model_id(self):
         rows = catalog_to_models([_m("x/y", "chat"), _m("a/b", "chat", display_name="  ")])
@@ -159,9 +174,7 @@ class TestSyncGatewayModels:
 
     async def test_durations_follow_the_endpoint_change(self, session):
         """从视频改判成非视频时，时长预设要一并清掉，否则留着一份对不上的数据。"""
-        p, repo = await _provider(
-            session, [_row("x/y", endpoint="openai-video", supported_durations="[4, 8]")]
-        )
+        p, repo = await _provider(session, [_row("x/y", endpoint="openai-video", supported_durations="[4, 8]")])
         await sync_gateway_models(session, provider_id=p.id, rows=[_row("x/y", endpoint="openai-chat")])
         m = (await repo.list_models(p.id))[0]
         assert m.endpoint == "openai-chat" and m.supported_durations is None

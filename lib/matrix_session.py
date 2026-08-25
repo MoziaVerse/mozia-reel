@@ -286,12 +286,15 @@ def catalog_to_models(catalog: list[dict]) -> list[dict]:
 
     rows: list[dict] = []
     skipped: dict[str, list[str]] = {}
+    unaffordable: list[str] = []
     for item in catalog:
         if not isinstance(item, dict):
             continue
         name = str(item.get("model_name") or "").strip()
         if not name:
             continue
+        if item.get("enabled") is False:
+            unaffordable.append(name)
         model_type = str(item.get("model_type") or "").strip()
         endpoint = _MODEL_TYPE_TO_ENDPOINT.get(model_type)
         if endpoint is None:
@@ -308,12 +311,29 @@ def catalog_to_models(catalog: list[dict]) -> list[dict]:
                 if endpoint == _VIDEO_ENDPOINT_ON_GATEWAY
                 else None,
                 "is_default": False,
-                # 平台明确标了不可用的，收进来但禁用——留着比消失好，用户能看到它存在过
-                "is_enabled": item.get("enabled") is not False,
+                # 一律启用。平台目录里的 `enabled` 不是上下架标记，而是
+                # access.available ——「**此刻**这个钱包付不付得起这个模型」
+                # （mozia-api 的 AnnotatePricingByMoziaWalletAccess 按余额分区算，
+                # matrix 原样透传成 enabled）。那是随充值、赠送到期而变的动态状态，
+                # 落进 is_enabled 就成了静态事实：用户充值后模型也不会自己回来，
+                # 而禁用项在模型下拉里根本不渲染，表现为「模型莫名少了一半」。
+                #
+                # 上下架另有判据且已在 sync_gateway_models 里：模型不在本次目录里
+                # 才是真下架。付不起不该在选择阶段拦，让它在生成时按网关的
+                # requires_paid_quota 失败——那里有明确原因，这里没有。
+                "is_enabled": True,
             }
         )
     for model_type, names in sorted(skipped.items()):
         logger.info("模型目录跳过 %s 类 %d 个（本地无对应链路）: %s", model_type, len(names), ", ".join(sorted(names)))
+    # access 不进 is_enabled，但值得留一条痕迹：用户报「这个模型调不通」时，
+    # 先看握手当时它是不是就已经付不起了，能省掉一轮网关排查。
+    if unaffordable:
+        logger.info(
+            "平台标记当前钱包付不起的模型 %d 个（仍收录为可选）: %s",
+            len(unaffordable),
+            ", ".join(sorted(unaffordable)),
+        )
     return rows
 
 
