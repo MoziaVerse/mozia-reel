@@ -14,7 +14,6 @@ import json
 import logging
 
 from lib.matrix_blocklist import is_allowed
-from lib.tenant_context import set_current_tenant
 from lib.matrix_session import (
     SESSION_COOKIE_NAME,
     dev_bound_account,
@@ -22,6 +21,8 @@ from lib.matrix_session import (
     matrix_launch_url,
     verify_session_cookie,
 )
+from lib.signed_media_url import MEDIA_URL_PREFIX
+from lib.tenant_context import set_current_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +30,19 @@ logger = logging.getLogger(__name__)
 # ⚠️ 只放握手本身，不要放整个 /api/v1/matrix-session/ 前缀：同一前缀下还有
 # overview 这类读取租户数据的端点，整段放行会让它们匿名可达（AUTH_ENABLED=false
 # 时 FastAPI 层的依赖也不拦，这道门禁是唯一的访问控制）。
+#
+# 签名直链（MEDIA_URL_PREFIX）同样公开，但公开的理由不同：它的消费方是上游模型
+# 服务，会话 cookie 与 Authorization header 都带不了，访问控制改由 URL 里的 HMAC
+# token 承担。放行的是「持有有效 token」而不是「这段路径」——门禁在此让位，校验
+# 落到端点内（见 server/routers/public_media.py）。
+# 注意本分支会提前返回，即 tenant 不会被设置；直链的租户维度写在 token 的相对路径
+# 里，端点自行拼回数据根，不依赖 ContextVar。
 _PUBLIC_PREFIXES = (
     "/handoff",
     "/api/v1/matrix-session/init",
     "/health",
     "/skill.md",
+    MEDIA_URL_PREFIX,
 )
 
 
@@ -144,16 +153,16 @@ class MatrixSessionGate:
     # 被拒的人不能再往 matrix 跳：那边会把他登录后原样送回来，来回弹一遍还是这一页。
     # 所以直接给一个说明白的终点页 / JSON。
     _ACCESS_DENIED_HTML = (
-        "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
-        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
         "<title>访问受限</title><style>:root{color-scheme:light dark}"
         "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;"
         "font:15px/1.6 system-ui,-apple-system,'PingFang SC',sans-serif;background:#fafafa;color:#18181b}"
         "@media(prefers-color-scheme:dark){body{background:#09090b;color:#fafafa}}"
         ".b{text-align:center;padding:2rem;max-width:30rem}.m{opacity:.7;font-size:13px;margin-top:.5rem}"
-        "</style></head><body><div class=\"b\"><p>本应用当前仅对受邀用户开放。</p>"
-        "<p class=\"m\">如需使用，请联系管理员开通。</p></div></body></html>"
-    ).encode("utf-8")
+        '</style></head><body><div class="b"><p>本应用当前仅对受邀用户开放。</p>'
+        '<p class="m">如需使用，请联系管理员开通。</p></div></body></html>'
+    ).encode()
 
     async def _access_denied_page(self, send) -> None:
         await send(

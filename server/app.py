@@ -64,6 +64,7 @@ from server.routers import (
     projects,
     props,
     providers,
+    public_media,
     reference_videos,
     scenes,
     script_review,
@@ -675,6 +676,9 @@ app.include_router(onboarding.router, prefix="/api/v1", dependencies=[Depends(ge
 # 公开端点：匿名可达。登录入口是拿 token 的前提，静态媒体经 <img src> / <video src> 加载。
 app.include_router(auth_router.public_router, prefix="/api/v1", tags=["认证"])
 app.include_router(files.public_router, prefix="/api/v1", tags=["文件管理"])
+# 签名直链：消费方是上游模型服务（提交时自己来拉参考图），带不了 cookie / header，
+# 凭据落在 URL 的 HMAC token 上。不挂 /api/v1 前缀，门禁按该前缀整段放行。
+app.include_router(public_media.router, tags=["签名直链"])
 # Matrix 握手：落地页与换票端点必须匿名可达 —— 它们正是"拿到会话"的前提。
 # /handoff 不带 /api/v1 前缀（用户直接在地址栏落地），换票端点走 API 前缀。
 app.include_router(matrix_session_router.public_router, prefix="/api/v1", tags=["Matrix 握手"])

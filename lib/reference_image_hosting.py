@@ -31,6 +31,8 @@ from pathlib import Path
 
 import httpx
 
+from lib.signed_media_url import build_public_media_url, public_base_url
+
 logger = logging.getLogger(__name__)
 
 # uploader 签名：本地路径列表 → 公网 https URL 列表（顺序必须与入参一致，
@@ -132,9 +134,7 @@ async def _upload_via_gateway(paths: list[Path]) -> list[str]:
                 files={"file": (path.name, content, mime_type)},
             )
             if response.status_code >= 400:
-                raise RuntimeError(
-                    f"素材上传失败 HTTP {response.status_code}: {response.text[:200]}"
-                )
+                raise RuntimeError(f"素材上传失败 HTTP {response.status_code}: {response.text[:200]}")
             payload = response.json()
             url = payload.get("file_url") if isinstance(payload, dict) else None
             if not isinstance(url, str) or not url.startswith("https://"):
@@ -149,16 +149,44 @@ async def _upload_via_gateway(paths: list[Path]) -> list[str]:
 _UPLOAD_TIMEOUT_SEC = 120.0
 
 
-def uploader_from_env() -> ReferenceImageUploader | None:
-    """按环境变量选择实现。
+async def _publish_self_hosted(paths: list[Path]) -> list[str]:
+    """把素材签成本站自己的短时效直链（见 :mod:`lib.signed_media_url`）。
 
-    默认走网关的 sd/upload；显式设 ``none`` 可关掉（单机自用、不接 matrix 时
-    没有网关可用）。
+    不搬运文件：素材本就躺在数据根内，签一条指向它的 URL 就够。省掉一次全量拷贝，
+    也不留下"同一张图两份副本"这种要另外清理的债。
+    """
+    urls: list[str] = []
+    for path in paths:
+        if not path.is_file():
+            raise RuntimeError(f"参考素材不可读: {path.name}")
+        urls.append(build_public_media_url(path))
+    return urls
+
+
+def uploader_from_env() -> ReferenceImageUploader | None:
+    """按环境变量 ``ARCREEL_REFERENCE_HOSTING`` 选择实现。
+
+    ``self``    —— 本站自签直链，需要 ``ARCREEL_PUBLIC_BASE_URL``
+    ``gateway`` —— 网关的 ``/v1/sd/upload``
+    ``none``    —— 关掉（单机自用、不接 matrix 时没有网关可用）
+
+    不显式指定时：配了公网基址就走 ``self``，否则回落 ``gateway``。这个默认序不是
+    随手排的 —— 网关直链所在的域名 H3 上游取不到（同域下路径存不存在都回 500），
+    能自托管就不该走它。
     """
     mode = os.environ.get("ARCREEL_REFERENCE_HOSTING", "").strip().lower()
+    if not mode:
+        mode = "self" if public_base_url() else "gateway"
     if mode == "none":
         return None
-    if mode in ("", "gateway"):
+    if mode == "self":
+        if public_base_url() is None:
+            # 不在启动期抛：一个可选能力的配置缺失不该让整站起不来。返回"未配置"，
+            # 真用到时由 ReferenceHostingNotConfigured 给出可操作的说明。
+            logger.error("ARCREEL_REFERENCE_HOSTING=self 但未配置 ARCREEL_PUBLIC_BASE_URL，参考图托管按未配置处理")
+            return None
+        return _publish_self_hosted
+    if mode == "gateway":
         return _upload_via_gateway
     logger.warning("未知的参考图托管方式 %r，按网关方式处理", mode)
     return _upload_via_gateway

@@ -74,9 +74,7 @@ async def _probe(path: str, headers: list[tuple[bytes, bytes]]) -> tuple[bool, i
         await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b"ok"})
 
-    await MatrixSessionGate(downstream)(
-        {"type": "http", "path": path, "headers": headers}, receive, send
-    )
+    await MatrixSessionGate(downstream)({"type": "http", "path": path, "headers": headers}, receive, send)
     status = next((m["status"] for m in sent if m["type"] == "http.response.start"), None)
     return reached, status
 
@@ -93,12 +91,29 @@ def _with_session() -> list[tuple[bytes, bytes]]:
 class TestSessionGate:
     @pytest.mark.parametrize(
         "path",
-        ["/handoff", "/api/v1/matrix-session/init", "/health", "/skill.md"],
+        ["/handoff", "/api/v1/matrix-session/init", "/health", "/skill.md", "/public/media/tok"],
     )
     def test_public_paths_pass(self, path):
-        """握手页与换票端点是拿到会话的前提，锁上就死锁了。"""
+        """握手页与换票端点是拿到会话的前提，锁上就死锁了。
+
+        签名直链一并在此放行，但理由不同：它的消费方是上游模型服务，cookie 带不了，
+        访问控制由 URL 里的 HMAC token 承担（见 tests/test_signed_media_url.py）。
+        """
         reached, status = asyncio.run(_probe(path, API))
         assert (reached, status) == (True, 200)
+
+    def test_media_prefix_passes_regardless_of_request_shape(self):
+        """直链要靠前缀放行，不能靠"非 /api 一律当静态资源"那条兜底。
+
+        兜底只对"不像导航"的请求生效，而上游模型服务发的 Accept 头长什么样不由我们
+        决定；真撞上带 text/html 的取图请求，兜底会把它重定向去 matrix 登录页，
+        表现成"参考图取不到"。
+        """
+        assert asyncio.run(_probe("/public/media/tok", NAV))[0] is True
+
+    def test_media_prefix_does_not_cover_siblings(self):
+        """放行的是直链那一段，不是整个 /public/。"""
+        assert asyncio.run(_probe("/public/other", NAV))[0] is False
 
     def test_sibling_endpoints_are_not_public(self):
         """白名单必须精确到换票端点本身。
@@ -133,11 +148,7 @@ class TestSessionGate:
         async def downstream(scope, receive, send):  # pragma: no cover - 不该被走到
             raise AssertionError("无会话的导航不该进到下游")
 
-        asyncio.run(
-            MatrixSessionGate(downstream)(
-                {"type": "http", "path": "/", "headers": NAV}, receive, send
-            )
-        )
+        asyncio.run(MatrixSessionGate(downstream)({"type": "http", "path": "/", "headers": NAV}, receive, send))
         start = next(m for m in sent if m["type"] == "http.response.start")
         location = dict(start["headers"])[b"location"].decode()
         assert start["status"] == 302

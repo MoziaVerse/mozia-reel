@@ -31,6 +31,7 @@ mkdir -p ~/app/arcreel && cd ~/app/arcreel        # 代码用传输，不是 git
 #    必填：MATRIX_BACKEND_URL / MATRIX_WEB_URL / SESSION_COOKIE_SECRET
 #    生产必须 SESSION_COOKIE_SECURE=true（https 下 cookie 才发得出去）
 #    MOZIA_REEL_DATA_DIR=/home/server/mozia-reel-data
+#    ARCREEL_PUBLIC_BASE_URL=https://reel.mzsjai.com  ← 见下节「参考图直链」
 
 # 3) 构建并起
 cd deploy/matrix && docker compose up -d --build
@@ -102,6 +103,24 @@ print(sorted(hosts))"
 
 注意这是"不列出"，不是访问控制：拿到 URL 的任何 matrix 账号都能进来用，花的是
 他自己的积分。要限人得另加白名单。
+
+## 参考图直链（必配）
+
+视频模型（H3）不收 multipart，参考图只能以**上游自己能拉到的公网 https URL** 提交。
+这条链由本站自签短时效直链承担，需要告诉它自己对外是什么地址：
+
+```bash
+ARCREEL_PUBLIC_BASE_URL=https://reel.mzsjai.com
+```
+
+配了它，`ARCREEL_REFERENCE_HOSTING` 就默认走 `self`（本站出链）；不配则回落到网关的
+`/v1/sd/upload`。⚠️ **别回落**：网关那条产出的直链落在 `cdn.mjapi.cc.cd` 域下，H3 上游
+取不到该域名——同域下无论路径是否存在都回 500，报出来只有一句 `Internal Server Error`，
+指不到根因。换成本站域名的直链即可正常提交（与画布走 `canvas.mzsjai.com` 同一形态）。
+
+直链是 `/public/media/<token>`，匿名可达但每条 token 只认领一个文件、6 小时过期，
+签名密钥复用 `SESSION_COOKIE_SECRET`。所以那个 secret 一变，在途任务手里的直链会一起失效
+（只影响还没被上游拉走的参考图，重试即可）。
 
 ## 拒止名单（可选）
 

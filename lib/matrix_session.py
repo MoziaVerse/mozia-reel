@@ -110,8 +110,8 @@ def session_ttl_seconds() -> int:
     return max(60, value)
 
 
-def _session_secret() -> bytes:
-    """cookie 签名密钥。
+def session_signing_secret() -> bytes:
+    """握手 cookie 的签名密钥，同时是签名直链派生子键的来源（见 lib/signed_media_url）。
 
     刻意不自动生成兜底值：单实例重启后 secret 变了会让所有人被登出，而这种
     "偶发全员掉线" 排查起来指不到根因。缺配置就明确拒绝启动握手功能。
@@ -150,7 +150,7 @@ def issue_session_cookie(*, sso_sub: str, username: str | None) -> str:
         "exp": int(time.time()) + session_ttl_seconds(),
     }
     body = _b64url_encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
-    sig = _b64url_encode(hmac.new(_session_secret(), body.encode("ascii"), hashlib.sha256).digest())
+    sig = _b64url_encode(hmac.new(session_signing_secret(), body.encode("ascii"), hashlib.sha256).digest())
     return f"{body}.{sig}"
 
 
@@ -160,7 +160,7 @@ def verify_session_cookie(value: str | None) -> dict | None:
         return None
     body, _, sig = value.partition(".")
     try:
-        expected = hmac.new(_session_secret(), body.encode("ascii"), hashlib.sha256).digest()
+        expected = hmac.new(session_signing_secret(), body.encode("ascii"), hashlib.sha256).digest()
     except RuntimeError:
         # secret 没配好时不要把异常抛进中间件——那会让整站 500 而不是引导去登录。
         logger.warning("SESSION_COOKIE_SECRET 未配置，会话一律判为未登录")
