@@ -183,7 +183,11 @@ export function AgentCopilot() {
   const isComposingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const slashMenuRef = useRef<SlashCommandMenuHandle>(null);
-  const [localInput, setLocalInput] = useState("");
+  // 草稿放 store：本面板只挂在 StudioLayout 下，切到设置页等路由会整个卸载，
+  // 留在局部 state 的话用户打了一半的话会直接消失。selector 精确订阅，
+  // 只有本组件随输入重渲染。
+  const localInput = useAssistantStore((s) => s.draftInput);
+  const setLocalInput = useAssistantStore((s) => s.setDraftInput);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const {
     images: attachedImages,
@@ -264,6 +268,7 @@ export function AgentCopilot() {
     inputDisabled,
     isReadingImages,
     localInput,
+    setLocalInput,
     attachedImages,
     sendMessage,
     invalidatePendingReaders,
@@ -330,7 +335,7 @@ export function AgentCopilot() {
     const maxH = window.innerHeight * (MAX_TEXTAREA_HEIGHT_VH / 100);
     el.style.height = `${Math.min(el.scrollHeight, maxH)}px`;
     el.style.overflowY = el.scrollHeight > maxH ? "auto" : "hidden";
-  }, []);
+  }, [setLocalInput]);
 
   // Derive slash filter from input (text after "/" up to cursor)
   // eslint-disable-next-line react-hooks/refs -- slashPosRef 同时被 render 和 handleSlashSelect 使用，转 state 会引入 stale-closure 问题；此处仅用于过滤展示，不影响 UI 一致性
@@ -355,7 +360,7 @@ export function AgentCopilot() {
     setShowSlashMenu(false);
     slashPosRef.current = -1;
     textareaRef.current?.focus();
-  }, [localInput]);
+  }, [localInput, setLocalInput]);
 
   // 消费外部投递的一次性预填文本（如分集空态 CTA 经 store.input 投递）：
   // 写入本地输入框后清空 store 字段，避免残留触发重复预填。
@@ -371,7 +376,7 @@ export function AgentCopilot() {
       // 面板可能同帧刚被打开（inert 尚未移除），等一帧再聚焦
       requestAnimationFrame(() => textareaRef.current?.focus());
     });
-  }, []);
+  }, [setLocalInput]);
 
   useEffect(() => {
     if (scrollRef.current) {

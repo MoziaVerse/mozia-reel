@@ -39,7 +39,17 @@ interface AssistantState {
   messagesLoading: boolean;
 
   // Input
+  /**
+   * 外部投递的一次性预填文本（分集空态 CTA 等）。语义是「投递即消费」：
+   * AgentCopilot 读到后写进草稿并立刻清空本字段。**不是**输入框的当前值。
+   */
   input: string;
+  /**
+   * 输入框草稿。放在 store 而不是组件局部 state：助手面板只在 StudioLayout 里，
+   * 切到设置页之类的路由会整个卸载，草稿留在局部 state 就没了——用户打了一半的
+   * 话消失且无从恢复。发送成功后由发送方清空。
+   */
+  draftInput: string;
   sending: boolean;
   interrupting: boolean;
   error: string | null;
@@ -92,6 +102,7 @@ interface AssistantState {
   resetTimeline: () => void;
   setMessagesLoading: (loading: boolean) => void;
   setInput: (input: string) => void;
+  setDraftInput: (draft: string) => void;
   setSending: (sending: boolean) => void;
   setInterrupting: (interrupting: boolean) => void;
   setError: (error: string | null) => void;
@@ -159,6 +170,7 @@ export const useAssistantStore = create<AssistantState>((set, get) => {
     draftTurn: null,
     messagesLoading: false,
     input: "",
+    draftInput: "",
     sending: false,
     interrupting: false,
     error: null,
@@ -257,6 +269,7 @@ export const useAssistantStore = create<AssistantState>((set, get) => {
 
     setMessagesLoading: (loading) => set({ messagesLoading: loading }),
     setInput: (input) => set({ input }),
+    setDraftInput: (draftInput) => set({ draftInput }),
     setSending: (sending) => set({ sending }),
     setInterrupting: (interrupting) => set({ interrupting }),
     setError: (error) => set({ error }),

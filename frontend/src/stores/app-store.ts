@@ -88,6 +88,16 @@ interface AppState {
   sourceFilesVersion: number;
   invalidateSourceFiles: () => void;
 
+  /**
+   * 正在跑 AI 概述分析的项目名。
+   *
+   * 提到 store 而不是留在 WelcomeCanvas 的 phase 里：那个组件会随路由切换卸载，
+   * 而分析请求不带 signal、切走后照样在后端跑完。状态留在组件里的话，切回来
+   * 进度条没了、CTA 变回可点——用户以为分析中断了，再点一次就是又付一次费。
+   */
+  analyzingProjects: string[];
+  setProjectAnalyzing: (projectName: string, analyzing: boolean) => void;
+
   // Grid list invalidation signal (incremented on grid_ready SSE events)
   gridsRevision: number;
   invalidateGrids: () => void;
@@ -238,6 +248,18 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   sourceFilesVersion: 0,
   invalidateSourceFiles: () => set((s) => ({ sourceFilesVersion: s.sourceFilesVersion + 1 })),
+
+  analyzingProjects: [],
+  setProjectAnalyzing: (projectName, analyzing) =>
+    set((s) => {
+      const has = s.analyzingProjects.includes(projectName);
+      if (analyzing === has) return s;
+      return {
+        analyzingProjects: analyzing
+          ? [...s.analyzingProjects, projectName]
+          : s.analyzingProjects.filter((n) => n !== projectName),
+      };
+    }),
 
   gridsRevision: 0,
   invalidateGrids: () => set((s) => ({ gridsRevision: s.gridsRevision + 1 })),

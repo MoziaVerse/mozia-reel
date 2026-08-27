@@ -167,4 +167,49 @@ describe("AgentCopilot", () => {
     });
   });
 
+  it("keeps the input draft across unmount and remount", () => {
+    // 助手面板只挂在 StudioLayout 下，切到设置页之类的路由会整个卸载。草稿留在
+    // 组件局部 state 的话，用户打了一半的话会直接消失且无从恢复。
+    const { unmount } = render(<AgentCopilot />);
+
+    fireEvent.change(screen.getByLabelText("智能体输入"), { target: { value: "你好" } });
+    expect(screen.getByLabelText("智能体输入")).toHaveValue("你好");
+
+    unmount();
+    render(<AgentCopilot />);
+
+    expect(screen.getByLabelText("智能体输入")).toHaveValue("你好");
+  });
+
+  it("clears the draft only once the send is accepted", async () => {
+    // 受理成功才清空是刻意的：失败时保留内容供重试（见 handleSend 注释）。
+    sendMessage.mockResolvedValueOnce(true);
+    render(<AgentCopilot />);
+
+    const box = screen.getByLabelText("智能体输入");
+    fireEvent.change(box, { target: { value: "你好" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith("你好", undefined);
+    });
+    await waitFor(() => {
+      expect(useAssistantStore.getState().draftInput).toBe("");
+    });
+  });
+
+  it("keeps the draft when the send is rejected", async () => {
+    sendMessage.mockResolvedValueOnce(false);
+    render(<AgentCopilot />);
+
+    const box = screen.getByLabelText("智能体输入");
+    fireEvent.change(box, { target: { value: "你好" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalled();
+    });
+    expect(useAssistantStore.getState().draftInput).toBe("你好");
+  });
+
 });

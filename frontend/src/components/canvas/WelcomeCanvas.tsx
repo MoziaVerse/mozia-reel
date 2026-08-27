@@ -51,12 +51,17 @@ export function WelcomeCanvas({
 }: WelcomeCanvasProps) {
   const { t } = useTranslation("dashboard");
   const [isDragging, setIsDragging] = useState(false);
-  const [phase, setPhase] = useState<UploadPhase>("loading");
+  const [phase, setPhase] = useState<UploadPhase>(
+    () => (useAppStore.getState().analyzingProjects.includes(projectName) ? "analyzing" : "loading"),
+  );
   const [sourceFiles, setSourceFiles] = useState<string[]>([]);
   const [fileName, setFileName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sourceFilesVersion = useAppStore((s) => s.sourceFilesVersion);
+  // 分析进行态来自 store：本组件随路由卸载，而分析请求切走后仍在后端跑完。
+  // 重新挂载时据此直接回到 analyzing，而不是退回 CTA 让用户以为中断了。
+  const isAnalyzing = useAppStore((s) => s.analyzingProjects.includes(projectName));
   const displayProjectTitle = getProjectDisplayName(projectTitle, t("untitled_project"));
 
   // 拉取已有源文件，决定初始 phase
@@ -84,6 +89,21 @@ export function WelcomeCanvas({
       cancelled = true;
     };
   }, [projectName, sourceFilesVersion]);
+
+  // store 的进行态与本地 phase 对齐，覆盖「分析途中切走、回来时才结束」这条路径：
+  // 那次 startAnalysis 的 await 属于已卸载的实例，没人再把 phase 推到 done。
+  // 用 render 期间比对上一次值的写法而不是 effect —— effect 里同步 setState 会多一帧
+  // 中间态（先渲染 CTA 再跳回 analyzing），正是这里要消掉的闪烁。
+  const [wasAnalyzing, setWasAnalyzing] = useState(isAnalyzing);
+  if (wasAnalyzing !== isAnalyzing) {
+    setWasAnalyzing(isAnalyzing);
+    if (isAnalyzing) {
+      setPhase("analyzing");
+    } else if (phase === "analyzing") {
+      // 只在仍停在 analyzing 时接管，避免盖掉失败分支刚设好的 has_sources
+      setPhase("done");
+    }
+  }
 
   const processFile = useCallback(
     async (file: File) => {

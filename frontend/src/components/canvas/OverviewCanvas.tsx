@@ -192,8 +192,15 @@ export function OverviewCanvas({
   );
 
   const handleAnalyze = useCallback(async () => {
-    await API.generateOverview(projectName);
-    await refreshProject();
+    // 进行态记在 store 上：请求不带 signal，切走后仍在后端跑完，而 WelcomeCanvas
+    // 会随路由卸载。不记的话切回来 CTA 变回可点，再点一次就是重复付费。
+    useAppStore.getState().setProjectAnalyzing(projectName, true);
+    try {
+      await API.generateOverview(projectName);
+      await refreshProject();
+    } finally {
+      useAppStore.getState().setProjectAnalyzing(projectName, false);
+    }
   }, [projectName, refreshProject]);
 
   const handleRegenerate = useCallback(async () => {

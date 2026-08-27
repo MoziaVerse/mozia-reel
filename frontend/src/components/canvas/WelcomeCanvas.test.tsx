@@ -136,3 +136,45 @@ describe("WelcomeCanvas unsupported file validation", () => {
     await waitFor(() => expect(onUpload).toHaveBeenCalledWith(file));
   });
 });
+
+describe("WelcomeCanvas 分析进行态跨卸载存活", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState(), true);
+    vi.restoreAllMocks();
+    vi.spyOn(API, "listFiles").mockResolvedValue({
+      files: { source: [{ name: "1.txt", size: 1, url: "/s/1.txt" }] },
+    });
+  });
+
+  it("重新挂载时按 store 的进行态直接回到 analyzing，而不是退回 CTA", async () => {
+    // 分析请求不带 signal，切走后仍在后端跑完。若退回 CTA，用户会以为中断了，
+    // 再点一次就是重复付费。
+    useAppStore.getState().setProjectAnalyzing("p", true);
+
+    renderWelcome({});
+
+    expect(await screen.findByText(/AI 正在分析小说内容/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /开始 AI 分析/ })).not.toBeInTheDocument();
+  });
+
+  it("未在分析的项目不受影响，照常显示 CTA", async () => {
+    useAppStore.getState().setProjectAnalyzing("other-project", true);
+
+    renderWelcome({});
+
+    expect(await screen.findByRole("button", { name: /开始 AI 分析/ })).toBeInTheDocument();
+  });
+
+  it("重新挂载后分析结束时接管收尾", async () => {
+    useAppStore.getState().setProjectAnalyzing("p", true);
+    renderWelcome({});
+    expect(await screen.findByText(/AI 正在分析小说内容/)).toBeInTheDocument();
+
+    // 原来那次 startAnalysis 的 await 属于已卸载的实例，没人再把 phase 推到 done
+    useAppStore.getState().setProjectAnalyzing("p", false);
+
+    await waitFor(() => {
+      expect(screen.getByText("分析完成！正在加载项目概述...")).toBeInTheDocument();
+    });
+  });
+});
