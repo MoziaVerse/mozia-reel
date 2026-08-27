@@ -602,3 +602,58 @@ class TestValueObjectAssembly:
             voices=(),
         )
         assert lane.narration_voice == "Cherry"
+
+
+class TestBackendCacheTenantIsolation:
+    """Backend 缓存必须按租户分桶。
+
+    实例内嵌该租户的网关凭据，而托管态下每个租户的自定义供应商都叫 custom-1
+    （各自库里 id 都是 1）、模型也常相同。缓存键漏掉租户时，A 构造的实例会被 B
+    命中复用——生成计入 A 的账单，不报错也无从察觉。生产上已复现过：两笔相隔
+    6 分钟的视频任务分属不同租户，却用同一个 token 扣了同一个人的钱。
+
+    loader 里的 owner 断言拦不住这条路径：缓存命中时压根不进 loader。
+    """
+
+    @pytest.mark.unit
+    async def test_same_key_different_tenants_do_not_share_instance(self, fake_assemble, monkeypatch):
+        from lib.tenant_context import tenant_scope
+
+        resolver = object()
+        settings = {"model": "m1"}
+
+        async def _get(tenant: str | None):
+            with tenant_scope(tenant):
+                return await generation_context._get_or_create_backend("video", "custom-1", settings, resolver, None)
+
+        a = await _get("tenant-a")
+        b = await _get("tenant-b")
+        assert a is not b, "跨租户复用了同一个 backend 实例——凭据会串"
+        assert len(fake_assemble) == 2, "第二个租户应触发一次独立构造"
+
+    @pytest.mark.unit
+    async def test_same_tenant_still_reuses_instance(self, fake_assemble, monkeypatch):
+        """隔离不能以丢掉缓存为代价：同租户重复请求仍应命中。"""
+        from lib.tenant_context import tenant_scope
+
+        resolver = object()
+        settings = {"model": "m1"}
+
+        async def _get():
+            with tenant_scope("tenant-a"):
+                return await generation_context._get_or_create_backend("video", "custom-1", settings, resolver, None)
+
+        first = await _get()
+        second = await _get()
+        assert first is second
+        assert len(fake_assemble) == 1
+
+    @pytest.mark.unit
+    async def test_untenanted_deployment_unaffected(self, fake_assemble):
+        """单租户/非托管部署下 current_tenant() 恒为 None，缓存照常复用。"""
+        resolver = object()
+        settings = {"model": "m1"}
+        first = await generation_context._get_or_create_backend("image", "custom-1", settings, resolver, None)
+        second = await generation_context._get_or_create_backend("image", "custom-1", settings, resolver, None)
+        assert first is second
+        assert len(fake_assemble) == 1

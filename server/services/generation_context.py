@@ -40,11 +40,15 @@ logger = logging.getLogger(__name__)
 
 rate_limiter = get_shared_rate_limiter()
 
-_CacheKey = tuple[str, str, str | None]
+# 租户维度必须在 key 里：托管态下每个租户的自定义供应商都叫 custom-1（各自库里
+# id 都是 1），模型也常相同。key 不含租户时，A 构造的、内嵌 A 的 API key 的 backend
+# 会被 B 直接命中复用——生成计入 A 的账单，不报错、也无从察觉。
+# 更要命的是 loader 里的 owner 断言在缓存命中路径上根本不执行，那道防护形同虚设。
+_CacheKey = tuple[str | None, str, str, str | None]
 
 
 class _BackendCache:
-    """Backend 实例缓存：按 (media_type, provider_name, model) 复用实例，避免每次任务重建 API 客户端。
+    """Backend 实例缓存：按 (tenant, media_type, provider_name, model) 复用实例，避免每次任务重建 API 客户端。
 
     缓存查询/构造/写回/失效在此单点实现，两条并发纪律藏在实现内、不扩大接口：
 
@@ -97,7 +101,12 @@ async def _get_or_create_backend(
     default_model: str | None,
 ) -> Any:
     """组 key + 提供 factory closure，缓存纪律统一委托 :class:`_BackendCache`。"""
+    from lib.tenant_context import current_tenant
+
     effective_model = provider_settings.get("model") or default_model or None
+    # 租户进 key：backend 实例内嵌该租户的网关凭据，跨租户复用就是把生成算到别人账上。
+    # 单租户/非托管部署下恒为 None，键退化成原来的三元组，行为不变。
+    tenant = current_tenant()
 
     async def _factory() -> Any:
         return await assemble_backend(
@@ -108,7 +117,7 @@ async def _get_or_create_backend(
             rate_limiter=rate_limiter,
         )
 
-    return await _backend_cache.get_or_create((media_type, provider_name, effective_model), _factory)
+    return await _backend_cache.get_or_create((tenant, media_type, provider_name, effective_model), _factory)
 
 
 async def _get_or_create_video_backend(
