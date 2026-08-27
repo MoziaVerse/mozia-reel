@@ -1,6 +1,5 @@
 import { startTransition, useState, useEffect, useRef } from "react";
 import { errMsg, voidPromise } from "@/utils/async";
-import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { useLocation } from "wouter";
 import { ChevronLeft, Activity, Settings, Bell, Download, Loader2, Package } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -456,8 +455,6 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
           >
             <Package className="h-4 w-4" />
           </button>
-
-          <ThemeToggle compact />
 
           {/* Settings */}
           <button

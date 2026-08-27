@@ -18,25 +18,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <script>
-        // 首屏定主题，必须在样式生效前同步执行，否则会先按默认色渲染再被纠正、
-        // 闪一下白（或黑）。键名与 src/stores/theme-store.ts 的 THEME_STORAGE_KEY
-        // 保持一致，改名时两处同改。
-        (function () {
-            try {
-                var stored = localStorage.getItem("arcreel-theme");
-                var mode = stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
-                var dark = mode === "dark" ||
-                    (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-                if (dark) document.documentElement.classList.add("dark");
-            } catch (e) {
-                // localStorage 不可用时按系统偏好走，读不到就保持浅色
-                if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-                    document.documentElement.classList.add("dark");
-                }
-            }
-        })();
-    </script>
+    <!-- 主题只有深色，色值直接定义在 index.css 的 :root 上，首屏无需内联脚本
+         去判定：没有「先渲染再纠正」这一步，也就没有那一下白闪。 -->
 </head>
 <body class="app-shell font-sans min-h-screen">
     <div id="app-root"></div>

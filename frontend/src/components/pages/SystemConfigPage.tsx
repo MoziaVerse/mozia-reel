@@ -15,7 +15,6 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useConfigStatusStore } from "@/stores/config-status-store";
-import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { ONBOARDING_ANCHORS } from "@/onboarding/anchors";
 import { AgentConfigTab } from "./AgentConfigTab";
 import { ApiKeysTab } from "./ApiKeysTab";
@@ -224,7 +223,6 @@ export function SystemConfigPage() {
               </span>
             </h1>
           </div>
-          <ThemeToggle />
           <button
             type="button"
             onClick={cycleLang}

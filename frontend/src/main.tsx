@@ -5,7 +5,6 @@
 import { createRoot } from "react-dom/client";
 import { AppRoutes } from "./router";
 import { useAuthStore } from "@/stores/auth-store";
-import { useThemeStore } from "@/stores/theme-store";
 import { i18nReady } from "@/i18n";
 import { BRAND, BRAND_DOCUMENT_TITLE } from "@/branding";
 
@@ -28,10 +27,6 @@ if (metaDescription) {
 
 // 从 localStorage 恢复登录状态
 useAuthStore.getState().initialize();
-
-// 跟随系统明暗变化（仅 mode === "system" 时生效）。首屏的 .dark 类由
-// index.html 的内联脚本同步设好，这里只接管后续的系统偏好变更。
-useThemeStore.getState().initSystemWatcher();
 
 // ---------------------------------------------------------------------------
 // 全局滚动条 auto-hide：滚动时渐显、停止 1.2s 后渐隐

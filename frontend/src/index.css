@@ -1,13 +1,11 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:where(.dark, .dark *));
-
 /* ────────────────────────────────────────────────────────────────────
  * 主题色板 —— 对齐 Matrix 平台（matrix/src/app.css）。
  *
- * 结构与 matrix 同构：`@theme inline` 只做「语义名 → 变量」的引用，具体
- * 色值放 `:root`（浅色）与 `.dark`（深色）两套，切换主题即换整套变量，
- * 组件侧无需感知当前主题。
+ * **本发行版只有深色。** 浅色下多处场景渲染不正确，与其让用户切到一个
+ * 半成品，不如先只提供做对了的那套。因此 `:root` 直接就是深色色值，不再
+ * 有「浅色一套 + `.dark` 覆盖一套」的结构，也没有主题切换入口。
  *
  * 命名沿用本项目既有语义，与 matrix 的 shadcn 变量对应关系：
  *   --color-bg          ← matrix --background
@@ -19,9 +17,10 @@
  *   --color-accent      ← matrix --primary（注意：matrix 的 --accent 是
  *                         悬停底色，不是强调色，两边同名不同义）
  *
- * ⚠️ 组件内散落的一次性色值（阴影、悬停底、渐变）用 CSS 的 light-dark()
- *    就地给出两套值，不再新增语义变量——那些是视觉细节，不是语义层。
- *    light-dark() 依赖 color-scheme，见本文件末尾 html/.dark 的声明。
+ * ⚠️ 组件内散落的一次性色值仍写作 `light-dark(浅, 深)`（约 106 个文件）。
+ *    刻意保留而不是就地展开成单值：`color-scheme: dark` 下它恒取第二个值，
+ *    行为完全确定；而那两套值是恢复浅色时唯一的现成依据，展开掉就得重配。
+ *    新增此类色值时**继续按两套写**，别只写深色的那一个。
  * ──────────────────────────────────────────────────────────────────── */
 
 @theme inline {
@@ -109,64 +108,11 @@
     --color-accent-end: var(--accent-2);
 }
 
-/* ── 浅色（matrix :root）──────────────────────────────────────────── */
+/* ── 色值（深色，来自 matrix .dark）───────────────────────────────
+ * 只有这一套。恢复浅色时在此处重新引入 :root/.dark 两套结构即可，
+ * 组件侧的 light-dark() 与语义变量名都不用动。
+ * ──────────────────────────────────────────────────────────────── */
 :root {
-    --bg: oklch(0.985 0.002 250);
-    --bg-grad-a: oklch(0.995 0.001 250);
-    --bg-grad-b: oklch(0.97 0.004 255);
-    --surface-2: oklch(0.93 0.025 255);
-
-    --hairline: oklch(0.9 0.01 255);
-    --hairline-strong: oklch(0.84 0.014 255);
-    --hairline-soft: oklch(0.94 0.008 255);
-
-    --text: oklch(0.13 0.028 260);
-    --text-2: oklch(0.30 0.025 260);
-    --text-3: oklch(0.50 0.02 260);
-    --text-4: oklch(0.62 0.015 258);
-
-    --accent: oklch(0.55 0.20 255);
-    --accent-2: oklch(0.62 0.17 255);
-    --accent-soft: oklch(0.55 0.20 255 / 0.22);
-    --accent-dim: oklch(0.55 0.20 255 / 0.10);
-    --accent-glow: oklch(0.55 0.20 255 / 0.25);
-    --accent-fg: oklch(0.99 0 0);
-
-    /* ⚠️ 浅色下「更强调」= 更深，与深色下的方向相反：*-bright 变体在这里
-     * 取比基色更低的亮度。数值按近白底 4.5:1 对比度下限选取，暖色尤其容易
-     * 不足——琥珀色在 L≥0.62 时在白底上只有约 3:1。 */
-    --good: oklch(0.52 0.15 175);
-    --warn: oklch(0.55 0.14 65);
-    --danger: oklch(0.577 0.245 27.325);
-
-    --warm: oklch(0.55 0.14 65);
-    --warm-bright: oklch(0.43 0.12 65);
-    --warm-fade: oklch(0.55 0.14 65 / 0.5);
-    --warm-soft: oklch(0.85 0.07 65 / 0.45);
-    --warm-tint: oklch(0.90 0.06 65 / 0.6);
-    --warm-tint-faint: oklch(0.90 0.06 65 / 0.25);
-    --warm-ring: oklch(0.75 0.11 65 / 0.55);
-    --warm-glow: oklch(0.70 0.12 65 / 0.35);
-
-    --danger-2: oklch(0.55 0.20 25);
-    --danger-bright: oklch(0.48 0.20 25);
-    --danger-soft: oklch(0.88 0.07 25 / 0.5);
-    --danger-ring: oklch(0.75 0.15 25 / 0.5);
-    --danger-glow: oklch(0.65 0.18 25 / 0.3);
-
-    --glow-ring: 0 0 0 1px oklch(0.55 0.20 255 / 0.22), 0 18px 40px oklch(0.2 0.03 260 / 0.14);
-
-    --ink-950: oklch(0.97 0.004 255);
-    --ink-900: oklch(0.985 0.002 250);
-    --ink-850: oklch(0.995 0.001 250);
-    --ink-800: oklch(0.95 0.01 255);
-    --ink-700: oklch(0.91 0.014 255);
-    --neon-400: oklch(0.58 0.19 255);
-    --amberx-400: oklch(0.56 0.135 65);
-}
-
-/* ── 深色（matrix .dark）─────────────────────────────────────────── */
-.dark {
     --bg: oklch(0.11 0.02 260);
     --bg-grad-a: oklch(0.16 0.02 260);
     --bg-grad-b: oklch(0.13 0.02 260);
@@ -220,9 +166,9 @@
 
 /* 全局 body 背景 — radial+linear 复合梯度 */
 /* color-scheme 同时是 light-dark() 的判定依据与原生控件（滚动条、表单、
- * 日期选择器）的配色依据，必须与 .dark 类保持同步。 */
-html { color-scheme: light; }
-html.dark { color-scheme: dark; }
+ * 日期选择器）的配色依据。本发行版只有深色，故恒为 dark —— 组件里那些
+ * light-dark(浅, 深) 因此一律取深色值。 */
+html { color-scheme: dark; }
 
 body {
     /* matrix 的 --gradient-hero-* 同款：底色近纯，两角各一层极淡的冷光。
