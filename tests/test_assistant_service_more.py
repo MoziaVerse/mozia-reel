@@ -139,6 +139,60 @@ class TestAssistantServiceMore:
         await engine.dispose()
 
     @pytest.mark.asyncio
+    async def test_stale_interrupt_covers_every_tenant(self, tmp_path, monkeypatch):
+        """启动清理必须逐租户跑，只带 None 跑一次够不到租户库。
+
+        会话表落在各租户自己的库里（SessionMetaStore 用租户感知的 session factory），
+        而本清理在 lifespan 启动期调用、那时没有租户上下文。漏掉租户的后果不是少清
+        一条记录：会话永久停在 running，前端认为它还在跑，用户既中断不了、也无法在
+        该会话上继续——生产上已出现两个卡了 19 / 26 小时的会话。
+        """
+        from lib.tenant_context import current_tenant
+
+        service = AssistantService(project_root=tmp_path)
+        monkeypatch.setattr(
+            "lib.worker_supervisor.discover_tenants", lambda: ["tenant-a", "tenant-b"]
+        )
+
+        seen: list[str | None] = []
+
+        class _RecordingStore:
+            async def interrupt_running_sessions(self) -> int:
+                seen.append(current_tenant())
+                return 1
+
+        service.meta_store = _RecordingStore()
+        await service._interrupt_stale_running_sessions()
+
+        # None = 单租户/非托管部署的默认根，同样要清
+        assert seen == [None, "tenant-a", "tenant-b"]
+
+    @pytest.mark.asyncio
+    async def test_one_tenant_failing_does_not_block_the_rest(self, tmp_path, monkeypatch):
+        """单个租户清理失败不该拖垮启动，其余租户照常处理。"""
+        service = AssistantService(project_root=tmp_path)
+        monkeypatch.setattr(
+            "lib.worker_supervisor.discover_tenants", lambda: ["bad", "good"]
+        )
+
+        from lib.tenant_context import current_tenant
+
+        handled: list[str | None] = []
+
+        class _FlakyStore:
+            async def interrupt_running_sessions(self) -> int:
+                tenant = current_tenant()
+                if tenant == "bad":
+                    raise RuntimeError("db locked")
+                handled.append(tenant)
+                return 1
+
+        service.meta_store = _FlakyStore()
+        await service._interrupt_stale_running_sessions()
+
+        assert handled == [None, "good"]
+
+    @pytest.mark.asyncio
     async def test_startup_waits_cleanup_and_is_idempotent(self, tmp_path, monkeypatch):
         service = AssistantService(project_root=tmp_path)
         calls = 0

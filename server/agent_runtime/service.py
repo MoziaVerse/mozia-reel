@@ -176,12 +176,33 @@ class AssistantService:
     # ==================== Session CRUD ====================
 
     async def _interrupt_stale_running_sessions(self) -> None:
-        """On service restart, stale running sessions cannot safely resume."""
-        interrupted_count = await self.meta_store.interrupt_running_sessions()
-        if interrupted_count > 0:
+        """On service restart, stale running sessions cannot safely resume.
+
+        必须逐租户跑一遍：会话表落在各租户自己的库里（``SessionMetaStore`` 用的是
+        租户感知的 ``safe_session_factory``），而本方法在 lifespan 启动期被调用，
+        那时没有租户上下文——只带 None 跑一次的话，清理只作用在共享的默认根上，
+        各租户的遗留会话一个都够不到。
+
+        够不到的后果不是"少清了一条记录"：会话永久停在 running，前端据此认为它还在
+        跑，中断按钮找不到对应的执行体，用户既中断不了也无法在该会话上继续。
+
+        None 一并保留：单租户 / 非托管部署的会话就落在默认根上。
+        """
+        from lib.tenant_context import tenant_scope
+        from lib.worker_supervisor import discover_tenants
+
+        total = 0
+        for tenant in [None, *discover_tenants()]:
+            try:
+                with tenant_scope(tenant):
+                    total += await self.meta_store.interrupt_running_sessions()
+            except Exception:
+                # 单个租户清理失败不该拖垮启动流程，其余租户照常处理
+                logger.exception("中断遗留运行中会话失败 tenant=%s", tenant or "(默认)")
+        if total > 0:
             logger.warning(
                 "服务启动时中断遗留运行中会话 count=%s",
-                interrupted_count,
+                total,
             )
 
     async def list_sessions(
