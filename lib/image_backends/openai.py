@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import ExitStack
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Literal
 
@@ -51,13 +52,22 @@ def _quality_for(image_size: str | None) -> str | None:
 def _resolve_openai_params(
     image_size: str | None,
     aspect_ratio: str,
+    model: str | None = None,
 ) -> dict[str, str]:
     """按「比例优先、清晰度其次」算出 {size, quality}。
+
+    Qwen 图像族例外：它的 size 是 7 档白名单，传别的值上游直接 400，所以那一族
+    改走 ``qwen_image_traits`` 的档位表，不参与下面这套按短边推算的通用逻辑。
 
     比例永远来自 aspect_ratio；image_size（档位 / 自定义 WxH / None）只决定清晰度短边，
     自定义 WxH 剥离其自带比例（取 min 当短边）。image_size=None 时按默认 720P 短边兜底，
     仍下传精确比例 size——不再回退 SDK 默认（否则中转网关会用自家默认比例，丢掉项目比例）。
     """
+    from lib.image_backends.qwen_image_traits import is_qwen_image_model, resolve_qwen_image_size
+
+    if is_qwen_image_model(model):
+        return {"size": resolve_qwen_image_size(image_size=image_size, aspect_ratio=aspect_ratio)}
+
     short = resolution_to_short_edge(image_size, tier_map=IMAGE_TIER_SHORT_EDGE)
     w, h = aspect_size(
         aspect_ratio,
@@ -120,7 +130,34 @@ class OpenAIImageBackend:
             raise ImageCapabilityError("image_endpoint_mismatch_no_i2i", model=self._model)
         if not has_refs and ImageCapability.TEXT_TO_IMAGE not in self._capabilities:
             raise ImageCapabilityError("image_endpoint_mismatch_no_t2i", model=self._model)
-        return await (self._generate_edit(request) if has_refs else self._generate_create(request))
+        with self._effective_model(has_refs=has_refs):
+            return await (self._generate_edit(request) if has_refs else self._generate_create(request))
+
+    @contextmanager
+    def _effective_model(self, *, has_refs: bool) -> Iterator[None]:
+        """本次调用真正下发的 model id。
+
+        目前只有 Qwen 图像族需要改写：网关把它拆成文生图与图片编辑两个 id，选哪个取决于
+        这次有没有参考图，而不是用户的偏好——选了编辑却不给图，上游直接 500。两个方向都
+        改：文生+有图 → 编辑，编辑+无图 → 退回文生。详见 ``qwen_image_traits``。
+
+        用上下文管理器就地改写而非在 __init__ 定死：同一个 backend 实例会被不同请求复用
+        （见 server.services.generation_context 的实例缓存），按请求改写完必须还原，
+        否则第一次带参考图的调用会把后续所有文生请求也钉在编辑模型上。
+        """
+        from lib.image_backends.qwen_image_traits import resolve_qwen_image_model
+
+        original = self._model
+        effective = resolve_qwen_image_model(original, has_references=has_refs)
+        if effective == original:
+            yield
+            return
+        logger.info("Qwen 图像族按参考图改写 model: %s → %s", original, effective)
+        self._model = effective
+        try:
+            yield
+        finally:
+            self._model = original
 
     async def _generate_create(self, request: ImageGenerationRequest) -> ImageGenerationResult:
         kwargs = {
@@ -128,7 +165,7 @@ class OpenAIImageBackend:
             "prompt": request.prompt,
             "n": 1,
         }
-        kwargs.update(_resolve_openai_params(request.image_size, request.aspect_ratio))
+        kwargs.update(_resolve_openai_params(request.image_size, request.aspect_ratio, self._model))
         logger.info("调用 %s 图片 SDK (T2I) kwargs=%s", self.name, format_kwargs_for_log(kwargs))
         response = await self._client.images.generate(**kwargs)
         return await self._save_and_return(response, request)
@@ -173,7 +210,7 @@ class OpenAIImageBackend:
                 "image": image_files,
                 "prompt": request.prompt,
             }
-            edit_kwargs.update(_resolve_openai_params(request.image_size, request.aspect_ratio))
+            edit_kwargs.update(_resolve_openai_params(request.image_size, request.aspect_ratio, self._model))
             logger.info(
                 "调用 %s 图片 SDK (I2I) kwargs=%s",
                 self.name,

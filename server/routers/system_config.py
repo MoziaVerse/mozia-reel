@@ -180,6 +180,7 @@ async def _enumerate_candidates(
     from lib.custom_provider import make_provider_id
     from lib.custom_provider.endpoints import endpoint_to_media_type
     from lib.db.repositories.custom_provider_repo import CustomProviderRepository
+    from lib.image_backends.qwen_image_traits import is_hidden_variant
 
     try:
         repo = CustomProviderRepository(session)
@@ -187,6 +188,11 @@ async def _enumerate_candidates(
         provider_name_map = {p.id: p.display_name for p in providers}
         enabled_models = await repo.list_all_enabled_models()
         for model in enabled_models:
+            if is_hidden_variant(model.model_id):
+                # 同族的从属变体不进选择列表：选哪个由本次请求的形态决定，不该让用户挑。
+                # 隐藏的只是**下拉选项**，不是模型支持——它仍会被 backend 按需下发，
+                # DB 里也保留着这行（能力与计费查询照旧走它）。
+                continue
             pid = make_provider_id(model.provider_id)
             candidates.append(
                 _ModelCandidate(
