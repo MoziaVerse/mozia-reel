@@ -103,6 +103,11 @@ export function MediaModelSection() {
   // 慢或悬挂时，整页 spinner 和保存流程都会跟着卡住，而细分区本就有自己的加载叙事。
   const fetchConfig = useCallback(async () => {
     void reloadCandidates();
+    // 先按平台目录对一次账，再拉配置——模型清单原本只在握手那一刻同步，平台后来
+    // 新上架的模型存量用户一个都看不到，界面也不提示"该重新登录了"。放在拉配置
+    // 之前是为了这一趟就能看到新模型，而不是下次进来才有。
+    // 失败不影响后续：后端把刷不到一律回成 refreshed=false，这里 catch 兜住网络层。
+    await API.refreshModelCatalog().catch(() => undefined);
     const [res, catalog, custom] = await Promise.all([
       API.getSystemConfig(),
       getProviderModels().catch(() => [] as ProviderInfo[]),

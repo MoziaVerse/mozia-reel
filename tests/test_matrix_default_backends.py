@@ -278,3 +278,106 @@ class TestVideoModelPreference:
         from lib.matrix_session import preferred_model
 
         assert preferred_model("video", {"doubao/seedance-2.0", "mozia/video-2.0-720p-900"}) is None
+
+
+class TestCatalogRefresh:
+    """模型清单要能在握手之外被刷新。
+
+    原本只在握手那一刻同步一次，之后平台新上架的模型存量用户一个都看不到，
+    界面也不提示"该重新登录了"——用户只会觉得说好的新模型没有。
+    """
+
+    async def test_picks_up_newly_listed_models(self, session, monkeypatch):
+        import lib.matrix_session as ms
+
+        provider_id = await _make_provider(session, [("old/chat", "openai-chat")])
+        await ConfigService(session).set_setting("matrix_wallet_token", "wt-1")
+        await session.commit()
+
+        async def fake_catalog(_token):
+            return [
+                {"model_name": "old/chat", "model_type": "chat"},
+                {"model_name": "qwen/qwen-image", "model_type": "image"},
+            ]
+
+        monkeypatch.setattr(ms, "fetch_model_catalog", fake_catalog)
+
+        result = await ms.refresh_gateway_catalog(session)
+
+        assert result["refreshed"] is True
+        assert result["before"] == 1 and result["after"] == 2
+        ids = {m.model_id for m in await CustomProviderRepository(session).list_models(provider_id)}
+        assert "qwen/qwen-image" in ids
+
+    async def test_fills_default_for_a_newly_available_media_type(self, session, monkeypatch):
+        """平台后来才上架图片模型时，default_image_backend 此前一直是空的。"""
+        import lib.matrix_session as ms
+
+        await _make_provider(session, [("old/chat", "openai-chat")])
+        svc = ConfigService(session)
+        await svc.set_setting("matrix_wallet_token", "wt-1")
+        await session.commit()
+        assert (await svc.get_setting("default_image_backend", "")) == ""
+
+        async def fake_catalog(_token):
+            return [{"model_name": "mozia/image-2", "model_type": "image"}]
+
+        monkeypatch.setattr(ms, "fetch_model_catalog", fake_catalog)
+        await ms.refresh_gateway_catalog(session)
+
+        assert "mozia/image-2" in await svc.get_setting("default_image_backend", "")
+
+    async def test_repeated_refresh_is_idempotent(self, session, monkeypatch):
+        """设置页每次打开都会调，重复调用不能产生重复行或改动用户选择。"""
+        import lib.matrix_session as ms
+
+        provider_id = await _make_provider(session, [("a/chat", "openai-chat")])
+        svc = ConfigService(session)
+        await svc.set_setting("matrix_wallet_token", "wt-1")
+        await svc.set_setting("default_text_backend", f"custom-{provider_id}/a/chat")
+        await session.commit()
+
+        async def fake_catalog(_token):
+            return [
+                {"model_name": "a/chat", "model_type": "chat"},
+                {"model_name": "b/chat", "model_type": "chat"},
+            ]
+
+        monkeypatch.setattr(ms, "fetch_model_catalog", fake_catalog)
+        first = await ms.refresh_gateway_catalog(session)
+        second = await ms.refresh_gateway_catalog(session)
+
+        assert first["after"] == 2
+        assert second["before"] == 2 and second["after"] == 2
+        # 用户已选的默认项不能被刷新冲掉
+        assert await svc.get_setting("default_text_backend", "") == f"custom-{provider_id}/a/chat"
+
+    async def test_no_wallet_token_is_not_an_error(self, session):
+        """拿不到 token 只意味着列表还是上次那份，不该抛错让设置页打不开。"""
+        import lib.matrix_session as ms
+
+        await _make_provider(session, [("a/chat", "openai-chat")])
+        result = await ms.refresh_gateway_catalog(session)
+        assert result == {"refreshed": False, "reason": "no_wallet_token"}
+
+    async def test_no_gateway_provider_is_not_an_error(self, session):
+        import lib.matrix_session as ms
+
+        result = await ms.refresh_gateway_catalog(session)
+        assert result == {"refreshed": False, "reason": "no_gateway_provider"}
+
+    async def test_catalog_unavailable_keeps_existing_list(self, session, monkeypatch):
+        import lib.matrix_session as ms
+
+        provider_id = await _make_provider(session, [("a/chat", "openai-chat")])
+        await ConfigService(session).set_setting("matrix_wallet_token", "wt-1")
+        await session.commit()
+
+        async def fake_catalog(_token):
+            return None
+
+        monkeypatch.setattr(ms, "fetch_model_catalog", fake_catalog)
+        result = await ms.refresh_gateway_catalog(session)
+
+        assert result == {"refreshed": False, "reason": "catalog_unavailable"}
+        assert len(await CustomProviderRepository(session).list_models(provider_id)) == 1

@@ -207,6 +207,26 @@ async def credits(session: AsyncSession = Depends(get_async_session)):
     return {"available": True, "wallet": data}
 
 
+@router.post("/matrix-session/refresh-catalog")
+async def refresh_catalog(session: AsyncSession = Depends(get_async_session)):
+    """按平台目录刷新本租户的模型清单。
+
+    模型清单原本只在握手那一刻同步（见 ``seed_gateway_provider``），之后平台新
+    上架的模型存量用户一个都看不到，界面也不会提示"该重新登录了"。设置页在打开
+    时调一次这里，把刷新时机挪到用户正要挑模型的当下。
+
+    刷新失败一律回 200 + ``refreshed=false`` 而不是错误码：这是增强项，拿不到
+    目录只意味着列表还是上次那份，不该让设置页报错或打不开。
+    """
+    from lib.matrix_session import refresh_gateway_catalog
+
+    try:
+        return await refresh_gateway_catalog(session)
+    except Exception as exc:  # noqa: BLE001 —— 增强项不该把设置页拖挂
+        logger.warning("刷新模型目录失败: %s", exc)
+        return {"refreshed": False, "reason": "refresh_failed"}
+
+
 @router.get("/matrix-session/usage")
 async def usage(
     request: Request,

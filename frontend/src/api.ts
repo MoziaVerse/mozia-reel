@@ -2650,6 +2650,24 @@ class API {
     return this.request("/matrix-session/overview");
   }
 
+  /**
+   * 按平台目录刷新本租户的模型清单。
+   *
+   * 模型清单原本只在握手那一刻同步，之后平台新上架的模型存量用户一个都看不到。
+   * 模型选择页打开时调一次，把刷新时机挪到用户正要挑模型的当下。
+   *
+   * 后端在拿不到目录时回 refreshed=false 而非错误码——刷新失败只意味着列表还是
+   * 上次那份，调用方无需处理异常分支。
+   */
+  static async refreshModelCatalog(): Promise<{
+    refreshed: boolean;
+    reason?: string;
+    before?: number;
+    after?: number;
+  }> {
+    return this.request("/matrix-session/refresh-catalog", { method: "POST" });
+  }
+
   /** 实时余额。凭据在服务端，浏览器侧拿不到也不需要。 */
   static async getMatrixCredits(): Promise<MatrixCredits> {
     return this.request("/matrix-session/credits");

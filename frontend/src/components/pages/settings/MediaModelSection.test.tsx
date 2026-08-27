@@ -307,3 +307,48 @@ describe("MediaModelSection", () => {
     expect(screen.getByText("已指定 1 项")).toBeInTheDocument();
   });
 });
+
+describe("MediaModelSection 打开时刷新模型目录", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState(), true);
+    vi.restoreAllMocks();
+    mockConfig();
+    vi.spyOn(API, "getModelCandidates").mockResolvedValue(
+      CANDIDATES as unknown as Awaited<ReturnType<typeof API.getModelCandidates>>,
+    );
+    vi.spyOn(providerModels, "getProviderModels").mockResolvedValue([]);
+    vi.spyOn(providerModels, "getCustomProviderModels").mockResolvedValue([]);
+  });
+
+  it("等刷新落地后才拉配置，否则这一趟拿到的还是旧清单", async () => {
+    // 模型清单原本只在握手那一刻同步，之后平台新上架的存量用户一个都看不到。
+    // 只断言"调用顺序"是不够的：不 await 也会先调用，但配置会赶在写库前拉走。
+    let settle: (v: { refreshed: boolean }) => void = () => {};
+    const gate = new Promise<{ refreshed: boolean }>((resolve) => {
+      settle = resolve;
+    });
+    const refresh = vi
+      .spyOn(API, "refreshModelCatalog")
+      .mockReturnValue(gate as ReturnType<typeof API.refreshModelCatalog>);
+
+    render(<MediaModelSection />);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(API.getSystemConfig).not.toHaveBeenCalled();
+
+    settle({ refreshed: true });
+    await screen.findByRole("combobox", { name: "默认图片模型" });
+    expect(API.getSystemConfig).toHaveBeenCalled();
+  });
+
+  it("刷新失败不该让设置页打不开", async () => {
+    vi.spyOn(API, "refreshModelCatalog").mockRejectedValue(new Error("network down"));
+
+    render(<MediaModelSection />);
+
+    // 刷不到只意味着列表还是上次那份，页面照常渲染
+    expect(await screen.findByRole("combobox", { name: "默认图片模型" })).toBeInTheDocument();
+  });
+});

@@ -797,6 +797,50 @@ async def seed_gateway_provider(
     await seed_default_backends(session, provider_id=provider.id)
 
 
+async def refresh_gateway_catalog(session) -> dict:
+    """按平台目录刷新当前租户的模型清单，返回刷新前后的计数。
+
+    存在的理由：模型清单只在握手那一刻同步过一次（``seed_gateway_provider``），
+    之后平台新上架的模型，存量用户一个都看不到——界面上没有任何迹象表明"你该
+    重新登录一次"，用户只会觉得说好的新模型没有。让设置页在打开时调一次这里，
+    把"什么时候刷新"从"下次握手"变成"用户正要挑模型的时候"。
+
+    复用握手那条链路的逐项合并（``sync_gateway_models``）：新上架的补进来、
+    已下架的标禁用而非删除、用户设的默认项保留。所以重复调用是安全的。
+
+    任何一步拿不到东西都只是"没刷新"，不抛错——这是增强项，不该让设置页打不开。
+    """
+    from lib.db.repositories.custom_provider_repo import CustomProviderRepository
+
+    repo = CustomProviderRepository(session)
+    provider = next(
+        (p for p in await repo.list_providers() if p.display_name == GATEWAY_PROVIDER_DISPLAY_NAME),
+        None,
+    )
+    if provider is None:
+        return {"refreshed": False, "reason": "no_gateway_provider"}
+
+    token = await get_wallet_token(session)
+    if not token:
+        return {"refreshed": False, "reason": "no_wallet_token"}
+
+    before = len(await repo.list_models(provider.id))
+    catalog = await fetch_model_catalog(token)
+    if catalog is None:
+        return {"refreshed": False, "reason": "catalog_unavailable"}
+
+    await sync_gateway_models(session, provider_id=provider.id, rows=catalog_to_models(catalog))
+    await backfill_video_durations(session, provider_id=provider.id)
+    # 补默认值：平台后来才上架某类模型时，该媒体的默认项此前一直是空的
+    await seed_default_backends(session, provider_id=provider.id)
+    await session.commit()
+
+    after = len(await repo.list_models(provider.id))
+    if after != before:
+        logger.info("模型目录已刷新: %d → %d", before, after)
+    return {"refreshed": True, "before": before, "after": after}
+
+
 async def _sync_from_catalog(session, *, provider_id: int, wallet_token: str | None) -> None:
     """有 walletToken 就按平台目录对一次账；没有就维持现状。"""
     if not wallet_token:
