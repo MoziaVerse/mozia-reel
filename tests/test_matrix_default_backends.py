@@ -211,14 +211,15 @@ class TestTextModelPreference:
     还是最难查的那种。
 
     另一条约束是钱包分区：新用户手里通常只有赠送额度，而网关只给少数模型开了
-    gift 授权，默认值落在 paid-only 的模型上等于开箱就欠费。
+    gift 授权，默认值落在 paid-only 的模型上等于开箱就欠费——但那要模型本身
+    先跑得通，跑不通的 gift 档只是「免费的坏掉的默认值」。
     """
 
-    def test_prefers_gift_capable_over_alphabetical_first(self):
+    def test_prefers_a_working_model_over_alphabetical_first(self):
         from lib.matrix_session import preferred_model
 
         available = {"GLM-4.7", "qwen/qwen3.8-27b", "z-ai/glm-5.2"}
-        assert preferred_model("text", available) == "qwen/qwen3.8-27b"
+        assert preferred_model("text", available) == "z-ai/glm-5.2"
 
     def test_never_picks_the_deadlocking_model(self):
         """GLM-4.7 虽然也允许 gift，但它会静默死锁，不能进偏好表。"""
@@ -247,12 +248,21 @@ class TestTextModelPreference:
 
         assert set(_PREFERRED_DEFAULT_MODELS["text"]) <= AGENT_MODEL_ALLOWLIST
 
-    def test_prefers_the_strongest_gift_model_when_listed(self):
-        """gift 档内部按能力排：Agent 要在 45 个工具里选型并生成嵌套参数。"""
-        from lib.matrix_session import preferred_model
+    def test_never_picks_models_rejected_for_mid_list_system_message(self):
+        """CLI 会往 messages 塞一条 role=system 的消息，dashscope 系强制 system
+        只能在首位，于是这三个 qwen 一轮都跑不完——哪怕它们是仅有的 gift 档。"""
+        from lib.matrix_session import AGENT_MODEL_ALLOWLIST, preferred_model
 
-        available = {"qwen/qwen3.5-397b-a17b", "qwen/qwen3.8-27b", "qwen/qwen3.6-35b-a3b"}
-        assert preferred_model("text", available) == "qwen/qwen3.5-397b-a17b"
+        rejected = {"qwen/qwen3.5-397b-a17b", "qwen/qwen3.8-27b", "qwen/qwen3.6-35b-a3b"}
+        assert not (rejected & AGENT_MODEL_ALLOWLIST)
+        assert preferred_model("text", rejected) is None
+
+    def test_same_family_sibling_on_a_working_channel_stays(self):
+        """同族的 qwen3.6-plus 走的上游渠道不校验 system 位置，不能连坐移除。"""
+        from lib.matrix_session import agent_model_ready, preferred_model
+
+        assert agent_model_ready("qwen/qwen3.6-plus")
+        assert preferred_model("text", {"qwen/qwen3.6-plus"}) == "qwen/qwen3.6-plus"
 
     def test_never_picks_models_whose_tool_call_chain_is_broken(self):
         """kimi 全系与 deepseek-v4-flash 在带工具的请求上打不通网关，
@@ -261,7 +271,7 @@ class TestTextModelPreference:
 
         broken = {"moonshotai/kimi-k3", "moonshotai/kimi-k2.6", "deepseek/deepseek-v4-flash"}
         assert preferred_model("text", broken) is None
-        assert preferred_model("text", broken | {"qwen/qwen3.8-27b"}) == "qwen/qwen3.8-27b"
+        assert preferred_model("text", broken | {"z-ai/glm-5.1"}) == "z-ai/glm-5.1"
 
     def test_falls_back_to_paid_only_when_no_gift_model_listed(self):
         """gift 档都没上架时回落到 paid-only 的兜底项，而不是返回 None。"""

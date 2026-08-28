@@ -490,24 +490,21 @@ _PREFERRED_DEFAULT_MODELS: dict[str, tuple[str, ...]] = {
     # 1) 死锁：GLM-4.7 在 Agent 的多层子任务嵌套下会**静默死锁**——不报错、
     #    不超时，就是没有输出。它绝不能进这张表；而按字典序挑恰好挑中它。
     #    （它在单轮工具调用上是正常的，别拿浅层验证的通过率把它放回来。）
-    # 2) 赠送额度：网关按模型限定可消耗的钱包分区，只有少数模型允许 gift。
-    #    新用户手里通常只有赠送额度，默认值若落在 paid-only 的模型上，等于
-    #    开箱就欠费。前三项是网关上允许 gift 的文本模型，排在最前。
-    # 3) 工具调用链：Agent 跑的是 Claude Code harness，一轮里要吐结构化
-    #    tool_use、再吃回 tool_result。网关到部分上游的这条链根本不通——
-    #    moonshotai/kimi-k2.6、moonshotai/kimi-k3、deepseek/deepseek-v4-flash
-    #    在带工具的请求上稳定回 `upstream error: do request failed`，
-    #    它们不论额度分区如何都不能进表。
+    # 2) 工具调用链：只收 ``AGENT_MODEL_ALLOWLIST`` 里的型号，判据见那边。
+    # 3) 赠送额度：网关按模型限定可消耗的钱包分区，只有少数模型允许 gift。
+    #    新用户手里通常只有赠送额度，默认值落在 paid-only 上等于开箱就欠费。
     #
-    # 后三项是 paid-only 的兜底：赠送额度用完或平台撤掉 gift 授权时仍能跑。
+    # ⚠️ 当前这张表**一个 gift 档都没有**，不是排序没做好，是三条约束交集为空：
+    # 网关上允许 gift 的文本模型只有 qwen 那几个和 GLM-4.7，前者卡在 messages 里的
+    # system 消息上（见 ``AGENT_MODEL_ALLOWLIST``）、后者卡在死锁上。也就是说托管态
+    # 下只有赠送额度的新用户，智能体开箱即欠费。解法在网关侧——把 messages 里的
+    # system 并入首条 system，qwen 三档就能回来。在那之前这里只能全 paid 兜底。
     # ⚠️ gift 授权同样会漂移，改动前先核对网关的 mozia_model_quota_policies。
     "text": (
-        "qwen/qwen3.5-397b-a17b",
-        "qwen/qwen3.8-27b",
-        "qwen/qwen3.6-35b-a3b",
         "z-ai/glm-5.2",
         "z-ai/glm-5.1",
         "deepseek/deepseek-v4-pro",
+        "qwen/qwen3.6-plus",
     ),
     # 视频只挑 H3，与画布（ZeoCanvasLite）同口径——那边实测下来也是只用 H3 出片。
     #
@@ -535,13 +532,23 @@ def preferred_model(media: str, available: set[str]) -> str | None:
     return next((m for m in _PREFERRED_DEFAULT_MODELS.get(media, ()) if m in available), None)
 
 
-# Agent 能跑通的文本模型白名单。判据只有一条：网关到该上游的**带工具请求**这条链
-# 是否通——Agent 跑的是 Claude Code harness，一轮里要吐结构化 tool_use、再吃回
-# tool_result，链断了表现成「发一句话就报错」或「点了没反应」，而不是回答质量差。
+# Agent 能跑通的文本模型白名单。判据只有一条：拿真实 CLI（不是手写的等价请求）
+# 跑一轮带工具的对话能不能出结果——Agent 跑的是 Claude Code harness，链断了表现成
+# 「发一句话就报错」或「点了没反应」，而不是回答质量差。
 #
-# 落在名单外的三类，各有各的坏法，都不该出现在智能体的模型下拉里：
+# ⚠️ 判据必须用真实 CLI 跑。手写一个「形状相同」的 HTTP 请求验不出下面这条：
+# CLI 在带工具的请求里会往 messages 塞一条 role="system" 的消息（内容是它自己
+# 生成的可用 agent 类型清单，Anthropic 的 messages 规范里本没有这个角色），
+# 网关原样透传给上游，而 dashscope 系强制 system 只能在首位，直接 400。
+#
+# 落在名单外的，各有各的坏法，都不该出现在智能体的模型下拉里：
+#   - qwen/qwen3.5-397b-a17b · qwen/qwen3.8-27b · qwen/qwen3.6-35b-a3b：
+#     即上面那条，`System message must be at the beginning`，一轮都跑不完。
+#     同族的 qwen3.6-plus 不在此列——它走的上游渠道不校验 system 位置。
+#     这条是网关侧的转换缺陷（messages 里的 system 该并入首条 system 而非透传），
+#     网关修好后这三个可以放回来，届时 gift 档才重新有得选。
 #   - moonshotai/kimi-k3 · moonshotai/kimi-k2.6 · deepseek/deepseek-v4-flash：
-#     带工具的请求稳定回 `upstream error: do request failed`，一轮都跑不完
+#     带工具的请求稳定回 `upstream error: do request failed`
 #   - GLM-4.7：单轮工具调用正常，但在多层子任务嵌套下**静默死锁**（见
 #     ``_PREFERRED_DEFAULT_MODELS`` 的注释），浅层验证看不出来
 #   - 其余非对话类目：Agent SDK 走对话协议，选中即失败
@@ -550,9 +557,6 @@ def preferred_model(media: str, available: set[str]) -> str | None:
 # 上面那条判据实跑，不要按参数量或价格猜。
 AGENT_MODEL_ALLOWLIST: frozenset[str] = frozenset(
     {
-        "qwen/qwen3.5-397b-a17b",
-        "qwen/qwen3.8-27b",
-        "qwen/qwen3.6-35b-a3b",
         "qwen/qwen3.6-plus",
         "deepseek/deepseek-v4-pro",
         "z-ai/glm-5",
