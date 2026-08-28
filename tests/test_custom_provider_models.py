@@ -118,6 +118,7 @@ class TestCustomProviderModelTable:
             "supported_durations",
             "resolution",
             "capability_overrides",
+            "quota_sources",
             "created_at",
             "updated_at",
         }
