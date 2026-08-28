@@ -57,6 +57,8 @@ class SettlementInput:
     image_output_tokens: int | None = None
     text_input_tokens: int | None = None
     text_output_tokens: int | None = None
+    # 网关那次调用的 id，用于跟平台账务对账；拿不到时为 None（见 ApiCall 同名字段）
+    gateway_request_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -113,6 +115,7 @@ def _row_to_dict(row: ApiCall) -> dict[str, Any]:
         "currency": row.currency,
         "provider": row.provider,
         "usage_tokens": row.usage_tokens,
+        "gateway_request_id": row.gateway_request_id,
         "input_tokens": row.input_tokens,
         "output_tokens": row.output_tokens,
         "image_input_tokens": row.image_input_tokens,
@@ -368,6 +371,7 @@ class UsageRepository(BaseRepository):
                 image_output_tokens=settlement.image_output_tokens,
                 text_input_tokens=settlement.text_input_tokens,
                 text_output_tokens=settlement.text_output_tokens,
+                gateway_request_id=settlement.gateway_request_id,
                 output_path=output_path,
                 error_message=error_truncated,
             )

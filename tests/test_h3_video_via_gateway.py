@@ -105,12 +105,15 @@ class TestSubmitPayloadContract:
                 captured.update(json or {})
                 return _Resp()
 
-        monkeypatch.setattr("lib.video_backends.openai.httpx.AsyncClient", _Client)
+        # 先构造 backend 再 patch：patch 的是全局 httpx.AsyncClient（模块对象共享），
+        # 而 backend 构造时 OpenAI SDK 也会经它建自己的 http client——顺序反了会让
+        # SDK 拿到这个只实现了 post 的替身。
         backend = OpenAIVideoBackend(
             model="minimax/minimax-h3-fl2va",
             api_key="k",
             base_url="https://example.invalid/v1",
         )
+        monkeypatch.setattr("lib.video_backends.openai.httpx.AsyncClient", _Client)
         asyncio.run(
             backend._create_h3_video(prompt="p", model="minimax/minimax-h3-fl2va", seconds="5", size="768x1344")
         )

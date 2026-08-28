@@ -164,6 +164,8 @@ def _expected_row(**overrides: Any) -> dict[str, Any]:
         "image_output_tokens": None,
         "text_input_tokens": None,
         "text_output_tokens": None,
+        # 网关那次调用的 id：只有经 mozia 网关的 backend 会带，基线场景没有
+        "gateway_request_id": None,
     }
     row.update(overrides)
     return row

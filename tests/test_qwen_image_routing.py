@@ -175,3 +175,45 @@ class TestHiddenFromSelection:
 
         assert is_hidden_variant(QWEN_IMAGE_EDIT_MODEL)
         assert resolve_qwen_image_model(QWEN_IMAGE_MODEL, has_references=True) == QWEN_IMAGE_EDIT_MODEL
+
+
+class TestGatewayRequestIdCapture:
+    """网关那次调用的 id 必须一路带到账本。
+
+    没有它，费用只能靠本地估算——实测本地把 glm 按 Anthropic 单价算、高估近 8 倍，
+    而自定义供应商的图片/视频一律记 0。存下 id 才能跟平台账务逐笔对上。
+    """
+
+    def test_settlement_carries_request_id_across_all_channels(self):
+        from lib.ledger import _settlement_from_result
+
+        class _R:
+            gateway_request_id = "req-123"
+            usage_tokens = quality = None
+            image_input_tokens = image_output_tokens = None
+            text_input_tokens = text_output_tokens = None
+            characters = 0
+            generate_audio = None
+            duration_seconds = 1
+            input_tokens = output_tokens = None
+
+        for channel in ("image", "audio", "video", "text"):
+            s = _settlement_from_result(channel, _R())
+            assert s.gateway_request_id == "req-123", f"{channel} 通道漏掉了 request id"
+
+    def test_absent_on_backends_without_the_concept(self):
+        """直连厂商 / 本地 backend 没有这个概念，不能因为取不到就报错。"""
+        from lib.ledger import _settlement_from_result
+
+        class _R:
+            input_tokens = output_tokens = None
+
+        assert _settlement_from_result("text", _R()).gateway_request_id is None
+
+    def test_take_is_destructive(self):
+        """取出即清空：留着会让下一次拿不到 id 的调用误取到上一次的，费用记错行。"""
+        from lib.openai_shared import _last_gateway_request_id, take_gateway_request_id
+
+        _last_gateway_request_id.set("req-abc")
+        assert take_gateway_request_id() == "req-abc"
+        assert take_gateway_request_id() is None

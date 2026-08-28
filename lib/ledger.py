@@ -46,7 +46,11 @@ def _settlement_from_result(call_type: CallType, result: Any, *, service_tier: s
       ``billed_duration_seconds``（覆盖 start_call 时的请求时长）。
 
     四种 backend 结果对象结构独立、无共同基类，按调用点已知的 ``call_type`` 显式分发。
+
+    ``gateway_request_id`` 是唯一跨四条通道的共同项，故用 getattr 统一取：只有经 mozia
+    网关的 backend 会带上它，其余（本地/直连厂商）没有这个概念，取不到就是 None。
     """
+    request_id = getattr(result, "gateway_request_id", None)
     if call_type == "image":
         return SettlementInput(
             usage_tokens=result.usage_tokens,
@@ -55,20 +59,23 @@ def _settlement_from_result(call_type: CallType, result: Any, *, service_tier: s
             image_output_tokens=result.image_output_tokens,
             text_input_tokens=result.text_input_tokens,
             text_output_tokens=result.text_output_tokens,
+            gateway_request_id=request_id,
         )
     if call_type == "audio":
-        return SettlementInput(usage_tokens=result.characters)
+        return SettlementInput(usage_tokens=result.characters, gateway_request_id=request_id)
     if call_type == "video":
         return SettlementInput(
             usage_tokens=result.usage_tokens,
             generate_audio=result.generate_audio,
             billed_duration_seconds=result.duration_seconds,
             service_tier=service_tier,
+            gateway_request_id=request_id,
         )
     if call_type == "text":
         return SettlementInput(
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
+            gateway_request_id=request_id,
         )
     raise ValueError(f"unknown ledger channel: {call_type!r}")
 

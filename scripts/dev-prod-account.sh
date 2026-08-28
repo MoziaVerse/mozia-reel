@@ -21,4 +21,7 @@ export BRAND_NAME="${BRAND_NAME:-}"
 
 echo "以 ${DEV_BOUND_USERNAME:-$DEV_BOUND_SSO_SUB} 身份启动 · 网关 ${DEV_BOUND_GATEWAY}"
 echo "数据目录 ${ARCREEL_DATA_DIR}"
-exec uv run uvicorn server.app:app --host 127.0.0.1 --port "${PORT:-1241}" --reload
+# --reload-dir 必须限定：不限定的话 watchfiles 会把 node_modules / .venv / .git /
+# .worktrees 一起扫进去（十几万个文件），reloader 进程能吃掉一整核。
+exec uv run uvicorn server.app:app --host 127.0.0.1 --port "${PORT:-1241}" \
+  --reload --reload-dir server --reload-dir lib

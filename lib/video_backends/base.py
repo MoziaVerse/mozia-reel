@@ -707,6 +707,9 @@ class VideoGenerationResult:
     usage_tokens: int | None = None
     task_id: str | None = None
     generate_audio: bool | None = None
+    # 经 mozia 网关的调用会带上网关那次请求的 id（响应头 x-oneapi-request-id），
+    # 供费用与平台账务对账；直连厂商 / 本地 backend 没有这个概念，保持 None。
+    gateway_request_id: str | None = None
 
 
 class VideoBackend(Protocol):

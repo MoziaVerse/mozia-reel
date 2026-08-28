@@ -24,6 +24,7 @@ from lib.openai_shared import (
 from lib.openai_shared import (
     OPENAI_RETRYABLE_ERRORS,
     create_openai_client,
+    take_gateway_request_id,
 )
 from lib.providers import PROVIDER_OPENAI
 from lib.retry import with_retry_async
@@ -167,8 +168,10 @@ class OpenAIImageBackend:
         }
         kwargs.update(_resolve_openai_params(request.image_size, request.aspect_ratio, self._model))
         logger.info("调用 %s 图片 SDK (T2I) kwargs=%s", self.name, format_kwargs_for_log(kwargs))
+        # request id 由 openai_shared 的 httpx event hook 在客户端层捕获，这里取出即可
+        # （见 take_gateway_request_id 的取出即清空语义）。
         response = await self._client.images.generate(**kwargs)
-        return await self._save_and_return(response, request)
+        return await self._save_and_return(response, request, request_id=take_gateway_request_id())
 
     async def _generate_edit(self, request: ImageGenerationRequest) -> ImageGenerationResult:
         refs = request.reference_images
@@ -219,9 +222,11 @@ class OpenAIImageBackend:
             response = await self._client.images.edit(**edit_kwargs)
         finally:
             stack.close()
-        return await self._save_and_return(response, request)
+        return await self._save_and_return(response, request, request_id=take_gateway_request_id())
 
-    async def _save_and_return(self, response, request: ImageGenerationRequest) -> ImageGenerationResult:
+    async def _save_and_return(
+        self, response, request: ImageGenerationRequest, *, request_id: str | None = None
+    ) -> ImageGenerationResult:
         data = getattr(response, "data", None) or []
         if not data:
             # 空 data 通常是内容安全过滤命中或上游网关异常，给出清晰错误便于排查
@@ -267,4 +272,5 @@ class OpenAIImageBackend:
             image_output_tokens=img_out,
             text_input_tokens=txt_in,
             text_output_tokens=txt_out,
+            gateway_request_id=request_id,
         )
