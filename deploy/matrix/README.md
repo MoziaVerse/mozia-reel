@@ -96,6 +96,45 @@ print(sorted(hosts))"
 生成任务是入队执行的，切换瞬间在跑的任务会随旧容器停止而中断——低峰期切，或
 先看任务面板确认没有在途任务。
 
+### ⚠️ 带迁移的版本，回滚不止是切 Caddy
+
+上面第 4 条「回滚 = Caddy 指回 1241」只在**两个版本的 alembic head 相同**时成立。
+新版本一旦跑过迁移，租户库就升到了旧代码不认识的版本号，此时切回旧容器会这样坏：
+
+- 旧容器启动后已经握过手的租户仍然正常——`ensure_tenant_db` 每租户只跑一次迁移，
+  结果缓存在进程里
+- 它**没见过**的租户在首次请求时走 `init_db` → `alembic upgrade head`，撞上库里
+  那个旧脚本目录里不存在的版本号，直接 `Can't locate revision`
+
+表现是「一部分用户好、一部分 500」，而且随哪些租户先来而变——最难归因的那类故障。
+
+所以带迁移的版本回滚要多两步，对**每个已升级过的租户库**执行
+（租户库在 `$MOZIA_REEL_DATA_DIR/tenants/<ssoSub>/.arcreel.db`，
+未接入 matrix 的部署则是数据根下那一个）：
+
+```bash
+# 1) 降回旧版本的 head（<OLD_HEAD> = 回滚目标代码的 alembic head）
+DATABASE_URL="sqlite+aiosqlite:///<该租户库路径>" uv run alembic downgrade <OLD_HEAD>
+
+# 2) 清掉残留的版本行 —— 必须做
+#    降级到合并节点的某个父版本时，另一条分支仍算「已应用」，会在 alembic_version
+#    里留下第二行；旧代码同样不认识它，只做第 1 步服务照样起不来。
+sqlite3 <该租户库路径> \
+  "DELETE FROM alembic_version WHERE version_num != '<OLD_HEAD>';"
+```
+
+两步都做完，旧代码才起得来（升到 v0.27 这次实测验证过：只做第 1 步报
+`Can't locate revision identified by 'a1c7e94f0d23'`，补上第 2 步即恢复正常）。
+
+上游那批迁移是纯增量（建表 / 加列），降级后残留的表对旧代码无害，不必清理。
+
+### 依赖变了就必须 `--build`
+
+`docker compose restart` 用的是旧镜像。同步上游 v0.27 时新增了 `mcp` /
+`jsonschema` / `jsonpath-rfc9535` 三个运行时依赖，不重建的话容器会在
+import `server.remote_mcp` 时直接崩。改了 `pyproject.toml` / `uv.lock` /
+`frontend/package.json` 的版本一律 `up -d --build`。
+
 ## 入口
 
 `external_client` 注册 `mozia-reel` 即可握手；**不建 `project` 行**就不会出现在
