@@ -227,13 +227,13 @@ class TestTextModelPreference:
 
         assert preferred_model("text", {"GLM-4.7", "z-ai/glm-5.1"}) == "z-ai/glm-5.1"
 
-    def test_allowlist_excludes_models_whose_tool_chain_is_broken(self):
-        """名单是智能体下拉的候选来源，放进去等于让人选中即坏。"""
-        from lib.matrix_session import AGENT_MODEL_ALLOWLIST, agent_model_ready
+    def test_transient_upstream_outage_is_not_grounds_for_exclusion(self):
+        """kimi 全系与 deepseek-v4-flash 曾因一次上游抖动被划掉，真实 CLI 复验
+        三个都跑得通——排除一个型号前必须确认错误可复现。"""
+        from lib.matrix_session import agent_model_ready
 
-        for broken in ("moonshotai/kimi-k3", "moonshotai/kimi-k2.6", "deepseek/deepseek-v4-flash"):
-            assert not agent_model_ready(broken)
-            assert broken not in AGENT_MODEL_ALLOWLIST
+        for restored in ("moonshotai/kimi-k3", "moonshotai/kimi-k2.6", "deepseek/deepseek-v4-flash"):
+            assert agent_model_ready(restored)
 
     def test_allowlist_excludes_the_deadlocking_model(self):
         """GLM-4.7 单轮工具调用是正常的，死锁只在多层子任务嵌套下出现。"""
@@ -264,14 +264,12 @@ class TestTextModelPreference:
         assert agent_model_ready("qwen/qwen3.6-plus")
         assert preferred_model("text", {"qwen/qwen3.6-plus"}) == "qwen/qwen3.6-plus"
 
-    def test_never_picks_models_whose_tool_call_chain_is_broken(self):
-        """kimi 全系与 deepseek-v4-flash 在带工具的请求上打不通网关，
-        额度分区再合适也不能当默认——症状是发一句话就报错。"""
+    def test_allowlisted_but_unpreferred_model_is_not_a_default(self):
+        """能选不等于该当默认：kimi 在下拉里可选，但不进偏好表。"""
         from lib.matrix_session import preferred_model
 
-        broken = {"moonshotai/kimi-k3", "moonshotai/kimi-k2.6", "deepseek/deepseek-v4-flash"}
-        assert preferred_model("text", broken) is None
-        assert preferred_model("text", broken | {"z-ai/glm-5.1"}) == "z-ai/glm-5.1"
+        assert preferred_model("text", {"moonshotai/kimi-k3"}) is None
+        assert preferred_model("text", {"moonshotai/kimi-k3", "z-ai/glm-5.1"}) == "z-ai/glm-5.1"
 
     def test_falls_back_to_paid_only_when_no_gift_model_listed(self):
         """gift 档都没上架时回落到 paid-only 的兜底项，而不是返回 None。"""

@@ -547,11 +547,13 @@ def preferred_model(media: str, available: set[str]) -> str | None:
 #     同族的 qwen3.6-plus 不在此列——它走的上游渠道不校验 system 位置。
 #     这条是网关侧的转换缺陷（messages 里的 system 该并入首条 system 而非透传），
 #     网关修好后这三个可以放回来，届时 gift 档才重新有得选。
-#   - moonshotai/kimi-k3 · moonshotai/kimi-k2.6 · deepseek/deepseek-v4-flash：
-#     带工具的请求稳定回 `upstream error: do request failed`
 #   - GLM-4.7：单轮工具调用正常，但在多层子任务嵌套下**静默死锁**（见
 #     ``_PREFERRED_DEFAULT_MODELS`` 的注释），浅层验证看不出来
 #   - 其余非对话类目：Agent SDK 走对话协议，选中即失败
+#
+# ⚠️ 一次性的上游抖动不算判据。kimi-k3 / kimi-k2.6 / deepseek-v4-flash 曾因
+# `upstream error: do request failed` 被划掉，换真实 CLI 复验时三个都跑得通——
+# 那是当时的上游故障，不是模型的固有缺陷。排除一个型号前先确认错误可复现。
 #
 # ⚠️ 平台上架/下架与上游可用性都会漂移，本名单不是长期真相。增删条目前先按
 # 上面那条判据实跑，不要按参数量或价格猜。
@@ -559,6 +561,9 @@ AGENT_MODEL_ALLOWLIST: frozenset[str] = frozenset(
     {
         "qwen/qwen3.6-plus",
         "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-flash",
+        "moonshotai/kimi-k3",
+        "moonshotai/kimi-k2.6",
         "z-ai/glm-5",
         "z-ai/glm-5.1",
         "z-ai/glm-5.2",
