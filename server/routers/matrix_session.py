@@ -280,6 +280,7 @@ async def session_overview(
     from lib.matrix_capabilities import matrix_mode_enabled
     from lib.matrix_session import (
         GATEWAY_PROVIDER_DISPLAY_NAME,
+        agent_model_ready,
         dev_bound_account,
         matrix_web_url,
         verify_session_cookie,
@@ -322,6 +323,10 @@ async def session_overview(
                     "model_id": m.model_id,
                     "display_name": m.display_name,
                     "media_type": media,
+                    # 额度分区与「Agent 能不能用」都在服务端判定：前者是平台目录的
+                    # 派生事实，后者的判据（带工具请求这条链通不通）前端无从得知。
+                    "quota_sources": m.quota_sources,
+                    "agent_ready": agent_model_ready(m.model_id),
                 }
             )
     models.sort(key=lambda x: (x["media_type"], x["model_id"]))

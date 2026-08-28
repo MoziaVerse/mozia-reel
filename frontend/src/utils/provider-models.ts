@@ -127,6 +127,46 @@ export function lookupVideoAudioControl(
 }
 
 // ---------------------------------------------------------------------------
+// Wallet quota sources
+//
+// 网关按额度分区限定每个模型能花哪部分钱包余额（gift = 赠送额度，paid = 充值额度）。
+// 声明只存在于平台目录派生的自定义供应商行上——内置供应商用的是用户自有厂商 key，
+// 与平台钱包无关，故一律「没标注」。
+// ---------------------------------------------------------------------------
+
+/**
+ * 查该 `provider/model` 的额度分区声明。
+ *
+ * 返回 null 有两个来源且语义相同：模型查不到，或目录没标注 —— 两者都不足以下结论。
+ */
+export function lookupQuotaSources(
+  fullValue: string,
+  customProviders?: CustomProviderInfo[],
+): string[] | null {
+  const slashIdx = fullValue.indexOf("/");
+  if (slashIdx === -1) return null;
+  const providerId = fullValue.slice(0, slashIdx);
+  if (!providerId.startsWith(CUSTOM_PREFIX) || !customProviders) return null;
+
+  const dbId = parseInt(providerId.slice(CUSTOM_PREFIX.length), 10);
+  const cp = customProviders.find((p) => p.id === dbId);
+  const model = cp?.models?.find((m) => m.model_id === fullValue.slice(slashIdx + 1));
+  return model?.quota_sources ?? null;
+}
+
+/**
+ * 赠送额度能否消耗该模型。判据与 matrix 前端同源，逐条对应目录的三态：
+ *   - 没有声明        → null（网关没标注，不下结论，界面不渲染标签）
+ *   - 声明为空数组    → true（未命中任何策略，网关默认放行全部分区）
+ *   - 声明含 "gift"   → true
+ */
+export function allowsGiftQuota(quotaSources: string[] | null): boolean | null {
+  if (quotaSources === null) return null;
+  if (quotaSources.length === 0) return true;
+  return quotaSources.includes("gift");
+}
+
+// ---------------------------------------------------------------------------
 // Duration constraints
 //
 // 时长并非只由 supported_durations 决定：部分模型（当前是 Veo 全系）在高分辨率或参考图

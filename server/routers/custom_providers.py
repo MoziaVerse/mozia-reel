@@ -256,6 +256,9 @@ class ModelResponse(BaseModel):
     # 正在引用该模型的全局 system_settings 键名（如 default_video_backend_i2v）；未被引用为
     # None。只查 DB 全局配置，不扫描项目文件（`docs/adr/0054`）；前端据此渲染非阻塞提示。
     global_bucket_refs: list[str] | None = None
+    # 平台声明的可消耗额度分区；三态见 CustomProviderModel.quota_sources。只读派生字段，
+    # 不在 ModelInput 里——保存模型列表时由服务端按 model_id 带过去。
+    quota_sources: list[str] | None = None
 
 
 class ProviderResponse(BaseModel):
@@ -384,6 +387,18 @@ async def _global_bucket_refs_for_provider(session: AsyncSession, provider_id: i
     return _extract_global_bucket_refs(all_settings, provider_id)
 
 
+async def _carry_over_quota_sources(repo, provider_id: int, model_dicts: list[dict]) -> None:
+    """整表重写时按 model_id 把额度分区带过去。
+
+    ``quota_sources`` 是平台目录的派生事实而非用户配置，因此不进 ``ModelInput``：
+    客户端既不该有机会改它，也不该因为漏传就把它清空。而保存模型列表走的是删表重插，
+    服务端不接上的话，用户每保存一次设置页，gift/paid 标签就掉一次。
+    """
+    existing = {m.model_id: m.quota_sources for m in await repo.list_models(provider_id)}
+    for d in model_dicts:
+        d["quota_sources"] = existing.get(d["model_id"])
+
+
 def _model_to_response(m, global_bucket_refs: list[str] | None = None) -> ModelResponse:
     durations = json.loads(m.supported_durations) if m.supported_durations else None
     return ModelResponse(
@@ -402,6 +417,7 @@ def _model_to_response(m, global_bucket_refs: list[str] | None = None) -> ModelR
         supported_durations=durations,
         resolution=m.resolution,
         global_bucket_refs=global_bucket_refs or None,
+        quota_sources=m.quota_sources,
     )
 
 
@@ -790,6 +806,7 @@ async def full_update_provider(
     if provider is None:
         raise HTTPException(status_code=404, detail=_t("provider_not_found"))
     model_dicts = [m.to_db_dict() for m in body.models]
+    await _carry_over_quota_sources(repo, provider_id, model_dicts)
     await repo.replace_models(provider_id, model_dicts)
     await session.commit()
     await _invalidate_caches(request)
@@ -853,6 +870,7 @@ async def replace_models(
     deleted_model_ids = old_model_ids - new_model_ids
 
     model_dicts = [m.to_db_dict() for m in body.models]
+    await _carry_over_quota_sources(repo, provider_id, model_dicts)
     new_models = await repo.replace_models(provider_id, model_dicts)
 
     # 清理引用已删除模型的全局配置

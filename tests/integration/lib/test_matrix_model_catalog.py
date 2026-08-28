@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from lib.matrix_session import catalog_to_models
+from lib.matrix_session import allows_gift_quota, catalog_to_models, extract_quota_sources
 
 
 def _m(name, model_type, **extra):
@@ -91,6 +91,50 @@ class TestCatalogToModels:
         assert rows[0]["is_default"] is False
 
 
+class TestQuotaSources:
+    """额度分区：三态各有含义，合并任意两态都会让界面标错。"""
+
+    def test_no_access_annotation_stays_undecided(self):
+        """目录没标注时不下结论——猜一个标签比不标更糟。"""
+        assert extract_quota_sources({"model_name": "x/y"}) is None
+        assert allows_gift_quota(None) is None
+
+    def test_missing_required_sources_means_all_partitions(self):
+        """有 access 但没列 required_sources = 网关未命中策略，默认放行全部分区。"""
+        assert extract_quota_sources({"access": {"available": True}}) == []
+        assert allows_gift_quota([]) is True
+
+    def test_paid_only_model_rejects_gift(self):
+        item = {"access": {"available": False, "reason": "requires_paid_quota", "required_sources": ["paid"]}}
+        assert extract_quota_sources(item) == ["paid"]
+        assert allows_gift_quota(["paid"]) is False
+
+    def test_gift_listed_model_allows_gift(self):
+        item = {"access": {"available": False, "required_sources": ["gift", "paid"]}}
+        assert extract_quota_sources(item) == ["gift", "paid"]
+        assert allows_gift_quota(["gift", "paid"]) is True
+
+    def test_availability_does_not_decide_partition(self):
+        """available 是「此刻付不付得起」的动态状态，分区归属是模型的静态属性。"""
+        affordable = {"access": {"available": True, "required_sources": ["paid"]}}
+        broke = {"access": {"available": False, "required_sources": ["paid"]}}
+        assert extract_quota_sources(affordable) == extract_quota_sources(broke)
+
+    def test_catalog_rows_carry_the_partition(self):
+        rows = catalog_to_models(
+            [
+                _m("z-ai/glm-5.2", "chat", access={"available": True, "required_sources": ["paid"]}),
+                _m("qwen/qwen3.8-27b", "chat", access={"available": True, "required_sources": ["gift", "paid"]}),
+                _m("bare/model", "chat"),
+            ]
+        )
+        assert {r["model_id"]: r["quota_sources"] for r in rows} == {
+            "z-ai/glm-5.2": ["paid"],
+            "qwen/qwen3.8-27b": ["gift", "paid"],
+            "bare/model": None,
+        }
+
+
 # ---------------------------------------------------------------------------
 # 差异合并
 # ---------------------------------------------------------------------------
@@ -163,6 +207,18 @@ class TestSyncGatewayModels:
         await sync_gateway_models(db_session, provider_id=p.id, rows=[_row("x/y", endpoint="openai-chat")])
         m = (await repo.list_models(p.id))[0]
         assert m.endpoint == "openai-chat" and m.supported_durations is None
+
+    async def test_quota_sources_follow_the_platform(self, db_session):
+        """网关随时可以调整某型号能吃哪个分区；存量行不跟着更新，标签就停在握手那一刻。"""
+        p, repo = await _provider(db_session, [_row("x/y", quota_sources=["gift", "paid"])])
+        await sync_gateway_models(db_session, provider_id=p.id, rows=[_row("x/y", quota_sources=["paid"])])
+        assert (await repo.list_models(p.id))[0].quota_sources == ["paid"]
+
+    async def test_rows_without_the_key_clear_the_partition(self, db_session):
+        """回落路径（网关 /v1/models 发现）的行本就没有分区信息，不该留着上一次的标注。"""
+        p, repo = await _provider(db_session, [_row("x/y", quota_sources=["gift"])])
+        await sync_gateway_models(db_session, provider_id=p.id, rows=[_row("x/y")])
+        assert (await repo.list_models(p.id))[0].quota_sources is None
 
     async def test_empty_catalog_is_a_no_op(self, db_session):
         """目录拉取失败时给的是空列表，不能被当成"平台把模型全下架了"。"""

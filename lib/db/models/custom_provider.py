@@ -96,3 +96,7 @@ class CustomProviderModel(TimestampMixin, Base):
     # 跟随系统判定；写死的能力维度列表不进 schema，向新维度开放无需迁移。合成语义由
     # lib.custom_provider.capabilities 唯一承载。
     capability_overrides: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    # 平台声明的可消耗额度分区（"gift" / "paid" / ...），来自目录的 access.required_sources。
+    # 三态各有含义，不可合并：NULL = 目录没标注（不下结论）、[] = 未命中任何策略（网关默认
+    # 放行全部分区）、非空列表 = 只有列出的分区付得动。判定逻辑与 matrix 前端同源。
+    quota_sources: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)

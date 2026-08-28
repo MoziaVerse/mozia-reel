@@ -17,6 +17,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import shutil
 import tempfile
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
@@ -152,6 +153,57 @@ def segment_id_for(call_type: CallType, resource_type: str, resource_id: str) ->
     if allowed is None:
         raise ValueError(f"unknown ledger channel: {call_type!r}")
     return resource_id if resource_type in allowed else None
+
+
+def _reference_staging_dir() -> Path:
+    """压缩副本的落地目录：租户数据根下，而不是系统临时目录。
+
+    位置是功能性的，不是整洁癖：H3 这类只收公网 URL 的后端要把参考图签成本站直链，
+    而签名只认数据根内的文件（见 ``lib.signed_media_url``）。副本落在 ``/tmp`` 时
+    整条链路会在出链那一步失败，且只在素材大到需要重编码时才触发——小图透传用原路径，
+    天然在数据根内，所以症状是间歇性的。
+
+    目录本身不预建：真正写副本时由压缩层按需 mkdir，没有大素材的部署不会凭空多个空目录。
+    """
+    from lib.app_data_dir import app_data_dir
+
+    staging = app_data_dir() / ".refcomp"
+    _sweep_stale_staging(staging)
+    return staging
+
+
+# 残骸清扫阈值。正常路径由压缩层的 finally 当场清干净，留下来的只可能是进程被杀
+# （OOM / 重启 / 部署）那一刻的残骸。取值要大于最慢一次生成——H3 轮询上限约 90 分钟，
+# 副本在整个轮询期间都必须活着，扫早了等于把正在用的参考图删掉。
+_STAGING_TTL_SECONDS = 6 * 3600
+
+
+def _sweep_stale_staging(staging: Path) -> None:
+    """清掉上次进程没来得及删的副本目录。
+
+    换到数据根之后这件事才成为必需：``/tmp`` 由系统与容器重启兜底，数据卷不会——
+    不扫的话每次崩溃都在用户的存储里留一份，只增不减。
+
+    清扫失败一律忽略：这是清理，不是功能，不该让一次生成因为删不掉旧目录而失败。
+    """
+    import time
+
+    cutoff = time.time() - _STAGING_TTL_SECONDS
+    try:
+        if not staging.is_dir():
+            return
+        # iterdir() 自己也会抛（目录被并发删掉、权限变更），要一起兜住——
+        # 只包住循环体的话，列目录失败仍会把异常冒泡到生成链路上。
+        children = list(staging.iterdir())
+    except OSError:
+        logger.debug("清扫参考副本残骸：列目录失败 %s", staging, exc_info=True)
+        return
+    for child in children:
+        try:
+            if child.is_dir() and child.stat().st_mtime < cutoff:
+                shutil.rmtree(child, ignore_errors=True)
+        except OSError:
+            logger.debug("清扫参考副本残骸失败: %s", child, exc_info=True)
 
 
 class MediaGenerator:
@@ -458,7 +510,9 @@ class MediaGenerator:
             # （心跳 / SSE / 另一并发通道）。手动驱动上下文管理器：__enter__（含压缩）走线程，
             # __exit__（清理临时目录，轻量）留在循环里。预检 floor 在 __enter__ 内抛出，此时
             # 尚未进入 try，临时目录也未创建（select_ladder_step 先于写盘），无需清理、直接冒泡。
-            cm = compressed_reference_payload(specs, limits=limits, start_step=step)
+            cm = compressed_reference_payload(
+                specs, limits=limits, start_step=step, temp_parent=_reference_staging_dir()
+            )
             landed, compressed = await asyncio.to_thread(cm.__enter__)
             try:
                 return await _call_once(compressed)

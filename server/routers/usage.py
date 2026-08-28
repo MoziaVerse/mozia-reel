@@ -2,17 +2,58 @@
 API 调用统计路由
 
 提供调用记录查询和统计摘要接口。
+
+费用一律以**积分**呈现，且只呈现平台账务的实扣数字（见
+``server.services.usage_reconciliation``）。本地账本的 ``cost_amount`` 仍然照写，
+但它是估算，不进对外的费用字段——对不上的行如实标 ``unknown``。
 """
 
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Query
 
 from lib.db import async_session_factory
 from lib.db.repositories.usage_repo import UsageRepository
+from lib.matrix_session import get_wallet_token
 from lib.providers import CallType
+from server.services.usage_reconciliation import ReconciledCost, reconcile_rows
 
 router = APIRouter()
+
+# 统计口径下参与对账的最多行数。总额要精确就得把每一行都对上，但也不能为了一个
+# 汇总数字把整张表拉进内存；超出部分计入 ``unsettled_count``，前端据此如实提示。
+_STATS_RECONCILE_LIMIT = 500
+
+
+async def _settle(rows: list[dict[str, Any]], token: str | None) -> dict[int, ReconciledCost] | None:
+    """对账结果；本部署没有平台账本时返回 None（不是空 dict）。
+
+    两者必须分开：空 dict 是「对过了，一条都没对上」，None 是「这个部署压根没有平台
+    账本可对」。自建供应商部署下本地估算是**唯一**可得的口径，也确实按用户自己配的
+    价目表算，把它换成一列「未知」是纯粹的倒退——那种部署继续走原有的货币展示。
+
+    token 由调用方在 DB session 内取好后传进来：取数要外呼平台，不该把 DB 连接
+    一起占着等网络。
+    """
+    if not token:
+        return None
+    return await reconcile_rows(rows, wallet_token=token)
+
+
+def _attach_costs(rows: list[dict[str, Any]], settled: dict[int, ReconciledCost] | None) -> list[dict[str, Any]]:
+    """把对账结果贴回每一行。
+
+    ``credits=None`` 与 ``credits=0`` 是两回事：前者是「不知道花了多少」，后者是
+    「确实没花钱」（失败请求平台记 0）。前端据此分别渲染，不能合并。
+    """
+    if settled is None:
+        return rows
+    for row in rows:
+        cost = settled.get(row.get("id"))  # pyright: ignore[reportArgumentType]
+        row["credits"] = None if cost is None else cost.credits
+        row["credits_source"] = "unknown" if cost is None else cost.source
+    return rows
 
 
 @router.get("/usage/stats")
@@ -29,19 +70,36 @@ async def get_stats(
     async with async_session_factory() as session:
         repo = UsageRepository(session)
         if group_by == "provider":
-            stats = await repo.get_stats_grouped_by_provider(
+            return await repo.get_stats_grouped_by_provider(
                 project_name=project_name,
                 provider=provider,
                 start_date=start,
                 end_date=end,
             )
-        else:
-            stats = await repo.get_stats(
-                project_name=project_name,
-                provider=provider,
-                start_date=start,
-                end_date=end,
-            )
+        stats = await repo.get_stats(
+            project_name=project_name,
+            provider=provider,
+            start_date=start,
+            end_date=end,
+        )
+        page = await repo.get_calls(
+            project_name=project_name,
+            start_date=start,
+            end_date=end,
+            page=1,
+            page_size=_STATS_RECONCILE_LIMIT,
+        )
+        rows: list[dict[str, Any]] = page["items"]
+        token = await get_wallet_token(session)
+    # 对账要外呼平台，放到 session 块外做：几秒的网络往返不该一直占着 DB 连接。
+    settled = await _settle(rows, token)
+
+    if settled is None:
+        return stats
+    known = [cost for cost in settled.values() if cost.credits is not None]
+    stats["total_credits"] = round(sum(cost.credits or 0.0 for cost in known), 4)
+    # 没对上的行数：总额少算了多少笔，用户有权知道，不能让一个偏小的合计冒充全部。
+    stats["unsettled_count"] = max(int(stats.get("total_count") or 0) - len(known), 0)
     return stats
 
 
@@ -59,7 +117,8 @@ async def get_calls(
     end = datetime.fromisoformat(end_date) if end_date else None
 
     async with async_session_factory() as session:
-        result = await UsageRepository(session).get_calls(
+        repo = UsageRepository(session)
+        result = await repo.get_calls(
             project_name=project_name,
             call_type=call_type,
             status=status,
@@ -68,6 +127,18 @@ async def get_calls(
             page=page,
             page_size=page_size,
         )
+        # 对账要连智能体在本页之外的相邻轮次一起看：轮次窗口以「上一轮结束」为起点，
+        # 只拿本页会让本页最早那一轮的起点退到兜底回溯上限，把上一轮的开销吞进来。
+        context = await repo.get_calls(
+            project_name=project_name,
+            start_date=start,
+            end_date=end,
+            page=1,
+            page_size=min(page * page_size + page_size, _STATS_RECONCILE_LIMIT),
+        )
+        token = await get_wallet_token(session)
+    settled = await _settle(context["items"], token)
+    result["items"] = _attach_costs(result["items"], settled)
     return result
 
 

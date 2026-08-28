@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 
 import { API } from "@/api";
 import { ModelCombobox } from "@/components/ui/ModelCombobox";
+import { QuotaSourceBadge } from "@/components/shared/QuotaSourceBadge";
 import { SectionShell } from "@/components/ui/SectionShell";
 import { ACCENT_BTN_CLS, ACCENT_BUTTON_STYLE } from "@/components/ui/darkroom-tokens";
 import { useAppStore } from "@/stores/app-store";
@@ -56,10 +57,35 @@ export function AgentModelRouting({ overview }: { overview: MatrixOverview }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // 候选只列文本模型：Agent SDK 走的是对话协议，把图像/视频模型混进来选中即失败。
-  const options = useMemo(
-    () => (overview.models ?? []).filter((m) => m.media_type === "text").map((m) => m.model_id),
-    [overview.models],
+  // 候选先收窄到文本模型（Agent 走对话协议，图像/视频模型选中即失败），再收窄到
+  // 服务端标了 agent_ready 的那些——工具调用链打不通的模型列出来只会让人选中即坏。
+  //
+  // 两条兜底不能省：
+  //   1) 已保存的值即使不在名单里也留在候选中，否则用户看到的是「我配的模型不见了」，
+  //      而下拉又不显示当前值，等于逼他改一个自己没打算改的设置；
+  //   2) 名单与本租户目录的交集为空时不过滤——空下拉让人一个都选不了，
+  //      比让他选到未验证的模型更糟。
+  const options = useMemo(() => {
+    const textModels = (overview.models ?? []).filter((m) => m.media_type === "text");
+    const ready = textModels.filter((m) => m.agent_ready).map((m) => m.model_id);
+    if (ready.length === 0) return textModels.map((m) => m.model_id);
+    const savedValues = Object.values(draft ?? {}).filter((v): v is string => !!v);
+    return Array.from(new Set([...ready, ...savedValues]));
+  }, [overview.models, draft]);
+
+  const quotaByModel = useMemo(() => {
+    const map = new Map<string, string[] | null>();
+    for (const m of overview.models ?? []) map.set(m.model_id, m.quota_sources ?? null);
+    return map;
+  }, [overview.models]);
+
+  const renderBadge = useCallback(
+    (option: string) => {
+      const sources = quotaByModel.get(option);
+      if (sources === undefined || sources === null) return null;
+      return <QuotaSourceBadge quotaSources={sources} />;
+    },
+    [quotaByModel],
   );
 
   const load = useCallback(async () => {
@@ -137,6 +163,7 @@ export function AgentModelRouting({ overview }: { overview: MatrixOverview }) {
             value={draft.model}
             onChange={(v) => setDraft((p) => (p ? { ...p, model: v } : p))}
             options={options}
+            renderOptionBadge={renderBadge}
             aria-label={t("dashboard:agent_tier_default")}
             clearable
           />
@@ -156,6 +183,7 @@ export function AgentModelRouting({ overview }: { overview: MatrixOverview }) {
               value={draft[key]}
               onChange={(v) => setDraft((p) => (p ? { ...p, [key]: v } : p))}
               options={options}
+              renderOptionBadge={renderBadge}
               placeholder={t("dashboard:agent_tier_inherit")}
               aria-label={t(`dashboard:${labelKey}`)}
               clearable

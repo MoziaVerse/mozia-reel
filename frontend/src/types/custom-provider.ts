@@ -57,6 +57,9 @@ export interface CustomProviderModelInfo {
   capability_overrides: CapabilityOverrides | null;
   /** 正在引用该模型的全局 system_settings 键名（如 default_video_backend_i2v）；未被引用为 null。 */
   global_bucket_refs: string[] | null;
+  /** 平台声明的可消耗额度分区。三态：null = 目录没标注（不下结论）、[] = 未命中策略
+   *  （网关默认放行全部分区）、非空数组 = 只有列出的分区付得动。判定走 allowsGiftQuota。 */
+  quota_sources: string[] | null;
 }
 
 /** 后端接受参考音频的运输形态；none 表示该模型没有音色输入通道。 */

@@ -111,6 +111,8 @@ export interface LayeredModelFieldsProps {
    * 否则一个下拉的路径会被当成全部下拉的路径。
    */
   renderOptionMeta?: (fullValue: string, subFieldKey?: string) => React.ReactNode;
+  /** 模型名右侧徽标（额度分区等）；两层下拉共用同一个渲染器，与生成路径无关，故不按细分项分流。 */
+  renderOptionBadge?: (fullValue: string) => React.ReactNode;
   /** 默认层下拉与折叠区之间的附加内容（模型规格条、分辨率、时长等）。 */
   children?: React.ReactNode;
   /** 细分项；省略或空数组即不渲染折叠区（创建向导只暴露默认层）。 */
@@ -143,6 +145,7 @@ export function LayeredModelFields({
   defaultEffective,
   providerNames,
   renderOptionMeta,
+  renderOptionBadge,
   children,
   subFields,
   subFieldsError,
@@ -181,6 +184,7 @@ export function LayeredModelFields({
         fallbackValue={defaultEffective}
         aria-label={defaultLabel}
         renderOptionMeta={renderOptionMeta}
+        renderOptionBadge={renderOptionBadge}
       />
 
       {children}
@@ -234,6 +238,7 @@ export function LayeredModelFields({
                   renderOptionMeta={
                     renderOptionMeta && ((fullValue: string) => renderOptionMeta(fullValue, field.key))
                   }
+                  renderOptionBadge={renderOptionBadge}
                 />
                 <p className="mt-1.5 text-[11px] leading-[1.5] text-text-4">{field.caption}</p>
               </div>

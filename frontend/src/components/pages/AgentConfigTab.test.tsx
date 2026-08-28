@@ -120,12 +120,13 @@ describe("AgentConfigTab — credentials directory", () => {
     expect(btn).toBeInTheDocument();
   });
 
-  it("offers embedded and external agent paths from the page intro", async () => {
+  it("offers the external agent guide from the page intro", async () => {
+    // 本发行版的页头是单块介绍（不露出底层供应商），外部接入作为其中一个入口，
+    // 而不是上游那种「内嵌 / 外部」并列双卡片。
     setupBaseMocks();
     render(<AgentConfigTab visible />);
 
-    expect(await screen.findByText("内嵌智能体")).toBeInTheDocument();
-    expect(screen.getByText("外部 agent")).toBeInTheDocument();
+    expect(await screen.findByText("Agent Runtime")).toBeInTheDocument();
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "外部智能体接入" }));

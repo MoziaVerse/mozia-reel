@@ -175,7 +175,7 @@ describe("SystemConfigPage", () => {
     // so land on agent to assert it.
     renderPage("/app/settings?section=agent");
 
-    await screen.findByText("内嵌智能体");
+    await screen.findByText("Agent Runtime");
 
     expect(screen.queryByText("当前配置存在以下问题，可能会影响部分功能：")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("配置未完成")).not.toBeInTheDocument();

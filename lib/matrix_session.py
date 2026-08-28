@@ -271,6 +271,32 @@ async def fetch_model_catalog(token: str) -> list[dict] | None:
     return models if isinstance(models, list) else None
 
 
+def extract_quota_sources(item: dict) -> list[str] | None:
+    """目录条目 → 可消耗额度分区列表。三态与 ``CustomProviderModel.quota_sources`` 同义。
+
+    与 matrix 前端的 ``allowsGiftQuota`` 判据同源：没有 ``access`` 就不下结论（None），
+    有 ``access`` 但没列 ``required_sources`` 等于网关未命中策略、默认放行全部分区（[]）。
+    ``access.available`` 不参与——它是「此刻这个钱包付不付得起」的动态状态，
+    分区归属才是模型的静态属性（同 ``is_enabled`` 那段注释的取舍）。
+    """
+    access = item.get("access")
+    if not isinstance(access, dict):
+        return None
+    required = access.get("required_sources")
+    if not isinstance(required, list):
+        return []
+    return [str(source) for source in required if isinstance(source, str)]
+
+
+def allows_gift_quota(quota_sources: list[str] | None) -> bool | None:
+    """赠送额度能否消耗该模型；None = 目录没标注，不下结论。"""
+    if quota_sources is None:
+        return None
+    if not quota_sources:
+        return True
+    return "gift" in quota_sources
+
+
 def catalog_to_models(catalog: list[dict]) -> list[dict]:
     """平台目录 → 本地模型行。不认识或用不上的类目直接不收。"""
     from lib.custom_provider.duration_presets import infer_supported_durations
@@ -313,6 +339,7 @@ def catalog_to_models(catalog: list[dict]) -> list[dict]:
                 # 才是真下架。付不起不该在选择阶段拦，让它在生成时按网关的
                 # requires_paid_quota 失败——那里有明确原因，这里没有。
                 "is_enabled": True,
+                "quota_sources": extract_quota_sources(item),
             }
         )
     for model_type, names in sorted(skipped.items()):
@@ -368,6 +395,13 @@ async def sync_gateway_models(session, *, provider_id: int, rows: list[dict]) ->
         if not current.is_enabled and row["is_enabled"]:
             # 之前因下架被禁用、现在又上架了：恢复
             current.is_enabled = True
+            changed = True
+        # 额度分区跟平台走：网关随时可以调整某型号能吃哪个钱包分区，存量行不跟着更新，
+        # 界面上的 gift/paid 标签就会停在握手那一刻。用 get 取值——回落路径
+        # （``_discover_gateway_models``）的行不带这个键，那种来源本就没有分区信息。
+        incoming_quota = row.get("quota_sources")
+        if current.quota_sources != incoming_quota:
+            current.quota_sources = incoming_quota
             changed = True
         updated += 1 if changed else 0
 
@@ -442,22 +476,26 @@ _DEFAULT_BACKEND_KEYS = {
 # 表里的模型不存在时自动跳过，不会因为它下架而让 seed 失败。
 _PREFERRED_DEFAULT_MODELS: dict[str, tuple[str, ...]] = {
     "image": ("mozia/image-2",),
-    # 文本这条排序同时受两个约束，缺一个都会给新用户一个开箱不可用的默认值：
+    # 文本这条排序同时受三个约束，缺一个都会给新用户一个开箱不可用的默认值：
     #
     # 1) 死锁：GLM-4.7 在 Agent 的多层子任务嵌套下会**静默死锁**——不报错、
     #    不超时，就是没有输出。它绝不能进这张表；而按字典序挑恰好挑中它。
-    # 2) 赠送额度：网关按模型限定可消耗的钱包分区，只有少数模型允许 gift。
-    #    新用户手里通常只有赠送额度，默认值若落在 paid-only 的模型上，等于
-    #    开箱就欠费。前两项是网关上显式配了 gift 的文本模型，排在最前。
+    #    （它在单轮工具调用上是正常的，别拿浅层验证的通过率把它放回来。）
+    # 2) 工具调用链：只收 ``AGENT_MODEL_ALLOWLIST`` 里的型号，判据见那边。
+    # 3) 赠送额度：网关按模型限定可消耗的钱包分区，只有少数模型允许 gift。
+    #    新用户手里通常只有赠送额度，默认值落在 paid-only 上等于开箱就欠费。
     #
-    # 后三项是 paid-only 的兜底：赠送额度用完或平台撤掉 gift 授权时仍能跑。
+    # ⚠️ 当前这张表**一个 gift 档都没有**，不是排序没做好，是三条约束交集为空：
+    # 网关上允许 gift 的文本模型只有 qwen 那几个和 GLM-4.7，前者卡在 messages 里的
+    # system 消息上（见 ``AGENT_MODEL_ALLOWLIST``）、后者卡在死锁上。也就是说托管态
+    # 下只有赠送额度的新用户，智能体开箱即欠费。解法在网关侧——把 messages 里的
+    # system 并入首条 system，qwen 三档就能回来。在那之前这里只能全 paid 兜底。
     # ⚠️ gift 授权同样会漂移，改动前先核对网关的 mozia_model_quota_policies。
     "text": (
-        "qwen/qwen3.8-27b",
-        "qwen/qwen3.6-35b-a3b",
         "z-ai/glm-5.2",
         "z-ai/glm-5.1",
         "deepseek/deepseek-v4-pro",
+        "qwen/qwen3.6-plus",
     ),
     # 视频只挑 H3，与画布（ZeoCanvasLite）同口径——那边实测下来也是只用 H3 出片。
     #
@@ -483,6 +521,50 @@ _PREFERRED_DEFAULT_MODELS: dict[str, tuple[str, ...]] = {
 def preferred_model(media: str, available: set[str]) -> str | None:
     """按偏好挑一个存在的模型；都不在就返回 None，由调用方回落。"""
     return next((m for m in _PREFERRED_DEFAULT_MODELS.get(media, ()) if m in available), None)
+
+
+# Agent 能跑通的文本模型白名单。判据只有一条：拿真实 CLI（不是手写的等价请求）
+# 跑一轮带工具的对话能不能出结果——Agent 跑的是 Claude Code harness，链断了表现成
+# 「发一句话就报错」或「点了没反应」，而不是回答质量差。
+#
+# ⚠️ 判据必须用真实 CLI 跑。手写一个「形状相同」的 HTTP 请求验不出下面这条：
+# CLI 在带工具的请求里会往 messages 塞一条 role="system" 的消息（内容是它自己
+# 生成的可用 agent 类型清单，Anthropic 的 messages 规范里本没有这个角色），
+# 网关原样透传给上游，而 dashscope 系强制 system 只能在首位，直接 400。
+#
+# 落在名单外的，各有各的坏法，都不该出现在智能体的模型下拉里：
+#   - qwen/qwen3.5-397b-a17b · qwen/qwen3.8-27b · qwen/qwen3.6-35b-a3b：
+#     即上面那条，`System message must be at the beginning`，一轮都跑不完。
+#     同族的 qwen3.6-plus 不在此列——它走的上游渠道不校验 system 位置。
+#     这条是网关侧的转换缺陷（messages 里的 system 该并入首条 system 而非透传），
+#     网关修好后这三个可以放回来，届时 gift 档才重新有得选。
+#   - GLM-4.7：单轮工具调用正常，但在多层子任务嵌套下**静默死锁**（见
+#     ``_PREFERRED_DEFAULT_MODELS`` 的注释），浅层验证看不出来
+#   - 其余非对话类目：Agent SDK 走对话协议，选中即失败
+#
+# ⚠️ 一次性的上游抖动不算判据。kimi-k3 / kimi-k2.6 / deepseek-v4-flash 曾因
+# `upstream error: do request failed` 被划掉，换真实 CLI 复验时三个都跑得通——
+# 那是当时的上游故障，不是模型的固有缺陷。排除一个型号前先确认错误可复现。
+#
+# ⚠️ 平台上架/下架与上游可用性都会漂移，本名单不是长期真相。增删条目前先按
+# 上面那条判据实跑，不要按参数量或价格猜。
+AGENT_MODEL_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "qwen/qwen3.6-plus",
+        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-flash",
+        "moonshotai/kimi-k3",
+        "moonshotai/kimi-k2.6",
+        "z-ai/glm-5",
+        "z-ai/glm-5.1",
+        "z-ai/glm-5.2",
+    }
+)
+
+
+def agent_model_ready(model_id: str) -> bool:
+    """该模型能否承载 Agent 的工具调用链。"""
+    return model_id in AGENT_MODEL_ALLOWLIST
 
 
 async def backfill_video_durations(session, *, provider_id: int) -> int:

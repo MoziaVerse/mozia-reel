@@ -22,6 +22,8 @@ export interface ModelComboboxProps {
   /** 显示清除按钮（在 value 非空时）。aria-label 通过 clearAriaLabel 提供。 */
   clearable?: boolean;
   clearAriaLabel?: string;
+  /** 选项名右侧的徽标（如额度分区）。返回 null 即不渲染。 */
+  renderOptionBadge?: (option: string) => React.ReactNode;
 }
 
 export function ModelCombobox({
@@ -35,6 +37,7 @@ export function ModelCombobox({
   "aria-label": ariaLabel,
   clearable,
   clearAriaLabel,
+  renderOptionBadge,
 }: ModelComboboxProps) {
   const { t } = useTranslation("dashboard");
   const [query, setQuery] = useState("");
@@ -111,7 +114,10 @@ export function ModelCombobox({
                 value={option}
                 className="cursor-pointer select-none px-3 py-2 text-[12.5px] text-text-2 data-[focus]:bg-accent-dim data-[focus]:text-text"
               >
-                {option}
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate">{option}</span>
+                  {renderOptionBadge?.(option)}
+                </span>
               </ComboboxOption>
             ))}
           </ComboboxOptions>

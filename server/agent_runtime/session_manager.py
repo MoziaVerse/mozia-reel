@@ -1174,6 +1174,31 @@ class SessionManager:
                 msg_dict,
                 interrupt_requested=managed.interrupt_requested,
             )
+            return
+        self._log_api_retry(managed, msg_dict)
+
+    @staticmethod
+    def _log_api_retry(managed: ManagedSession, msg_dict: dict[str, Any]) -> None:
+        """把 CLI 的上游重试记进日志。
+
+        CLI 对 5xx 按可重试错误处理，退避重试十次要花好几分钟，期间外部完全静默——
+        会话看上去只是「很慢」。而 5xx 未必真是上游故障：网关把余额不足一类的业务
+        错误也回成 500，不记下来就无从分辨「等等就好」和「充值才好」。
+        """
+        data = msg_dict.get("data")
+        payload = data if isinstance(data, dict) else msg_dict
+        if payload.get("subtype") != "api_retry":
+            return
+        logger.warning(
+            "assistant upstream api retry",
+            extra={
+                "session_id": managed.session_id,
+                "attempt": payload.get("attempt"),
+                "max_retries": payload.get("max_retries"),
+                "error_status": payload.get("error_status"),
+                "error": payload.get("error"),
+            },
+        )
 
     def _drain_pending_user_echoes(self, managed: ManagedSession, reason: str) -> None:
         """清空回显登记队列；轮次终结时仍有残留即认领失败，记一条告警。
@@ -1663,15 +1688,25 @@ class SessionManager:
 
     @staticmethod
     def _extract_sdk_session_id(message: Any, msg_dict: dict[str, Any]) -> str | None:
-        """Extract SDK session id from either serialized payload or raw object."""
-        sdk_id = None
-        if isinstance(msg_dict, dict):
-            sdk_id = msg_dict.get("session_id") or msg_dict.get("sessionId")
-        if sdk_id:
-            return str(sdk_id)
-        raw_sdk_id = getattr(message, "session_id", None) or getattr(message, "sessionId", None)
-        if raw_sdk_id:
-            return str(raw_sdk_id)
+        """Extract SDK session id from either serialized payload or raw object.
+
+        必须连 ``data`` 一层一起找：会话最早、也最确定携带 id 的是 ``system/init``，
+        而 SDK 把无专属类型的 system 消息统一收敛成 ``SystemMessage(subtype, data)``，
+        id 只留在 ``data`` 里，顶层与属性上都取不到。只认顶层的话，新会话要等到第一条
+        assistant 消息才认领得到 id——模型正常时它几秒就来，掩盖了这条缺口；一旦上游
+        持续报错（如网关把余额不足回成 500，CLI 按可重试错误退避重试十次），整个等待
+        窗口内一条带顶层 id 的消息都不会有，于是明明已连上的会话被判成「SDK 会话创建
+        超时」，真实原因彻底不可见。
+        """
+        for candidate in (msg_dict, msg_dict.get("data")):
+            if isinstance(candidate, dict):
+                sdk_id = candidate.get("session_id") or candidate.get("sessionId")
+                if sdk_id:
+                    return str(sdk_id)
+        for source in (message, getattr(message, "data", None)):
+            raw_sdk_id = getattr(source, "session_id", None) or getattr(source, "sessionId", None)
+            if raw_sdk_id:
+                return str(raw_sdk_id)
         return None
 
     def get_draft_state(self, session_id: str) -> dict[str, Any]:

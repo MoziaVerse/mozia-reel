@@ -219,6 +219,9 @@ complete corresponding source code of this modified version.
   有一个合并节点（`0a4b49210d55`，把上游链与 matrix 链并起来），走查改为按
   `alembic_version` 的实际状态推进。用合并节点而非把本分支重接到上游 head：已部署的库
   停在本分支 head，重接后上游那一支会落在"当前版本之下"被静默跳过
+- 页头 `AgentPageIntro` 保留本发行版的单块形态（不露出底层供应商，见第 6 节），
+  上游改成的「内嵌 / 外部」并列双卡片不采纳；上游新增的外部接入指引作为可选入口
+  挂在页头里，托管态不传该回调即不渲染。上游两条断言双卡片的用例随之改为断言本形态
 - 新增 `lib/matrix_base.py` —— 零依赖地存放 `GATEWAY_PROVIDER_DISPLAY_NAME` 与
   `session_signing_secret()`。此前低层模块只为这两样就 import 整个 `lib.matrix_session`，
   把 `lib.custom_provider` 拖进 `lib.video_backends`，撞上游的 import 分层契约

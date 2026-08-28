@@ -288,3 +288,82 @@ class TestSessionManagerSdkSessionId:
         meta = await meta_store.get(sdk_session_id)
         assert meta is not None
         assert meta.project_name == "demo"
+
+
+class TestExtractFromInitMessage:
+    """``system/init`` 是会话最早、也最确定携带 id 的一条，必须认得出来。
+
+    SDK 把没有专属类型的 system 消息统一收敛成 ``SystemMessage(subtype, data)``，
+    id 只在 ``data`` 里；只认顶层的话新会话得等第一条 assistant 消息才认领得到 id。
+    模型正常时那几秒掩盖了缺口，上游持续报错时（网关把余额不足回成 500、CLI 按可
+    重试错误退避十次）整个等待窗口内没有任何一条带顶层 id 的消息，已经连上的会话
+    被判成「SDK 会话创建超时」。
+    """
+
+    def _extract(self, message, msg_dict):
+        from server.agent_runtime.session_manager import SessionManager
+
+        return SessionManager._extract_sdk_session_id(message, msg_dict)
+
+    def test_reads_id_nested_under_data(self):
+        from claude_agent_sdk.types import SystemMessage
+
+        from server.agent_runtime.message_serialization import message_to_dict
+
+        msg = SystemMessage(subtype="init", data={"subtype": "init", "session_id": "sdk-init-1"})
+        msg_dict = message_to_dict(msg)
+        assert msg_dict.get("session_id") is None, "前提：init 的 id 不在顶层"
+        assert self._extract(msg, msg_dict) == "sdk-init-1"
+
+    def test_api_retry_also_yields_the_id(self):
+        """上游连续 5xx 时，重试通告是这段窗口里唯一还在流动的消息。"""
+        from claude_agent_sdk.types import SystemMessage
+
+        from server.agent_runtime.message_serialization import message_to_dict
+
+        msg = SystemMessage(
+            subtype="api_retry",
+            data={"subtype": "api_retry", "attempt": 3, "error_status": 500, "session_id": "sdk-retry-1"},
+        )
+        assert self._extract(msg, message_to_dict(msg)) == "sdk-retry-1"
+
+    def test_top_level_still_wins(self):
+        """带顶层 id 的消息（assistant / result / hook）行为不变。"""
+        assert self._extract(None, {"session_id": "top", "data": {"session_id": "nested"}}) == "top"
+
+    def test_absent_everywhere_stays_none(self):
+        assert self._extract(None, {"subtype": "init", "data": {"cwd": "/x"}}) is None
+
+
+class TestApiRetryIsLogged:
+    """CLI 对 5xx 退避重试十次要几分钟，期间完全静默——不记下来就分不清
+    「等等就好」和「充值才好」（网关把余额不足也回成 500）。"""
+
+    def test_retry_notice_is_logged(self, caplog):
+        import logging
+
+        from server.agent_runtime.session_manager import SessionManager
+
+        managed = _make_managed()
+        with caplog.at_level(logging.WARNING, logger="server.agent_runtime.session_manager"):
+            SessionManager._log_api_retry(
+                managed,
+                {
+                    "type": "system",
+                    "subtype": "api_retry",
+                    "data": {"subtype": "api_retry", "attempt": 4, "max_retries": 10, "error_status": 500},
+                },
+            )
+        record = next(r for r in caplog.records if r.message == "assistant upstream api retry")
+        assert record.error_status == 500
+        assert record.attempt == 4
+
+    def test_ordinary_messages_are_not_logged(self, caplog):
+        import logging
+
+        from server.agent_runtime.session_manager import SessionManager
+
+        managed = _make_managed()
+        with caplog.at_level(logging.WARNING, logger="server.agent_runtime.session_manager"):
+            SessionManager._log_api_retry(managed, {"type": "system", "subtype": "init", "data": {}})
+        assert not [r for r in caplog.records if r.message == "assistant upstream api retry"]

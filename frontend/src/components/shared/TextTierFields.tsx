@@ -30,6 +30,8 @@ export interface TextTierFieldsProps {
   fallbacks?: Partial<TextTierValue>;
   /** 省略即只渲染默认档——创建向导只暴露默认层（docs/adr/0054）。 */
   showTiers?: boolean;
+  /** 模型名右侧徽标（额度分区等），原样透传给底层下拉。 */
+  renderOptionBadge?: (fullValue: string) => React.ReactNode;
 }
 
 /**
@@ -46,6 +48,7 @@ export function TextTierFields({
   defaultHint,
   fallbacks,
   showTiers = true,
+  renderOptionBadge,
 }: TextTierFieldsProps) {
   const { t } = useTranslation("templates");
 
@@ -69,6 +72,7 @@ export function TextTierFields({
       emptyHint={defaultHint}
       defaultEffective={fallbacks?.default || undefined}
       providerNames={providerNames}
+      renderOptionBadge={renderOptionBadge}
       subFields={showTiers ? subFields : undefined}
       footnote={
         <p className="border-t border-hairline-soft pt-3 text-[11px] leading-[1.5] text-text-4">
