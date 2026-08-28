@@ -445,6 +445,8 @@ describe("stores", () => {
           usage_tokens: null,
           input_tokens: null,
           output_tokens: null,
+          credits: 12.5,
+          credits_source: "exact" as const,
         },
       ],
       1,

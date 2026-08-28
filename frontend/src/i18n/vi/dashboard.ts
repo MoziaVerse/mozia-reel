@@ -1104,6 +1104,11 @@ export default {
   // UsageDrawer
   'cost_details': 'Chi tiết chi phí',
   'total_cost': 'Tổng chi phí',
+  'credits_unit': 'điểm',
+  'credits_unsettled': '{{n}} mục chưa đối soát',
+  'credits_source_exact': 'Khớp với bản ghi cổng theo request ID',
+  'credits_source_aggregated': 'Gộp theo lượt trợ lý — tổng các khoản trong khoảng đó, không phải một yêu cầu đơn lẻ',
+  'credits_source_unknown': 'Không khớp bản ghi nền tảng (dữ liệu cũ hoặc lệnh gọi không qua cổng)',
   'image_type_label': 'Ảnh',
   'video_type_label': 'Video',
   'audio_type_label': 'Âm thanh',

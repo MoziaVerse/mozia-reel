@@ -7,8 +7,15 @@ interface UsageFilters {
   status?: string;
 }
 
+/** 对账口径：credits 来自平台账务，unknown 表示对不上（不回落本地估算）。 */
+export type CreditsSource = "exact" | "aggregated" | "unknown";
+
 export interface UsageStats {
   total_cost: number;
+  /** 平台实扣积分合计。只累计对得上的行，对不上的计入 unsettled_count。 */
+  total_credits?: number;
+  /** 没能对上平台流水的记录数；> 0 时合计是不完整的，必须如实告知。 */
+  unsettled_count?: number;
   cost_by_currency: Record<string, number>;
   image_count: number;
   video_count: number;
@@ -37,6 +44,9 @@ export interface UsageCall {
   usage_tokens: number | null;
   input_tokens: number | null;
   output_tokens: number | null;
+  /** 平台实扣积分。null = 对不上；0 = 确实没扣（失败请求平台记 0），两者不可合并。 */
+  credits?: number | null;
+  credits_source?: CreditsSource;
 }
 
 interface UsageState {

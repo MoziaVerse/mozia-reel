@@ -1124,6 +1124,11 @@ export default {
   // UsageDrawer
   'cost_details': 'Cost Details',
   'total_cost': 'Total Cost',
+  'credits_unit': 'credits',
+  'credits_unsettled': '{{n}} unreconciled',
+  'credits_source_exact': 'Matched to the gateway record by request ID',
+  'credits_source_aggregated': 'Aggregated over the assistant turn — the sum of platform charges in that window, not a single request',
+  'credits_source_unknown': 'No matching platform record (historical entry or a non-gateway call)',
   'image_type_label': 'Image',
   'video_type_label': 'Video',
   'audio_type_label': 'Audio',

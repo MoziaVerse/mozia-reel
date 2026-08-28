@@ -106,3 +106,19 @@ export function totalBreakdown(byType: CostByType): CostBreakdown {
   }
   return result;
 }
+
+const creditsFormatter = new Intl.NumberFormat("en", {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
+
+/**
+ * 积分显示。费用面板统一用这个口径——平台账单以积分计价，换算成货币要引入一个
+ * 我们并不掌握的汇率，只会让两边更对不上。
+ *
+ * `null` 是「对不上平台流水」，与 0（确实没扣）不同，故返回占位符而非 "0"。
+ */
+export function formatCredits(credits: number | null | undefined): string {
+  if (credits == null || !Number.isFinite(credits)) return EMPTY_COST_PLACEHOLDER;
+  return creditsFormatter.format(credits);
+}

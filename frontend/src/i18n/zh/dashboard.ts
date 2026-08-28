@@ -1123,6 +1123,11 @@ export default {
   // UsageDrawer
   'cost_details': '费用明细',
   'total_cost': '总费用',
+  'credits_unit': '积分',
+  'credits_unsettled': '{{n}} 条未对账',
+  'credits_source_exact': '按网关请求 ID 逐笔核对',
+  'credits_source_aggregated': '智能体轮次归集：该轮次内平台新增的调用合计，非单次请求',
+  'credits_source_unknown': '未能与平台账务对上（历史记录或非网关调用）',
   'image_type_label': '图片',
   'video_type_label': '视频',
   'audio_type_label': '音频',

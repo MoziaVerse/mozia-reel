@@ -20,7 +20,7 @@ import { PhaseStepper } from "./PhaseStepper";
 import { API } from "@/api";
 import { ArchiveDiagnosticsDialog } from "@/components/shared/ArchiveDiagnosticsDialog";
 import { rememberAssetLibraryReturnTo } from "@/components/pages/AssetLibraryPage";
-import { costEntries, formatCostOrZero, formatCurrencyAmount } from "@/utils/cost-format";
+import { costEntries, formatCostOrZero, formatCredits, formatCurrencyAmount } from "@/utils/cost-format";
 import { ONBOARDING_ANCHORS } from "@/onboarding/anchors";
 import type { ExportDiagnostics, WorkspaceNotification } from "@/types";
 
@@ -102,13 +102,17 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
     void fetchConfigStatus();
   }, [fetchConfigStatus]);
 
-  // Format cost display – show multi-currency summary
-  const costByCurrency = usageStats?.cost_by_currency ?? {};
-  const nonZeroCostEntries = costEntries(costByCurrency);
-  const primaryCost = nonZeroCostEntries[0];
-  const secondaryCost = nonZeroCostEntries[1];
-  const extraCostCount = Math.max(0, nonZeroCostEntries.length - 2);
-  const costTooltip = formatCostOrZero(costByCurrency);
+  // 费用一律以积分呈现，且只取平台账务的实扣数字——本地估算与账单能差出数倍，
+  // 顶栏这个数字是用户瞥一眼就当真的地方，尤其不能拿估算糊弄。
+  // 没有平台账本的部署（自建供应商）沿用原来的货币展示，见 UsageDrawer 同处注释。
+  const settledMode = usageStats?.total_credits != null;
+  const currencyParts = costEntries(usageStats?.cost_by_currency).map(([currency, amount]) =>
+    formatCurrencyAmount(currency, amount),
+  );
+  const costSummary = settledMode
+    ? formatCredits(usageStats?.total_credits)
+    : currencyParts.join(" + ") || formatCostOrZero(undefined);
+  const costTooltip = costSummary;
 
   const handleNotificationNavigate = (notification: WorkspaceNotification) => {
     if (!notification.target) return;
@@ -299,40 +303,12 @@ export function GlobalHeader({ onNavigateBack }: GlobalHeaderProps) {
               }}
               title={t("dashboard:cost_tooltip", { cost: costTooltip })}
             >
-              {primaryCost ? (
-                <span className="num" style={{ color: "var(--color-text-4)" }}>
-                  {formatCurrencyAmount(primaryCost[0], primaryCost[1])}
-                </span>
-              ) : (
-                <span
-                  className="num font-medium"
-                  style={{ color: "var(--color-text-2)" }}
-                >
-                  {formatCostOrZero(undefined)}
-                </span>
-              )}
-              {primaryCost && secondaryCost && (
-                <span
-                  aria-hidden="true"
-                  style={{
-                    width: 2,
-                    height: 10,
-                    borderRadius: 1,
-                    background: "var(--color-hairline)",
-                  }}
-                />
-              )}
-              {secondaryCost && (
-                <span
-                  className="num font-medium"
-                  style={{ color: "var(--color-text-2)" }}
-                >
-                  {formatCurrencyAmount(secondaryCost[0], secondaryCost[1])}
-                </span>
-              )}
-              {extraCostCount > 0 && (
-                <span className="num" style={{ color: "var(--color-text-4)" }}>
-                  +{extraCostCount}
+              <span className="num font-medium" style={{ color: "var(--color-text-2)" }}>
+                {costSummary}
+              </span>
+              {settledMode && (
+                <span className="text-[9.5px]" style={{ color: "var(--color-text-4)" }}>
+                  {t("dashboard:credits_unit")}
                 </span>
               )}
             </button>

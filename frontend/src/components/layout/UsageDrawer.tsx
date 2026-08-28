@@ -15,7 +15,7 @@ import { API } from "@/api";
 import { GlassPopover } from "@/components/ui/GlassPopover";
 import { ModalCloseButton } from "@/components/ui/ModalCloseButton";
 import { formatShortDateTime } from "@/utils/date-format";
-import { costEntries, formatCostOrZero, formatCurrencyAmount } from "@/utils/cost-format";
+import { costEntries, formatCostOrZero, formatCredits, formatCurrencyAmount } from "@/utils/cost-format";
 import type { CallType } from "@/types/provider";
 
 // ---------------------------------------------------------------------------
@@ -107,6 +107,12 @@ export function UsageDrawer({ open, onClose, projectName, anchorRef }: UsageDraw
   }, [open, loadCalls]);
 
   const totalPages = Math.ceil(total / pageSize);
+  // 合计只认平台账务：本地 cost_amount 是估算，与账单能差出数倍。对不上的行不参与
+  // 累加，改由 unsettled 提示告知——一个偏小的数字冒充「全部花费」比缺个数字更糟。
+  const unsettled = stats?.unsettled_count ?? 0;
+  // 自建供应商部署没有平台账本，本地估算是唯一可得的口径（且按用户自己配的价目表算），
+  // 那种部署继续走原来的货币展示——换成一列「未知」是纯粹的倒退。
+  const settledMode = stats?.total_credits != null;
   const costParts = costEntries(stats?.cost_by_currency).map(([currency, amount]) =>
     formatCurrencyAmount(currency, amount),
   );
@@ -166,14 +172,25 @@ export function UsageDrawer({ open, onClose, projectName, anchorRef }: UsageDraw
         <StatBlock
           label={t("total_cost")}
           value={
-            costSummary.length === 1 ? (
-              costSummary[0]
+            settledMode ? (
+              <span className="flex flex-col items-center leading-tight">
+                <span>
+                  {formatCredits(stats?.total_credits)}
+                  <span className="ml-0.5 text-[9px]" style={{ color: "var(--color-text-4)" }}>
+                    {t("credits_unit")}
+                  </span>
+                </span>
+                {unsettled > 0 && (
+                  <span className="text-[9px] font-normal" style={{ color: "var(--color-text-4)" }}>
+                    {t("credits_unsettled", { n: unsettled })}
+                  </span>
+                )}
+              </span>
             ) : (
               <span className="flex flex-col items-center leading-tight">
                 {costSummary.map((part, i) => (
                   <span key={i}>
-                    {i !== 0 && <span style={{ color: "var(--color-text-4)" }}>+</span>}{" "}
-                    {part}
+                    {i !== 0 && <span style={{ color: "var(--color-text-4)" }}>+</span>} {part}
                   </span>
                 ))}
               </span>
@@ -238,6 +255,7 @@ export function UsageDrawer({ open, onClose, projectName, anchorRef }: UsageDraw
               const durationInfo = call.duration_ms
                 ? `${(call.duration_ms / 1000).toFixed(1)}s`
                 : null;
+              const settled = call.credits != null;
 
               return (
                 <li
@@ -268,20 +286,31 @@ export function UsageDrawer({ open, onClose, projectName, anchorRef }: UsageDraw
                       {filename || t(tone.label)}
                     </span>
                     <StatusBadge status={call.status} />
-                    <span
-                      className="num shrink-0 text-[11px]"
-                      style={{
-                        color:
-                          call.cost_amount > 0
-                            ? "var(--color-text)"
-                            : "var(--color-text-4)",
-                        fontWeight: call.cost_amount > 0 ? 600 : 400,
-                      }}
-                    >
-                      {formatCurrencyAmount(call.currency, call.cost_amount, {
-                        maximumFractionDigits: 6,
-                      })}
-                    </span>
+                    {settledMode ? (
+                      <span
+                        className="num shrink-0 text-[11px]"
+                        style={{
+                          color: settled ? "var(--color-text)" : "var(--color-text-4)",
+                          fontWeight: settled && (call.credits ?? 0) > 0 ? 600 : 400,
+                        }}
+                        title={t(`credits_source_${call.credits_source ?? "unknown"}`)}
+                      >
+                        {formatCredits(call.credits)}
+                        {call.credits_source === "aggregated" && (
+                          <span style={{ color: "var(--color-text-4)" }}>*</span>
+                        )}
+                      </span>
+                    ) : (
+                      <span
+                        className="num shrink-0 text-[11px]"
+                        style={{
+                          color: call.cost_amount > 0 ? "var(--color-text)" : "var(--color-text-4)",
+                          fontWeight: call.cost_amount > 0 ? 600 : 400,
+                        }}
+                      >
+                        {formatCurrencyAmount(call.currency, call.cost_amount, { maximumFractionDigits: 6 })}
+                      </span>
+                    )}
                   </div>
                   <div
                     className="mt-1 flex items-center gap-2 pl-5 text-[10px]"
