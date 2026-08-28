@@ -208,6 +208,10 @@ complete corresponding source code of this modified version.
   与 `test_list_voices_legacy_narrowing_only_applies_to_official_openai` —— 它们断言
   自定义 endpoint 保持全量音色目录，而本发行版的网关自建 TTS 对任何 preset voice 都
   返回 400（见第 5 节）
+- H3 的 `text_to_video` 按型号细分：生产网关实测只有 `ref2va` 强制要求参考素材
+  （不带图提交返回 400 `MoziaH3 ref2va task requires reference material`），
+  `t2va` / `fl2va` / `2k` 都受理纯文生。按 `minimax-h3` 前缀一刀切会把三个能纯文生的
+  型号封在提交之前
 - 调整上游 `test_endpoint_declaring_int_cap_rebuilds_capabilities` —— 本发行版把
   `openai-video` 改为按 model 读 backend caps（该 endpoint 上同时挂着 Sora 与 H3，
   参考图上限不同），endpoint 维度不再声明硬上限

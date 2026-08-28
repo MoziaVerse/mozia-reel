@@ -43,6 +43,27 @@ class TestReferenceImageCaps:
         assert caps.max_reference_images == 1
 
 
+class TestTextToVideoCapability:
+    """纯文生只对 ref2va 关闭。
+
+    取值来自生产网关实测（不带 images 提交 /v1/videos）：
+    ref2va 返回 400 ``MoziaH3 ref2va task requires reference material``，
+    t2va / fl2va 直接受理，2k 受理但要求显式 ratio。按 "minimax-h3" 前缀一刀切
+    会把三个能纯文生的型号一并封在提交之前。
+    """
+
+    @pytest.mark.parametrize("model", ["minimax/minimax-h3-t2va", "minimax/minimax-h3-fl2va", "minimax/minimax-h3-2k"])
+    def test_other_h3_models_keep_text_to_video(self, model):
+        assert OpenAIVideoBackend.video_capabilities_for_model(model).text_to_video
+
+    def test_ref2va_declares_no_text_to_video(self):
+        caps = OpenAIVideoBackend.video_capabilities_for_model("minimax/minimax-h3-ref2va")
+        assert not caps.text_to_video
+
+    def test_sora_keeps_text_to_video(self):
+        assert OpenAIVideoBackend.video_capabilities_for_model("sora-2").text_to_video
+
+
 class TestSizeResolution:
     @pytest.mark.parametrize(
         "raw,expected",

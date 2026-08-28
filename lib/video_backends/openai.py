@@ -66,6 +66,16 @@ def _is_minimax_h3(model: str) -> bool:
     return "minimax-h3" in (model or "").lower()
 
 
+def _h3_requires_reference(model: str) -> bool:
+    """该 H3 型号是否强制要求参考素材（即不支持纯文生）。
+
+    只有 ref2va 这一档如此。生产网关实测：不带图提交 ref2va 返回 400
+    ``MoziaH3 ref2va task requires reference material``，而 t2va / fl2va / 2k
+    都受理纯文生请求。按 "minimax-h3" 前缀一刀切会把三个能纯文生的型号一并封掉。
+    """
+    return _is_minimax_h3(model) and "ref2va" in (model or "").lower()
+
+
 def _video_status(video: object) -> ProviderJobStatus:
     """SDK Video 对象 → canonical 状态。
 
@@ -234,13 +244,12 @@ class OpenAIVideoBackend(ProviderJobIdPersistenceMixin):
         音轨恒有声：Sora 与 H3 的成片都自带音轨，``generate`` / ``_create_h3_video`` 组装的
         请求体里都没有音轨开关字段，用户的关闭意图无处可下发。
 
-        H3 不支持纯文生：网关要求请求至少带一项素材，不带图提交会被拒成
-        ``conditions requires at least one entry``。声明出来才能在提交前拦下，
-        否则用户要等一次必然失败的往返。
+        纯文生只对 ref2va 关闭（见 :func:`_h3_requires_reference`）：声明出来才能在提交前
+        拦下，否则用户要等一次必然失败的往返。其余 H3 型号照常支持。
         """
         if _is_minimax_h3(model):
             return VideoCapabilities(
-                text_to_video=False,
+                text_to_video=not _h3_requires_reference(model),
                 max_reference_images=9,
                 audio_track=VideoAudioMode.ALWAYS_ON,
             )
