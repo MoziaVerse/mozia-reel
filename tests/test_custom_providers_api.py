@@ -775,6 +775,58 @@ _PROVIDER_PAYLOAD = {
 }
 
 
+class TestQuotaSourcesSurviveModelSave:
+    """额度分区是平台目录派生的事实，不进 ModelInput——保存模型列表走删表重插，
+    服务端不按 model_id 接上的话，用户每存一次设置页 gift/paid 标签就掉一次。"""
+
+    async def _seed_quota(self, session: AsyncSession, pid: int, model_id: str, sources: list[str]):
+        from lib.db.repositories.custom_provider_repo import CustomProviderRepository
+
+        repo = CustomProviderRepository(session)
+        model = next(m for m in await repo.list_models(pid) if m.model_id == model_id)
+        model.quota_sources = sources
+        await session.commit()
+
+    async def test_replace_models_keeps_quota_sources(self, client: TestClient, session: AsyncSession):
+        pid = client.post("/api/v1/custom-providers", json=_PROVIDER_PAYLOAD).json()["id"]
+        await self._seed_quota(session, pid, "gpt-4o", ["gift", "paid"])
+
+        with patch("server.routers.custom_providers._invalidate_caches", new_callable=AsyncMock):
+            resp = client.put(
+                f"/api/v1/custom-providers/{pid}/models",
+                json={
+                    "models": [
+                        {"model_id": "gpt-4o", "display_name": "GPT-4o", "endpoint": "openai-chat"},
+                        {"model_id": "brand-new", "display_name": "New", "endpoint": "openai-chat"},
+                    ]
+                },
+            )
+        assert resp.status_code == 200
+        by_id = {m["model_id"]: m for m in resp.json()}
+        assert by_id["gpt-4o"]["quota_sources"] == ["gift", "paid"]
+        # 目录里没有的模型没有分区可继承，保持「没标注」而不是猜一个
+        assert by_id["brand-new"]["quota_sources"] is None
+
+    async def test_full_update_keeps_quota_sources(self, client: TestClient, session: AsyncSession):
+        pid = client.post("/api/v1/custom-providers", json=_PROVIDER_PAYLOAD).json()["id"]
+        await self._seed_quota(session, pid, "gpt-4o", ["paid"])
+
+        with patch("server.routers.custom_providers._invalidate_caches", new_callable=AsyncMock):
+            resp = client.put(
+                f"/api/v1/custom-providers/{pid}",
+                json={
+                    "display_name": "Renamed",
+                    "base_url": "https://api.example.com/v1",
+                    "models": [{"model_id": "gpt-4o", "display_name": "GPT-4o", "endpoint": "openai-chat"}],
+                    "image_max_workers": None,
+                    "video_max_workers": None,
+                    "audio_max_workers": None,
+                },
+            )
+        assert resp.status_code == 200
+        assert resp.json()["models"][0]["quota_sources"] == ["paid"]
+
+
 class TestDeleteProviderCleansGlobalSettings:
     """回归: 删除 provider 时应清理全局 DB 中引用该 provider 的 default_*_backend。"""
 

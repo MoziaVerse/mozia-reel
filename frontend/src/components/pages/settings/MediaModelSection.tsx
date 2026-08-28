@@ -19,6 +19,7 @@ import {
 } from "@/components/shared/LayeredModelFields";
 import { TextTierFields } from "@/components/shared/TextTierFields";
 import { VideoModelSpecBar, videoOptionMetaRenderer } from "@/components/shared/VideoModelSpecBar";
+import { quotaOptionBadgeRenderer } from "@/components/shared/QuotaSourceBadge";
 import { InlineWarning } from "@/components/ui/InlineWarning";
 import { PROVIDER_NAMES } from "@/components/ui/ProviderIcon";
 import { useAppStore } from "@/stores/app-store";
@@ -242,6 +243,8 @@ export function MediaModelSection() {
     : [];
 
   const renderVideoOptionMeta = videoOptionMetaRenderer({ t, providers, customProviders, endpointToMediaType });
+  // 额度分区徽标对四类媒体同权：模型付不付得动与它生成什么无关。
+  const renderQuotaBadge = quotaOptionBadgeRenderer({ customProviders });
   const currentAudioBackend = draft.default_audio_backend ?? settings.default_audio_backend ?? "";
   const currentNarrationVoice = draft.narration_voice ?? settings.narration_voice ?? "";
   const currentNarrationSpeed =
@@ -301,6 +304,7 @@ export function MediaModelSection() {
             emptyHint={t("auto")}
             providerNames={allProviderNames}
             renderOptionMeta={renderVideoOptionMeta}
+            renderOptionBadge={renderQuotaBadge}
             subFields={videoSubFields}
             subFieldsError={candidatesSubFieldsError}
           >
@@ -370,6 +374,7 @@ export function MediaModelSection() {
             emptyLabel={t("auto_select")}
             emptyHint={t("auto")}
             providerNames={allProviderNames}
+            renderOptionBadge={renderQuotaBadge}
             subFields={imageSubFields}
             subFieldsError={candidatesSubFieldsError}
           />
@@ -393,6 +398,7 @@ export function MediaModelSection() {
             }
             options={textBackends}
             providerNames={allProviderNames}
+            renderOptionBadge={renderQuotaBadge}
             defaultLabel={t("auto_select")}
             defaultHint={t("auto")}
             fallbacks={{
@@ -418,6 +424,7 @@ export function MediaModelSection() {
             defaultLabel={t("auto_select")}
             defaultHint={t("auto")}
             aria-label={t("default_audio_model")}
+            renderOptionBadge={renderQuotaBadge}
           />
         ) : (
           emptyHint(t("no_audio_providers_hint"))

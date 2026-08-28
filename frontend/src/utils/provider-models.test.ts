@@ -1,13 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { API } from "@/api";
 import type { ProviderInfo } from "@/types";
+import type { CustomProviderInfo, CustomProviderModelInfo } from "@/types/custom-provider";
 import {
+  allowsGiftQuota,
   constrainDurations,
   getCustomProviderModels,
   getProviderModels,
   lookupCatalogVideoAudio,
   lookupDurationConstraints,
   lookupProjectVideoResolution,
+  lookupQuotaSources,
   lookupVideoAudioControl,
 } from "./provider-models";
 
@@ -272,5 +275,42 @@ describe("lookupProjectVideoResolution", () => {
         BACKEND,
       ),
     ).toBeNull();
+  });
+});
+
+describe("wallet quota sources", () => {
+  // 网关声明的三态必须原样保到界面：合并任意两态都会让标签标错，
+  // 而「标错」比「不标」更糟——用户会照着一个假事实去挑模型。
+  it("allowsGiftQuota 对三态各给一个答案", () => {
+    expect(allowsGiftQuota(null)).toBeNull();
+    expect(allowsGiftQuota([])).toBe(true);
+    expect(allowsGiftQuota(["gift", "paid"])).toBe(true);
+    expect(allowsGiftQuota(["paid"])).toBe(false);
+  });
+
+  const model = (model_id: string, quota_sources: string[] | null) =>
+    ({ model_id, quota_sources }) as CustomProviderModelInfo;
+
+  const quotaProviders = [
+    { id: 3, models: [model("z-ai/glm-5.2", ["paid"]), model("bare", null)] },
+  ] as CustomProviderInfo[];
+
+  it("按 provider/model 取到自定义供应商的分区声明", () => {
+    expect(lookupQuotaSources("custom-3/z-ai/glm-5.2", quotaProviders)).toEqual(["paid"]);
+  });
+
+  it("目录没标注的模型返回 null", () => {
+    expect(lookupQuotaSources("custom-3/bare", quotaProviders)).toBeNull();
+  });
+
+  // 内置供应商用的是用户自有厂商 key，与平台钱包无关，不该显示额度标签。
+  it("内置供应商一律没有分区声明", () => {
+    expect(lookupQuotaSources("gemini-aistudio/veo-3.1", quotaProviders)).toBeNull();
+  });
+
+  it("查不到的模型与没标注同义，都不下结论", () => {
+    expect(lookupQuotaSources("custom-3/missing", quotaProviders)).toBeNull();
+    expect(lookupQuotaSources("custom-9/z-ai/glm-5.2", quotaProviders)).toBeNull();
+    expect(lookupQuotaSources("no-slash", quotaProviders)).toBeNull();
   });
 });

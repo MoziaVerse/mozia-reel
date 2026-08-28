@@ -280,6 +280,32 @@ async def fetch_model_catalog(token: str) -> list[dict] | None:
     return models if isinstance(models, list) else None
 
 
+def extract_quota_sources(item: dict) -> list[str] | None:
+    """目录条目 → 可消耗额度分区列表。三态与 ``CustomProviderModel.quota_sources`` 同义。
+
+    与 matrix 前端的 ``allowsGiftQuota`` 判据同源：没有 ``access`` 就不下结论（None），
+    有 ``access`` 但没列 ``required_sources`` 等于网关未命中策略、默认放行全部分区（[]）。
+    ``access.available`` 不参与——它是「此刻这个钱包付不付得起」的动态状态，
+    分区归属才是模型的静态属性（同 ``is_enabled`` 那段注释的取舍）。
+    """
+    access = item.get("access")
+    if not isinstance(access, dict):
+        return None
+    required = access.get("required_sources")
+    if not isinstance(required, list):
+        return []
+    return [str(source) for source in required if isinstance(source, str)]
+
+
+def allows_gift_quota(quota_sources: list[str] | None) -> bool | None:
+    """赠送额度能否消耗该模型；None = 目录没标注，不下结论。"""
+    if quota_sources is None:
+        return None
+    if not quota_sources:
+        return True
+    return "gift" in quota_sources
+
+
 def catalog_to_models(catalog: list[dict]) -> list[dict]:
     """平台目录 → 本地模型行。不认识或用不上的类目直接不收。"""
     from lib.custom_provider.duration_presets import infer_supported_durations
@@ -322,6 +348,7 @@ def catalog_to_models(catalog: list[dict]) -> list[dict]:
                 # 才是真下架。付不起不该在选择阶段拦，让它在生成时按网关的
                 # requires_paid_quota 失败——那里有明确原因，这里没有。
                 "is_enabled": True,
+                "quota_sources": extract_quota_sources(item),
             }
         )
     for model_type, names in sorted(skipped.items()):
@@ -377,6 +404,13 @@ async def sync_gateway_models(session, *, provider_id: int, rows: list[dict]) ->
         if not current.is_enabled and row["is_enabled"]:
             # 之前因下架被禁用、现在又上架了：恢复
             current.is_enabled = True
+            changed = True
+        # 额度分区跟平台走：网关随时可以调整某型号能吃哪个钱包分区，存量行不跟着更新，
+        # 界面上的 gift/paid 标签就会停在握手那一刻。用 get 取值——回落路径
+        # （``_discover_gateway_models``）的行不带这个键，那种来源本就没有分区信息。
+        incoming_quota = row.get("quota_sources")
+        if current.quota_sources != incoming_quota:
+            current.quota_sources = incoming_quota
             changed = True
         updated += 1 if changed else 0
 
@@ -451,17 +485,24 @@ _DEFAULT_BACKEND_KEYS = {
 # 表里的模型不存在时自动跳过，不会因为它下架而让 seed 失败。
 _PREFERRED_DEFAULT_MODELS: dict[str, tuple[str, ...]] = {
     "image": ("mozia/image-2",),
-    # 文本这条排序同时受两个约束，缺一个都会给新用户一个开箱不可用的默认值：
+    # 文本这条排序同时受三个约束，缺一个都会给新用户一个开箱不可用的默认值：
     #
     # 1) 死锁：GLM-4.7 在 Agent 的多层子任务嵌套下会**静默死锁**——不报错、
     #    不超时，就是没有输出。它绝不能进这张表；而按字典序挑恰好挑中它。
+    #    （它在单轮工具调用上是正常的，别拿浅层验证的通过率把它放回来。）
     # 2) 赠送额度：网关按模型限定可消耗的钱包分区，只有少数模型允许 gift。
     #    新用户手里通常只有赠送额度，默认值若落在 paid-only 的模型上，等于
-    #    开箱就欠费。前两项是网关上显式配了 gift 的文本模型，排在最前。
+    #    开箱就欠费。前三项是网关上允许 gift 的文本模型，排在最前。
+    # 3) 工具调用链：Agent 跑的是 Claude Code harness，一轮里要吐结构化
+    #    tool_use、再吃回 tool_result。网关到部分上游的这条链根本不通——
+    #    moonshotai/kimi-k2.6、moonshotai/kimi-k3、deepseek/deepseek-v4-flash
+    #    在带工具的请求上稳定回 `upstream error: do request failed`，
+    #    它们不论额度分区如何都不能进表。
     #
     # 后三项是 paid-only 的兜底：赠送额度用完或平台撤掉 gift 授权时仍能跑。
     # ⚠️ gift 授权同样会漂移，改动前先核对网关的 mozia_model_quota_policies。
     "text": (
+        "qwen/qwen3.5-397b-a17b",
         "qwen/qwen3.8-27b",
         "qwen/qwen3.6-35b-a3b",
         "z-ai/glm-5.2",

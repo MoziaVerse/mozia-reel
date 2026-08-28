@@ -45,6 +45,12 @@ interface ProviderModelSelectProps {
    * 不作视频/图像/文本假设，具体展示逻辑由调用方决定。
    */
   renderOptionMeta?: (fullValue: string) => React.ReactNode;
+  /**
+   * 模型名右侧的徽标（如额度分区的 gift/paid）。与 `renderOptionMeta` 分开而不是并进那一行：
+   * meta 行是随模型变化的规格文字，徽标是定长归类标记，挤进同一行会让规格被截断。
+   * 返回 null 即不渲染。
+   */
+  renderOptionBadge?: (fullValue: string) => React.ReactNode;
 }
 
 interface FlatOption {
@@ -81,6 +87,7 @@ export function ProviderModelSelect({
   searchable = true,
   searchThreshold = 6,
   renderOptionMeta,
+  renderOptionBadge,
 }: ProviderModelSelectProps) {
   const { t } = useTranslation("dashboard");
   const resolvedPlaceholder = placeholder ?? t("select_model_placeholder");
@@ -449,6 +456,7 @@ export function ProviderModelSelect({
                   const isSelected = fullValue === value;
                   const isActive = currentFlatIdx === activeIndex;
                   const meta = renderOptionMeta?.(fullValue);
+                  const badge = renderOptionBadge?.(fullValue);
                   return (
                     <button
                       key={fullValue}
@@ -474,7 +482,10 @@ export function ProviderModelSelect({
                         <span className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                       )}
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate">{model}</span>
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span className="truncate">{model}</span>
+                          {badge}
+                        </span>
                         {meta && (
                           <span className="mt-0.5 block truncate font-mono text-[10px] tabular-nums text-text-4">
                             {meta}

@@ -226,6 +226,22 @@ class TestTextModelPreference:
 
         assert preferred_model("text", {"GLM-4.7", "z-ai/glm-5.1"}) == "z-ai/glm-5.1"
 
+    def test_prefers_the_strongest_gift_model_when_listed(self):
+        """gift 档内部按能力排：Agent 要在 45 个工具里选型并生成嵌套参数。"""
+        from lib.matrix_session import preferred_model
+
+        available = {"qwen/qwen3.5-397b-a17b", "qwen/qwen3.8-27b", "qwen/qwen3.6-35b-a3b"}
+        assert preferred_model("text", available) == "qwen/qwen3.5-397b-a17b"
+
+    def test_never_picks_models_whose_tool_call_chain_is_broken(self):
+        """kimi 全系与 deepseek-v4-flash 在带工具的请求上打不通网关，
+        额度分区再合适也不能当默认——症状是发一句话就报错。"""
+        from lib.matrix_session import preferred_model
+
+        broken = {"moonshotai/kimi-k3", "moonshotai/kimi-k2.6", "deepseek/deepseek-v4-flash"}
+        assert preferred_model("text", broken) is None
+        assert preferred_model("text", broken | {"qwen/qwen3.8-27b"}) == "qwen/qwen3.8-27b"
+
     def test_falls_back_to_paid_only_when_no_gift_model_listed(self):
         """gift 档都没上架时回落到 paid-only 的兜底项，而不是返回 None。"""
         from lib.matrix_session import preferred_model
