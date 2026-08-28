@@ -4,6 +4,10 @@ export interface MatrixModelInfo {
   model_id: string;
   display_name: string;
   media_type: "text" | "image" | "video" | "audio";
+  /** 平台声明的可消耗额度分区；三态判定见 utils/provider-models 的 allowsGiftQuota。 */
+  quota_sources?: string[] | null;
+  /** 该模型能否承载智能体的工具调用链。判据在服务端，前端只消费。 */
+  agent_ready?: boolean;
 }
 
 export interface MatrixOverview {

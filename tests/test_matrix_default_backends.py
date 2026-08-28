@@ -226,6 +226,27 @@ class TestTextModelPreference:
 
         assert preferred_model("text", {"GLM-4.7", "z-ai/glm-5.1"}) == "z-ai/glm-5.1"
 
+    def test_allowlist_excludes_models_whose_tool_chain_is_broken(self):
+        """名单是智能体下拉的候选来源，放进去等于让人选中即坏。"""
+        from lib.matrix_session import AGENT_MODEL_ALLOWLIST, agent_model_ready
+
+        for broken in ("moonshotai/kimi-k3", "moonshotai/kimi-k2.6", "deepseek/deepseek-v4-flash"):
+            assert not agent_model_ready(broken)
+            assert broken not in AGENT_MODEL_ALLOWLIST
+
+    def test_allowlist_excludes_the_deadlocking_model(self):
+        """GLM-4.7 单轮工具调用是正常的，死锁只在多层子任务嵌套下出现。"""
+        from lib.matrix_session import agent_model_ready
+
+        assert not agent_model_ready("GLM-4.7")
+
+    def test_allowlist_covers_every_preferred_default(self):
+        """偏好表挑出来的默认值必须是智能体下拉里选得到的，否则 seed 完就成了
+        一个「界面上不存在」的模型。"""
+        from lib.matrix_session import _PREFERRED_DEFAULT_MODELS, AGENT_MODEL_ALLOWLIST
+
+        assert set(_PREFERRED_DEFAULT_MODELS["text"]) <= AGENT_MODEL_ALLOWLIST
+
     def test_prefers_the_strongest_gift_model_when_listed(self):
         """gift 档内部按能力排：Agent 要在 45 个工具里选型并生成嵌套参数。"""
         from lib.matrix_session import preferred_model

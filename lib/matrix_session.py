@@ -535,6 +535,38 @@ def preferred_model(media: str, available: set[str]) -> str | None:
     return next((m for m in _PREFERRED_DEFAULT_MODELS.get(media, ()) if m in available), None)
 
 
+# Agent 能跑通的文本模型白名单。判据只有一条：网关到该上游的**带工具请求**这条链
+# 是否通——Agent 跑的是 Claude Code harness，一轮里要吐结构化 tool_use、再吃回
+# tool_result，链断了表现成「发一句话就报错」或「点了没反应」，而不是回答质量差。
+#
+# 落在名单外的三类，各有各的坏法，都不该出现在智能体的模型下拉里：
+#   - moonshotai/kimi-k3 · moonshotai/kimi-k2.6 · deepseek/deepseek-v4-flash：
+#     带工具的请求稳定回 `upstream error: do request failed`，一轮都跑不完
+#   - GLM-4.7：单轮工具调用正常，但在多层子任务嵌套下**静默死锁**（见
+#     ``_PREFERRED_DEFAULT_MODELS`` 的注释），浅层验证看不出来
+#   - 其余非对话类目：Agent SDK 走对话协议，选中即失败
+#
+# ⚠️ 平台上架/下架与上游可用性都会漂移，本名单不是长期真相。增删条目前先按
+# 上面那条判据实跑，不要按参数量或价格猜。
+AGENT_MODEL_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "qwen/qwen3.5-397b-a17b",
+        "qwen/qwen3.8-27b",
+        "qwen/qwen3.6-35b-a3b",
+        "qwen/qwen3.6-plus",
+        "deepseek/deepseek-v4-pro",
+        "z-ai/glm-5",
+        "z-ai/glm-5.1",
+        "z-ai/glm-5.2",
+    }
+)
+
+
+def agent_model_ready(model_id: str) -> bool:
+    """该模型能否承载 Agent 的工具调用链。"""
+    return model_id in AGENT_MODEL_ALLOWLIST
+
+
 async def backfill_video_durations(session, *, provider_id: int) -> int:
     """给已有的视频模型补 supported_durations。
 
