@@ -216,8 +216,15 @@ def compressed_reference_payload(
     *,
     limits: PayloadLimits,
     start_step: int = 0,
+    temp_parent: Path | None = None,
 ) -> Iterator[tuple[int, list[CompressedRef]]]:
     """压缩参考图为临时文件，yield (landed_step, refs)，退出时清理临时文件。
+
+    ``temp_parent`` 决定临时目录建在哪，缺省是系统临时目录。调用方需要这些副本可被
+    出链时必须显式指定：自托管直链只签数据根内的文件，压缩副本落在系统 ``/tmp`` 时
+    整条参考视频链路都签不出来（"参考素材不在数据根内，无法出链"）。压缩是否发生取决于
+    素材够不够大，所以这条失败是间歇性的——小图透传用原路径、天然在数据根内，只有大到
+    需要重编码的才会踩中。
 
     非本地 / 不可解码源（理论上不会发生——各 backend 本就对 reference 调 read_bytes()，
     证明 reference 必为本地文件；但 URL/data-URI/损坏文件等边角）跳过压缩、原路径透传，
@@ -264,7 +271,9 @@ def compressed_reference_payload(
                 continue
             # 重编码：写临时文件，按 idx 分子目录避免重名，文件名沿用源 stem 保留参考图名。
             if temp_root is None:
-                temp_root = Path(tempfile.mkdtemp(prefix="refcomp-"))
+                if temp_parent is not None:
+                    temp_parent.mkdir(parents=True, exist_ok=True)
+                temp_root = Path(tempfile.mkdtemp(prefix="refcomp-", dir=temp_parent))
             sub = temp_root / str(idx)
             sub.mkdir()
             tmp_path = sub / f"{Path(spec.source).stem}.jpg"

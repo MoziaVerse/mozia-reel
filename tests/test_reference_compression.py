@@ -340,3 +340,190 @@ def test_payload_truncated_image_passthrough_no_raise(tmp_path: Path):
     specs = [ReferenceSpec(source=src, label="图0", role=RefRole.ARRAY)]
     with compressed_reference_payload(specs, limits=PayloadLimits()) as (_landed, refs):
         assert refs[0].path == src  # 透传，不 raise
+
+
+class TestStagingLocationIsSignable:
+    """压缩副本必须落在数据根内。
+
+    H3 这类只收公网 URL 的后端要把参考图签成本站直链，而签名只认数据根内的文件。
+    副本落在系统 ``/tmp`` 时整条参考视频链路在出链那一步就失败（"参考素材不在数据根内，
+    无法出链: /tmp/refcomp-.../000-reference_image.jpg"），而且只在素材大到需要重编码时
+    才触发——小图透传用原路径、天然在数据根内，所以线上症状是间歇性的。
+    """
+
+    def _reencoded_spec(self, tmp_path: Path) -> tuple[list[ReferenceSpec], PayloadLimits]:
+        """PNG 源必被重编码成 JPEG，于是一定写临时副本（透传项不写）。"""
+        source = tmp_path / "000-reference_image.png"
+        source.write_bytes(_solid_png_bytes(800, 600))
+        return [ReferenceSpec(source=source, label="", role=RefRole.ARRAY)], PayloadLimits()
+
+    def test_copies_land_under_the_given_parent(self, tmp_path):
+        specs, limits = self._reencoded_spec(tmp_path)
+        staging = tmp_path / "data" / ".refcomp"
+        with compressed_reference_payload(specs, limits=limits, temp_parent=staging) as (_, refs):
+            assert refs[0].path != specs[0].source, "前提：这张图大到必须重编码，不是透传"
+            assert staging in refs[0].path.parents
+
+    def test_signed_url_can_be_issued_for_the_copy(self, tmp_path, monkeypatch):
+        """真正要守的不是目录名，而是「副本签得出直链」。"""
+        from lib.app_data_dir import _reset_for_tests
+        from lib.signed_media_url import sign_media_path
+
+        root = tmp_path / "data"
+        monkeypatch.setenv("SESSION_COOKIE_SECRET", "s" * 40)
+        monkeypatch.setenv("ARCREEL_DATA_DIR", str(root))
+        monkeypatch.delenv("AI_ANIME_PROJECTS", raising=False)
+        _reset_for_tests()
+        try:
+            specs, limits = self._reencoded_spec(tmp_path)
+            with compressed_reference_payload(specs, limits=limits, temp_parent=root / ".refcomp") as (_, refs):
+                assert sign_media_path(refs[0].path)
+        finally:
+            _reset_for_tests()
+
+    def test_default_still_uses_system_tempdir(self, tmp_path):
+        """不指定时行为不变——压缩层本身不该知道数据根这回事。"""
+        specs, limits = self._reencoded_spec(tmp_path)
+        with compressed_reference_payload(specs, limits=limits) as (_, refs):
+            # 两侧都 resolve：macOS 的 gettempdir() 是 /var/folders/...，而它是
+            # /private/var/... 的符号链接，只 resolve 一侧永远对不上。
+            assert Path(tempfile.gettempdir()).resolve() in refs[0].path.resolve().parents
+
+    def test_staging_dir_is_created_on_demand(self, tmp_path):
+        staging = tmp_path / "not" / "yet" / "there"
+        specs, limits = self._reencoded_spec(tmp_path)
+        with compressed_reference_payload(specs, limits=limits, temp_parent=staging) as (_, refs):
+            assert refs[0].path.is_file()
+
+    def test_copies_are_cleaned_up_on_exit(self, tmp_path):
+        """副本留在数据根内就会被当成用户数据一路存着——退出必须清干净。"""
+        staging = tmp_path / "data" / ".refcomp"
+        specs, limits = self._reencoded_spec(tmp_path)
+        with compressed_reference_payload(specs, limits=limits, temp_parent=staging) as (_, refs):
+            leaked = refs[0].path
+            assert leaked.is_file()
+        assert not leaked.exists()
+
+
+class TestGeneratorPassesASignableStagingDir:
+    """光让压缩层「支持」放在哪没用——真正的生产缺陷是调用方没指定，于是落到了 /tmp。"""
+
+    def test_staging_dir_is_inside_the_data_root(self, tmp_path, monkeypatch):
+        from lib.app_data_dir import _reset_for_tests, base_data_dir
+        from lib.media_generator import _reference_staging_dir
+
+        monkeypatch.setenv("ARCREEL_DATA_DIR", str(tmp_path / "data"))
+        monkeypatch.delenv("AI_ANIME_PROJECTS", raising=False)
+        _reset_for_tests()
+        try:
+            staging = _reference_staging_dir().resolve()
+            assert base_data_dir().resolve() in staging.parents
+        finally:
+            _reset_for_tests()
+
+    def test_generator_hands_that_dir_to_the_compressor(self, tmp_path, monkeypatch):
+        """签名只认数据根内的文件，调用方漏传 temp_parent 就等于整条参考视频链路挂掉。"""
+        import asyncio
+        import contextlib as _contextlib
+
+        import lib.reference_compression as rc
+        from lib.app_data_dir import _reset_for_tests, base_data_dir
+        from lib.media_generator import MediaGenerator
+
+        monkeypatch.setenv("ARCREEL_DATA_DIR", str(tmp_path / "data"))
+        monkeypatch.delenv("AI_ANIME_PROJECTS", raising=False)
+        _reset_for_tests()
+        captured: dict = {}
+
+        @_contextlib.contextmanager
+        def _spy(specs, *, limits, start_step=0, temp_parent=None):
+            captured["temp_parent"] = temp_parent
+            yield start_step, []
+
+        monkeypatch.setattr(rc, "compressed_reference_payload", _spy)
+
+        class _Stub:
+            async def _reference_limits(self, provider_id):
+                return PayloadLimits()
+
+        async def _call(_refs):
+            return "done"
+
+        source = _write(tmp_path, "ref.png", _solid_png_bytes(64, 64))
+        try:
+            result = asyncio.run(
+                MediaGenerator._run_with_reference_compression(
+                    _Stub(),  # pyright: ignore[reportArgumentType]
+                    specs=[ReferenceSpec(source=source, label="", role=RefRole.ARRAY)],
+                    provider_id=None,
+                    build_and_call=_call,
+                )
+            )
+            assert result == "done"
+            parent = captured["temp_parent"]
+            assert parent is not None, "没传 temp_parent，副本会落到系统 /tmp，签不出直链"
+            assert base_data_dir().resolve() in parent.resolve().parents
+        finally:
+            _reset_for_tests()
+
+
+class TestStagingSweep:
+    """换到数据根之后残骸才成为问题：``/tmp`` 有系统与容器重启兜底，数据卷没有。
+
+    正常路径由压缩层的 finally 当场清干净，留下来的只可能是进程被杀那一刻的残骸。
+    """
+
+    def _staging(self, tmp_path, monkeypatch):
+        from lib.app_data_dir import _reset_for_tests
+
+        monkeypatch.setenv("ARCREEL_DATA_DIR", str(tmp_path / "data"))
+        monkeypatch.delenv("AI_ANIME_PROJECTS", raising=False)
+        _reset_for_tests()
+        from lib.media_generator import _reference_staging_dir
+
+        return _reference_staging_dir()
+
+    def test_old_leftovers_are_removed(self, tmp_path, monkeypatch):
+        import os
+        import time
+
+        from lib.app_data_dir import _reset_for_tests
+        from lib.media_generator import _STAGING_TTL_SECONDS, _reference_staging_dir
+
+        staging = self._staging(tmp_path, monkeypatch)
+        try:
+            stale = staging / "refcomp-dead"
+            stale.mkdir(parents=True)
+            (stale / "a.jpg").write_bytes(b"x")
+            old = time.time() - _STAGING_TTL_SECONDS - 60
+            os.utime(stale, (old, old))
+            _reference_staging_dir()
+            assert not stale.exists()
+        finally:
+            _reset_for_tests()
+
+    def test_in_flight_copies_are_left_alone(self, tmp_path, monkeypatch):
+        """副本要活过整轮生成——H3 轮询上限约 90 分钟，扫早了是把正在用的参考图删掉。"""
+        from lib.app_data_dir import _reset_for_tests
+        from lib.media_generator import _reference_staging_dir
+
+        staging = self._staging(tmp_path, monkeypatch)
+        try:
+            fresh = staging / "refcomp-live"
+            fresh.mkdir(parents=True)
+            _reference_staging_dir()
+            assert fresh.is_dir()
+        finally:
+            _reset_for_tests()
+
+    def test_ttl_outlives_the_slowest_generation(self):
+        from lib.media_generator import _STAGING_TTL_SECONDS
+
+        assert _STAGING_TTL_SECONDS > 90 * 60
+
+    def test_sweep_never_fails_a_generation(self, tmp_path, monkeypatch):
+        """清理不是功能：删不掉旧目录也不该让这次生成挂掉。"""
+        from lib.media_generator import _sweep_stale_staging
+
+        monkeypatch.setattr(Path, "iterdir", lambda self: (_ for _ in ()).throw(OSError("boom")))
+        _sweep_stale_staging(tmp_path)  # 不抛即通过
