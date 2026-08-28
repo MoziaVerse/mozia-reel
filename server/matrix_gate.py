@@ -137,6 +137,17 @@ class MatrixSessionGate:
                     await self._access_denied(send)
                 return
             set_current_tenant(sub)
+            # 建库/迁移不能只挂在握手上：cookie 在整个 TTL 内有效，带着它直接回访
+            # （书签、旧标签页刷新）的用户不会再走一次握手。上线带迁移的版本后，
+            # 这些人的租户库仍停在旧 schema，任何碰 DB 的接口都 500 —— 而且只有一部分
+            # 用户中招，取决于谁在 TTL 内回来过，最难归因的那类故障。
+            #
+            # 只对 /api/ 做：静态资源与 SPA 外壳不碰 DB。首次之后 ``ensure_tenant_db``
+            # 只是一次 set 查询，热路径上的代价可以忽略。
+            if path.startswith("/api/"):
+                from lib.db import ensure_tenant_db
+
+                await ensure_tenant_db()
             await self.app(scope, receive, send)
             return
 

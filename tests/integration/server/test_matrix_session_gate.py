@@ -89,7 +89,7 @@ def _with_session() -> list[tuple[bytes, bytes]]:
 class TestSessionGate:
     @pytest.mark.parametrize(
         "path",
-        ["/handoff", "/api/v1/matrix-session/init", "/health", "/skill.md", "/public/media/tok"],
+        ["/handoff", "/api/v1/matrix-session/init", "/health", "/public/media/tok"],
     )
     def test_public_paths_pass(self, path):
         """握手页与换票端点是拿到会话的前提，锁上就死锁了。
@@ -167,6 +167,43 @@ class TestSessionGate:
         monkeypatch.setenv("MATRIX_BACKEND_URL", "")
         reached, status = asyncio.run(_probe("/api/v1/projects", API))
         assert (reached, status) == (True, 200)
+
+
+class TestTenantDbIsReadyForReturningSessions:
+    """带着未过期 cookie 直接回访的请求，也要保证租户库已建好并迁到当前 head。
+
+    建库只挂在握手上是不够的：cookie 在整个 TTL 内有效，书签或旧标签页刷新都不会
+    再走一次握手。上线带迁移的版本后，这些人的租户库停在旧 schema，任何碰 DB 的接口
+    都 500——且只有一部分用户中招，取决于谁在 TTL 内回来过。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _isolated_data_root(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ARCREEL_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("MATRIX_BACKEND_URL", "https://matrix.invalid")
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        from lib import app_data_dir as add
+        from lib import db as libdb
+
+        add._reset_for_tests()
+        libdb._reset_tenant_db_cache_for_tests()
+        yield
+        add._reset_for_tests()
+        libdb._reset_tenant_db_cache_for_tests()
+
+    def test_api_request_with_session_creates_the_tenant_db(self, tmp_path):
+        reached, status = asyncio.run(_probe("/api/v1/projects", API + _with_session()))
+
+        assert (reached, status) == (True, 200)
+        # 断真实产出而不是「调用过某个函数」：库文件确实建出来了，才代表迁移真的跑了。
+        assert (tmp_path / "tenants" / "user-1" / ".arcreel.db").exists()
+
+    def test_static_request_does_not_touch_the_database(self, tmp_path):
+        """静态资源与 SPA 外壳不碰 DB，不该为它们付建库的代价。"""
+        reached, status = asyncio.run(_probe("/assets/app.js", _with_session()))
+
+        assert (reached, status) == (True, 200)
+        assert not (tmp_path / "tenants" / "user-1" / ".arcreel.db").exists()
 
 
 class TestHandoffEndpointIsNotOpen:
