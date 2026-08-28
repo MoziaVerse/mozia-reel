@@ -699,7 +699,7 @@ export default {
   'usage_truncated': "Showing the latest {{shown}} of {{total}} records in range",
 
   // AccountSection（托管态账户页）
-  'account_gift_limited_hint': "Gifted credits never expire but only work with a limited set of models. Full model access draws on purchased or subscription credits, which is what credits available counts.",
+  'account_gift_limited_hint': "Gifted credits never expire but only work with a limited set of models: those tagged Gift OK in the model dropdowns. Models tagged Paid only draw on purchased or subscription credits.",
   'account': "Account",
   'account_identity': "Profile",
   'account_username': "Username",

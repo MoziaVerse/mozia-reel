@@ -698,7 +698,7 @@ export default {
   'usage_truncated': "仅统计最近 {{shown}} 条，区间内共 {{total}} 条",
 
   // AccountSection（托管态账户页）
-  'account_gift_limited_hint': "获赠积分长期有效，但只能调用有限模型；完整模型调用依赖充值或订阅积分——「可用积分」统计的正是后者。",
+  'account_gift_limited_hint': "获赠积分长期有效，但只能调用有限模型：模型下拉里标「赠送可用」的可用它支付，标「需充值」的只认充值或订阅积分。",
   'account': "账户",
   'account_identity': "基本信息",
   'account_username': "用户名",

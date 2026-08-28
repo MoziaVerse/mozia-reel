@@ -682,7 +682,7 @@ export default {
   'usage_truncated': "Chi hien {{shown}} ban ghi moi nhat trong tong so {{total}}",
 
   // AccountSection（托管态账户页）
-  'account_gift_limited_hint': "Tin dung tang khong het han nhung chi dung duoc voi mot so mo hinh. Truy cap day du can tin dung nap hoac thue bao, do chinh la phan tin dung kha dung.",
+  'account_gift_limited_hint': "Tin dung tang khong het han nhung chi dung duoc voi mot so mo hinh: cac mo hinh gan nhan \"Dung duoc qua tang\" trong danh sach chon. Mo hinh gan nhan \"Chi tra phi\" chi nhan tin dung da nap hoac thue bao.",
   'account': "Tài khoản",
   'account_identity': "Thông tin cơ bản",
   'account_username': "Tên đăng nhập",

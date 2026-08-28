@@ -13,10 +13,13 @@ export function QuotaSourceBadge({ quotaSources }: { quotaSources: string[] | nu
   const { t } = useTranslation("dashboard");
   const gift = allowsGiftQuota(quotaSources);
   if (gift === null) return null;
+  // 配色与 Matrix 站内的额度来源同源（Wallet.tsx 的 creditSourceMeta）：
+  // 赠送/奖励走 emerald、充值走 sky。amber 在那边是「兑换码」，占用它会让
+  // 两个产品里同一个颜色指两件事。账户页的余额三档用的也是这组色。
   return (
     <span
       className={`shrink-0 rounded px-1.5 py-px font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] ${
-        gift ? "bg-emerald-800/60 text-emerald-300" : "bg-amber-800/60 text-amber-300"
+        gift ? "bg-emerald-500/18 text-emerald-300" : "bg-sky-500/18 text-sky-300"
       }`}
       title={t(gift ? "quota_source_gift_hint" : "quota_source_paid_hint")}
     >

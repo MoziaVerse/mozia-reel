@@ -163,7 +163,11 @@ export function AccountSection({ overview }: { overview: MatrixOverview }) {
             <div className="flex items-baseline gap-2">
               <Wallet className="h-4 w-4 shrink-0 text-accent-2" />
               <span className="font-editorial text-[30px] leading-none tabular-nums text-text">
-                {formatCredits(wallet.usableQuota, perUnit)}
+                {/* 口径与 Matrix 钱包页一致：可用积分 = 订阅 + 充值 + 获赠。
+                    不用 usableQuota（只含充值与历史余额）——赠送额度并非不能用，
+                    只是限于部分模型，而哪些模型能用已经在模型下拉上逐项标了出来。
+                    把它从总数里剔掉，会让人以为那 2000 多积分是笔坏账。 */}
+                {formatCredits(wallet.wallet.total, perUnit)}
               </span>
               <span className="text-[12px] text-text-3">{t("dashboard:account_credits_unit")}</span>
             </div>
@@ -174,17 +178,31 @@ export function AccountSection({ overview }: { overview: MatrixOverview }) {
                 {t("dashboard:account_gift_limited_hint")}
               </p>
             )}
+            {/* 三档配色与 Matrix 站内同源（Wallet.tsx 的 creditSourceMeta）：
+                赠送=emerald、充值=sky、订阅=violet。模型下拉上的「赠送可用 /
+                需充值」徽标用的是同一组色，两处对上才能一眼看出「手里这笔钱
+                能不能花在那个模型上」。 */}
             <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
               {(
                 [
-                  ["account_balance_gift", wallet.wallet.gift],
-                  ["account_balance_paid", wallet.wallet.paid + wallet.wallet.legacy],
-                  ["account_balance_subscription", wallet.wallet.subscription],
+                  ["account_balance_gift", wallet.wallet.gift, "text-emerald-300", "border-emerald-500/25"],
+                  [
+                    "account_balance_paid",
+                    wallet.wallet.paid + wallet.wallet.legacy,
+                    "text-sky-300",
+                    "border-sky-500/25",
+                  ],
+                  [
+                    "account_balance_subscription",
+                    wallet.wallet.subscription,
+                    "text-violet-300",
+                    "border-violet-500/25",
+                  ],
                 ] as const
-              ).map(([key, quota]) => (
-                <div key={key} className="rounded-[8px] border border-hairline-soft px-3 py-2.5">
+              ).map(([key, quota, valueCls, borderCls]) => (
+                <div key={key} className={`rounded-[8px] border px-3 py-2.5 ${borderCls}`}>
                   <p className="text-[11px] text-text-4">{t(`dashboard:${key}`)}</p>
-                  <p className="mt-1 text-[15px] tabular-nums text-text-2">
+                  <p className={`mt-1 text-[15px] tabular-nums ${valueCls}`}>
                     {formatCredits(quota, perUnit)}
                   </p>
                 </div>
