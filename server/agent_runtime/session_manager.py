@@ -189,7 +189,7 @@ class _ActorExitNotice:
 def _make_session_channel() -> SseChannel:
     """会话订阅广播通道：溢出策略为「逐出非关键消息 + 溢出信号」。
 
-    关键消息（result/runtime_status/user/assistant）不得静默丢弃；订阅者
+    关键消息（result/runtime_status/log_entry/log_turn_complete）不得静默丢弃；订阅者
     队列彻底跟不上时其流被结束，流结束即重连信号（见 docs/adr/0046）。
     """
     return SseChannel(
@@ -232,8 +232,7 @@ class ManagedSession:
     _interrupting: bool = False  # send_interrupt re-entry guard (distinct from interrupt_requested)
 
     # Message types that must never be silently dropped from subscriber queues.
-    # 原始 assistant/result 仍是关键类型：同步 agent 对话端点直接消费它们收集回复。
-    _CRITICAL_MESSAGE_TYPES = {"result", "runtime_status", "assistant", "log_entry", "log_turn_complete"}
+    _CRITICAL_MESSAGE_TYPES = {"result", "runtime_status", "log_entry", "log_turn_complete"}
 
     def _on_actor_message(self, msg: dict[str, Any]) -> None:
         """SessionActor 的 on_message 回调。同步，内存操作，不 await。
@@ -361,9 +360,7 @@ class SessionManager:
         #      AssistantService 在 lifespan 构造，那时没有租户上下文，固化会让 agent
         #      一直指向部署级根目录、看不到任何租户的项目
         #   3) 都没有则回落 project_root/"projects"（上游默认，勿改）
-        self._projects_root_override = (
-            Path(projects_root).resolve(strict=False) if projects_root is not None else None
-        )
+        self._projects_root_override = Path(projects_root).resolve(strict=False) if projects_root is not None else None
         self._projects_root_provider = projects_root_provider
         self._projects_root_fallback = (self.project_root / "projects").resolve()
         self.meta_store = meta_store

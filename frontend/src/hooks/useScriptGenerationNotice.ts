@@ -5,16 +5,16 @@ import { useAppStore } from "@/stores/app-store";
 import type { ContentBlock, Turn } from "@/types";
 
 /**
- * 剧本生成是分钟级的 LLM 文本生成，agent 调用期间前端原本毫无反馈，用户容易误以为
- * 卡死。本 hook 监听助手会话流，识别到剧本生成类工具调用开始时弹一条瞬时 toast
+ * 剧本生成是分钟级的 LLM 文本生成，Agent 调用开始时必须立即提供进度反馈，避免用户误以为
+ * 卡死。本 hook 监听 Agent 会话流，识别到剧本生成类工具调用开始时弹一条瞬时 toast
  * （过程性提示，无需持久回看），告知该步骤耗时较长。
  *
  * 工具名是 SDK 注册后的全限定名 mcp__arcreel__<id>，与 ToolCallWithResult 的解析口径
- * 一致。仅覆盖剧本/规范化两类文本生成工具；分镜/视频等长耗时工具已有任务队列 HUD。
+ * 一致。仅覆盖剧本/内容整理类文本生成工具；媒体生成等长耗时工具已有任务队列 HUD。
  */
 const SCRIPT_GENERATION_TOOL_NAMES = new Set([
   "mcp__arcreel__generate_episode_script",
-  "mcp__arcreel__normalize_drama_script",
+  "mcp__arcreel__generate_step1",
 ]);
 
 function collectBlocks(turns: Turn[], draftTurn: Turn | null): ContentBlock[] {

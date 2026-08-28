@@ -1,7 +1,9 @@
 /**
  * Reference-to-video unit types — mirrors lib/script_models.py Pydantic models.
  *
- * One "unit" produces one rendered video clip. Each unit may contain 1-4 shots.
+ * One "unit" produces one rendered video clip. Its body (`text`) is the single
+ * source of truth: reference images are resolved from the `@[名称]` mentions at
+ * execution time and never persisted or transported.
  */
 
 import type { TransitionType } from "./script";
@@ -23,17 +25,6 @@ export const SHEET_FIELD: Record<AssetKind, "product_sheet" | "character_sheet" 
   scene: "scene_sheet",
   prop: "prop_sheet",
 };
-
-export interface Shot {
-  /** Raw prompt text including @mentions — shots carry no duration; the unit does. */
-  text: string;
-}
-
-export interface ReferenceResource {
-  type: AssetKind;
-  /** Must already exist in the matching project.json asset bucket. */
-  name: string;
-}
 
 /**
  * Raw persisted status value returned by the backend in `generated_assets.status`.
@@ -70,9 +61,8 @@ export interface UnitGeneratedAssets {
 export interface ReferenceVideoUnit {
   /** Format: "E{episode}U{index}" */
   unit_id: string;
-  shots: Shot[];
-  /** Ordered — position defines [图N] index in the final prompt */
-  references: ReferenceResource[];
+  /** Unit body — free-form text carrying `@[名称]` mentions; the only persisted content truth. */
+  text: string;
   /** Planning duration in seconds — provider request duration is resolved during precheck. */
   duration_seconds: number;
   transition_to_next: TransitionType;
@@ -80,8 +70,6 @@ export interface ReferenceVideoUnit {
   generated_assets: UnitGeneratedAssets;
   /** Problem shell or mixed-speech marker; generation is blocked until repaired. */
   needs_replan?: boolean;
-  /** Migration membership/over-capacity evidence that only a body rewrite may clear. */
-  migration_requires_content_replan?: boolean;
 }
 
 export interface ReferenceRequestOptions {
@@ -211,15 +199,15 @@ export interface ReferenceBatchGenerateRequest {
 }
 
 /**
- * 分镜文稿的读时派生结果——编辑器解析预览面板的内容源。
+ * 视频单元正文的读时派生结果——编辑器解析预览面板的内容源。
  *
- * 文稿是唯一真相：shots / references / utterances 都是机械派生物，不落盘。
+ * 正文是唯一真相：utterances 与参考图都是机械派生物，不落盘。
  * `warnings` 已按请求语言渲染成文本（`key` 保留供测试与埋点定位）。
  */
-/** 1-based 镜头序号；台词归属镜头级，时序对位由归属给出。 */
+/** `index` 是 1-based 的 utterance 序号，按正文出现顺序编号。 */
 export type ScriptPreviewUtterance =
-  | { shot_index: number; kind: "dialogue"; speaker: string; text: string }
-  | { shot_index: number; kind: "voiceover"; speaker: null; text: string };
+  | { index: number; kind: "dialogue"; speaker: string; text: string }
+  | { index: number; kind: "voiceover"; speaker: null; text: string };
 
 export interface ScriptPreviewWarning {
   key: string;
@@ -227,24 +215,19 @@ export interface ScriptPreviewWarning {
 }
 
 export interface ScriptPreview {
-  shots: { index: number; text: string }[];
-  /** 顺序即参考图编号；台词记号的 speaker 位不计入 */
-  references: ReferenceResource[];
   utterances: ScriptPreviewUtterance[];
   warnings: ScriptPreviewWarning[];
 }
 
 /**
- * reference_video step1 结构化中间态（审核 gate 的可审 / 可改对象）。映射后端
+ * reference_video step1 结构化中间态（内容确认的可审 / 可改对象）。映射后端
  * lib/script_models.py 的 ReferenceStep1Unit / ReferenceStep1Draft：step1 定内容层
- * （unit 边界 + unit 时长 + 各 shot 叙事文本 + 派生 references），step2 视觉编排由用户确认后才触发。
- * references 为服务端从 shot 文本 @ 引用机械派生（首现顺序决定 [图N] 编号），编辑正文保存时重派生，
- * 故审阅界面只读展示。
+ * （unit 边界 + unit 时长 + 单元正文），step2 视觉编排由用户确认后才触发。
  */
 export interface ReferenceStep1Unit {
   unit_id: string;
-  shots: Shot[];
-  references: ReferenceResource[];
+  /** 单元正文，用 `@[名称]` 引用已登记资产。 */
+  text: string;
   /** Unit duration in seconds — one generation call, one duration. */
   duration_seconds: number;
   /** 逐字原文摘录（追溯锚）；存量草稿可能为空串。 */
@@ -256,9 +239,9 @@ export interface ReferenceStep1Draft {
 }
 
 /**
- * step1 的书写层扁平形状（隔离草稿装的是这个，不是落盘的 `ReferenceStep1Draft`）：
- * `unit_id` / `shots` / `references` 一律机器派生，落盘前才有——隔离期间只有时长 + 原文锚 +
- * 一段书写层正文。Mirrors lib/script_models.py ReferenceStep1FlatUnit / ReferenceStep1FlatDraft。
+ * step1 的扁平草稿结构（草稿装的是这个，不是落盘的 `ReferenceStep1Draft`）：
+ * `unit_id` 机器派生，落盘前才有——草稿中只有时长 + 原文锚 + 一段引用语法正文。
+ * Mirrors lib/script_models.py ReferenceStep1FlatUnit / ReferenceStep1FlatDraft。
  */
 export interface ReferenceStep1FlatUnit {
   duration_seconds: number;
@@ -271,10 +254,11 @@ export interface ReferenceStep1FlatDraft {
 }
 
 /**
- * 隔离草稿违约条目。Mirrors lib/draft_quarantine.py::violation_entries。
- * `label` 形如 `"unit E1U02"`——数组下标 = 派生 unit 序号 - 1，可据此定位到 `content.units[i]`。
- * `line` 是该 unit 正文内 0-based 原始行号（与 `useShotPromptHighlight.ts` 的 `sourceLine` 同
- * 坐标系），仅语法类违约才有；unit 级违约（无自然行归属）为 null，呈现层落卡内聚合区。
+ * 草稿违约条目。Mirrors lib/draft_quarantine.py::violation_entries。
+ * `label` 是定位前缀，形如 `"unit E1U02"`（参考生视频，数组下标 = 派生 unit 序号 - 1）或
+ * `"segment E1S03"`（narration，与 `segment_id` 对应）；集级违约无定位、为空串。
+ * `line` 是该单元正文内 0-based 原始行号（与 `useUnitPromptHighlight.ts` 的 `sourceLine` 同
+ * 坐标系），仅语法类违约才有；单元级违约（无自然行归属）为 null，呈现层落卡内聚合区。
  */
 export interface ScriptReviewViolation {
   code: string;
@@ -287,13 +271,18 @@ export interface ScriptReviewViolation {
 }
 
 /**
- * step1 隔离草稿信息（`ScriptReviewState.quarantine`）：reference_video 变体、隔离草稿在场时
- * 才非 null。`content` 是读时按同一校验器重算后的扁平产出（校验通过部分已收编，未通过部分原样
- * 呈现 agent 手改的文本）；`violations` 同样是读时重算的结果，不是草稿里上一轮的报告快照。
+ * step1 草稿信息（`ScriptReviewState.quarantine`）：草稿在场时才非 null，三条 step1
+ * 路线都可能出现。`content` 是读时按同一校验器重算后的草稿层内容（校验通过部分已收编，未通过
+ * 部分原样呈现 Agent 手改的文本）；`violations` 同样是读时重算的结果，不是草稿里上一轮的报告
+ * 快照。
+ *
+ * `content` 的形状随路线不同（参考生视频 `{ units }`、drama `{ title, scenes }`、narration
+ * `{ segments }`），且草稿正是给 Agent 手改的那一份——字段可能缺失或类型不对。故这里只声明到
+ * 「一个对象」，各面板按自己那条路线逐项收窄后渲染，不信任声明。
  */
 export interface ScriptReviewQuarantine {
-  /** null 仅在隔离草稿文件已损坏、无法解析信封形状时出现——`violations` 会带一条说明。 */
-  content: ReferenceStep1FlatDraft | null;
+  /** null 仅在草稿文件已损坏、无法解析信封形状时出现——`violations` 会带一条说明。 */
+  content: Record<string, unknown> | null;
   violations: ScriptReviewViolation[];
 }
 
@@ -301,8 +290,8 @@ export interface ReferenceVideoScript {
   episode: number;
   title: string;
   /**
-   * 内容类型——参考视频集继承项目级 narration/drama，决定画面比例等次级配置；
-   * "视频来源"维度由项目的生成路线表达，不落在剧本上。
+   * 内容类型——参考生视频剧本继承项目级 narration/drama，决定画面比例等次级配置；
+   * "视频来源"维度由项目的生成模式表达，不落在剧本上。
    */
   content_mode?: "narration" | "drama" | "ad";
   duration_seconds: number;

@@ -57,6 +57,7 @@ from lib.audio_utils import (
 )
 from lib.config.registry import PROVIDER_REGISTRY
 from lib.config.resolver import constrain_durations, video_bucket_for_generation_mode
+from lib.config.service import DEFAULT_VIDEO_POLL_TIMEOUT_SECONDS
 from lib.db.base import DEFAULT_USER_ID
 from lib.generation_queue import (
     CompensableGenerationResult,
@@ -77,7 +78,7 @@ from lib.narration_delivery import (
     register_narration_audio_transactionally,
 )
 from lib.path_safety import safe_exists, safe_join, try_safe_join
-from lib.project_change_hints import emit_project_change_batch, project_change_source
+from lib.project_change_hints import build_change_label, emit_project_change_batch, project_change_source
 from lib.project_manager import (
     EpisodeScriptReboundError,
     ProjectManager,
@@ -113,7 +114,7 @@ from lib.reference_video.execution_checkpoint import (
 from lib.resource_paths import resource_relative_path
 from lib.script_editor import resolve_items
 from lib.script_models import resolve_content_mode
-from lib.script_skeleton import SKELETON_ENTITY_TYPES, SKELETON_ITEM_NOUNS, resolve_script_kind
+from lib.script_skeleton import SKELETON_ENTITY_TYPES, SKELETON_ITEM_LABEL_KEYS, resolve_script_kind
 from lib.speech_artifact_provenance import build_video_duration_basis
 from lib.speech_composition import SpeechAdmissionError, admit_script_unit
 from lib.storyboard_sequence import (
@@ -168,6 +169,23 @@ logger = logging.getLogger(__name__)
 class _CancellationReceipt(Protocol):
     def compensate_cancelled(self) -> None:
         pass
+
+
+@dataclass(frozen=True, slots=True)
+class _CompositeCancellationReceipt:
+    receipts: tuple[_CancellationReceipt, ...]
+
+    def compensate_cancelled(self) -> None:
+        failures: list[Exception] = []
+        for receipt in self.receipts:
+            try:
+                receipt.compensate_cancelled()
+            except Exception as exc:
+                failures.append(exc)
+        if failures:
+            for failure in failures[1:]:
+                failures[0].add_note(f"additional cancellation compensation failed: {failure}")
+            raise failures[0]
 
 
 def register_formal_task_artifact(
@@ -236,11 +254,8 @@ def compensable_formal_task_result(
 
 
 def get_aspect_ratio(project: dict, resource_type: str) -> str:
-    if resource_type == "characters":
-        # 角色采用四视图横版
-        return "16:9"
-    if resource_type in ("scenes", "props", "products"):
-        # 多视图横排版式（product sheet 同为多角度横版）
+    if resource_type in ("characters", "scenes", "props", "products"):
+        # 资产图生成必须显式指定宽高比；四类当前均固定为 16:9。
         return "16:9"
     return resolve_video_aspect_ratio(project, resource_type)
 
@@ -597,21 +612,21 @@ def _collect_shot_product_references(
     currency_resolver: ArtifactCurrencyResolver,
     formal_claims: list[ArtifactInputClaim] | None = None,
 ) -> list[dict]:
-    """产品镜头（``products_in_shot`` 非空）的产品参考集，用于分镜图生成。
+    """商品分镜（``products_in_shot`` 非空）的商品参考集，用于分镜图生成。
 
-    每个产品：有 product sheet 时注入集为「sheet 多角度 + 原图压阵」（sheet 在前、
+    每个商品：有 product sheet 时注入集为「sheet 多角度 + 原图压阵」（sheet 在前、
     原图收尾），无 sheet 时原图直注。返回 ``{"image": Path, "label": str, "name": str,
-    "kind": "sheet"|"original"}`` 列表——label 供支持内联标签的后端绑定图与产品名，
-    name 供高保真指令点名（指令只点名实际注入了参考的产品），kind 供截断时让 sheet
-    优先存活；调用方负责把该列表排在其它参考之前（排序绝对优先）。氛围镜头
-    （列表为空）返回空列表，零产品图。脏数据（products_in_shot 非列表、products
-    非 dict、产品名非字符串、引用不存在的产品）按既有装配口径跳过不抛。
+    "kind": "sheet"|"original"}`` 列表——label 供支持内联标签的后端绑定图与商品名，
+    name 供高保真指令点名（指令只点名实际注入了参考的商品），kind 供截断时让 sheet
+    优先存活；调用方负责把该列表排在其它参考之前（排序绝对优先）。氛围分镜
+    （列表为空）返回空列表，零商品图。脏数据（products_in_shot 非列表、products
+    非 dict、商品名非字符串、引用不存在的商品）按既有装配口径跳过不抛。
     """
     raw_products_in_shot = item.get("products_in_shot")
     if not isinstance(raw_products_in_shot, (list, tuple)):
         if raw_products_in_shot:
             logger.warning(
-                "products_in_shot 类型异常（%s），产品参考注入跳过",
+                "products_in_shot 类型异常（%s），商品参考注入跳过",
                 type(raw_products_in_shot).__name__,
             )
         return []
@@ -632,8 +647,8 @@ def collect_product_references_for_names(
     currency_resolver: ArtifactCurrencyResolver,
     formal_claims: list[ArtifactInputClaim] | None = None,
 ) -> list[dict]:
-    """按产品名列表收集产品参考集（注入二元规则的装配核心，条目语义见
-    ``_collect_shot_product_references``）。分镜图按镜头注入与 ad 参考直出
+    """按商品名列表收集商品参考集（注入二元规则的装配核心，条目语义见
+    ``_collect_shot_product_references``）。分镜图按分镜注入与广告/短片的参考生视频
     按 unit 注入共用此函数，保证两条路径的「sheet 在前、原图压阵」口径一致。
     """
     spec = ASSET_SPECS["product"]
@@ -642,7 +657,7 @@ def collect_product_references_for_names(
     seen: set[str] = set()
     for name in names:
         if not isinstance(name, str):
-            logger.warning("products_in_shot 含非字符串条目 %r，产品参考跳过", name)
+            logger.warning("products_in_shot 含非字符串条目 %r，商品参考跳过", name)
             continue
         canonical = normalize_asset_name(name)
         if canonical in seen:
@@ -650,7 +665,7 @@ def collect_product_references_for_names(
         seen.add(canonical)
         entry = products.get(canonical)
         if not isinstance(entry, dict):
-            logger.warning("镜头引用的产品 '%s' 不在 project.json products 中，产品参考跳过", name)
+            logger.warning("分镜引用的商品 '%s' 不在 project.json products 中，商品参考跳过", name)
             continue
         before = len(references)
         sheet = entry.get(spec.sheet_field)
@@ -667,7 +682,7 @@ def collect_product_references_for_names(
             references.append(
                 {
                     "image": project_path / sheet,
-                    "label": f"产品「{canonical}」标准多角度参考图",
+                    "label": f"商品「{canonical}」标准多角度参考图",
                     "name": canonical,
                     "kind": "sheet",
                 }
@@ -676,18 +691,18 @@ def collect_product_references_for_names(
             references.append(
                 {
                     "image": original,
-                    "label": f"产品「{canonical}」实拍原图（保真锚点）",
+                    "label": f"商品「{canonical}」实拍原图（保真锚点）",
                     "name": canonical,
                     "kind": "original",
                 }
             )
         if len(references) == before:
-            logger.warning("产品镜头引用的产品 '%s' 无任何可用参考图（sheet 与原图均缺失），保真注入退化为纯文本", name)
+            logger.warning("商品分镜引用的商品 '%s' 无任何可用参考图（sheet 与原图均缺失），保真注入退化为纯文本", name)
     return references
 
 
 def _product_names_in_references(product_references: list[dict]) -> list[str]:
-    """从产品参考集提取去重保序的产品名——高保真指令只点名实际注入了参考的产品。"""
+    """从商品参考集提取去重保序的商品名——高保真指令只点名实际注入了参考的商品。"""
     return list(dict.fromkeys(ref["name"] for ref in product_references))
 
 
@@ -1444,16 +1459,18 @@ def compute_affected_fingerprints(project_name: str, task_type: str, resource_id
     return result
 
 
-# (entity_type, action, label_tpl, include_script_episode)
-# 三类项目级资产（character / scene / prop）的 spec 由 lib.asset_types.ASSET_SPECS 派生。
+# (entity_type, action, label_key, include_script_episode)
+# label_key 是事件载荷携带的稳定标识，界面按用户语言查表成文；文案本身见 lib/i18n 的
+# ``event_label_*``。三类项目级资产（character / scene / prop）的 spec 由
+# lib.asset_types.ASSET_SPECS 派生。
 # storyboard / video / reference_video 不在此表——三者按剧本骨架种类（segments/scenes/shots/
 # video_units）动态派生 entity_type 与条目名词，见 _SKELETON_DRIVEN_TASK_ACTIONS，避免恒发
 # ``segment``/「分镜」而与分镜级事件（project_events.py）名词不一致。
 _TASK_CHANGE_SPECS: dict[str, tuple] = {
-    "grid": ("grid", "grid_ready", "多宫格分镜「{}」", True),
-    "grid_split": ("grid", "grid_split_done", "多宫格分镜「{}」切分", True),
-    "voice_sample": ("character", "voice_sample_ready", "「{}」试听样本", False),
-    **{atype: (atype, "updated", f"{spec.label_zh}「{{}}」设计图", False) for atype, spec in ASSET_SPECS.items()},
+    "grid": ("grid", "grid_ready", "grid", True),
+    "grid_split": ("grid", "grid_split_done", "grid_split", True),
+    "voice_sample": ("character", "voice_sample_ready", "voice_sample", False),
+    **{atype: (atype, "updated", f"asset_image_{atype}", False) for atype in ASSET_SPECS},
 }
 
 # 骨架驱动的任务类型 → 完成事件 action。entity_type/条目名词按项目剧本当前骨架种类
@@ -1465,12 +1482,12 @@ _SKELETON_DRIVEN_TASK_ACTIONS: dict[str, str] = {
     "tts": "tts_ready",
 }
 
-# reference_video 的条目标签沿用「参考视频」措辞（区别于分镜级事件的骨架名词「视频单元」，
-# 两者服务不同场景：此为任务完成通知的条目文案，不随骨架名词收敛）；storyboard/video 未列出，
-# 回退到骨架名词本身（分镜/场景/镜头），与同项目分镜级事件同口径。
-_SKELETON_TASK_LABEL_NOUNS: dict[str, str] = {
-    "reference_video": "参考视频",
-    "tts": "旁白",
+# 任务类型自带条目标签的例外：tts 的产物是旁白配音，与骨架条目名词不同名。reference_video 显式
+# 指向视频单元，与参考生视频项目的骨架名词同口径；storyboard/video 未列出，回退到按骨架种类派生
+# 的 label_key（分镜），与同项目分镜级事件同口径。
+_SKELETON_TASK_LABEL_KEYS: dict[str, str] = {
+    "reference_video": "skeleton_video_units",
+    "tts": "narration_audio",
 }
 
 
@@ -1518,20 +1535,19 @@ def emit_generation_success_batch(
             except Exception:
                 reference_route_task = False
         if reference_route_task:
-            # 参考路线的资源身份恒为 video unit；路线来自创建后不可变的 project.json，
+            # 参考生视频的资源身份恒为 video unit；生成模式来自创建后不可变的 project.json，
             # 不让 ad 剧本残留的 shots[] 在 TTS 成功后把 E1U* 事件错分为 shot。
             kind = "video_units"
         else:
             kind = resolve_script_kind(script) if isinstance(script, dict) else "segments"
         entity_type = SKELETON_ENTITY_TYPES.get(kind, "segment")
-        noun = _SKELETON_TASK_LABEL_NOUNS.get(task_type) or SKELETON_ITEM_NOUNS.get(kind, "分镜")
-        label_tpl = f"{noun}「{{}}」"
+        label_key = _SKELETON_TASK_LABEL_KEYS.get(task_type) or SKELETON_ITEM_LABEL_KEYS.get(kind, "skeleton_segments")
         include_script_episode = True
     else:
         spec = _TASK_CHANGE_SPECS.get(task_type)
         if spec is None:
             return {}
-        entity_type, action, label_tpl, include_script_episode = spec
+        entity_type, action, label_key, include_script_episode = spec
 
     asset_fingerprints = compute_affected_fingerprints(project_name, task_type, resource_id)
 
@@ -1539,7 +1555,7 @@ def emit_generation_success_batch(
         "entity_type": entity_type,
         "action": action,
         "entity_id": resource_id,
-        "label": label_tpl.format(resource_id),
+        **build_change_label(label_key, id=resource_id),
         "focus": None,
         "important": True,
         "asset_fingerprints": asset_fingerprints,
@@ -1623,8 +1639,8 @@ async def execute_storyboard_task(
             currency_resolver=_currency_resolver,
             formal_claims=_formal_claims,
         )
-        # 产品镜头：产品参考全量注入且排序绝对优先（先于角色/场景/道具 sheet），
-        # 并附高保真还原指令；氛围镜头零产品图，既有装配不变。
+        # 商品分镜：商品参考全量注入且排序绝对优先（先于角色/场景/道具 sheet），
+        # 并附高保真还原指令；氛围分镜零商品图，既有装配不变。
         _product_refs = _collect_shot_product_references(
             _project,
             _project_path,
@@ -1723,7 +1739,7 @@ def _resolve_tts_task_items(
 
     if not reference_video_route:
         return resolve_items(script)
-    # 参考路线的骨架种类由任务开工时定死的路线给出，直接指定；取证解析只服务于路线未知的调用方。
+    # 参考生视频的骨架种类由任务开工时定死的生成模式给出，直接指定；取证解析只服务于生成模式未知的调用方。
     return resolve_items(script, kind="video_units")
 
 
@@ -1735,7 +1751,7 @@ async def execute_tts_task(
     user_id: str = DEFAULT_USER_ID,
     task_id: str | None = None,
 ) -> dict[str, Any]:
-    """为一个 narrator-owned script unit 合成独立旁白音频。"""
+    """为一个 narrator-owned script unit 合成独立旁白配音。"""
     script_file = payload.get("script_file")
 
     def _prepare() -> tuple[dict, Path, str, Any | None, int | None, bool, tuple[ArtifactInputClaim, ...]]:
@@ -1803,6 +1819,7 @@ async def execute_tts_task(
         project_name=project_name,
         resource_ids=(resource_id,),
         script_file=script_file,
+        user_id=user_id,
     ):
         raise ConflictError("tts_conflicts_with_active_narrated_video", resource_id=resource_id)
 
@@ -2170,7 +2187,7 @@ def voice_sample_resource_id(character_name: str, task_id: str) -> str:
     """角色 TTS 试听样本在 ``audio/`` 下的资源 id（区别于旁白 segment id 命名空间）。
 
     生成产物只是待确认的预览件，落盘位置与旁白共用 ``audio/`` 目录但用固定前缀隔离，
-    不会与说书模式的 segment id 冲突；只有 confirm 步骤才把音频提升为角色 reference_audio。
+    不会与旁白/解说的 segment id 冲突；只有 confirm 步骤才把音频提升为角色 reference_audio。
 
     带 ``task_id`` 而非只用角色名：同一角色前一次成功样本尚未确认时发起重新生成会产生
     新任务，若资源 id 只按角色名固定，新任务落盘会原地覆盖前一个已成功任务引用的文件——
@@ -2268,6 +2285,7 @@ async def execute_video_task(
     user_id: str = DEFAULT_USER_ID,
     task_id: str | None = None,
     claimed_provider_id: str | None = None,
+    poll_timeout_seconds: int = DEFAULT_VIDEO_POLL_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     payload_script_file = payload.get("script_file")
     if script_file is None and isinstance(payload_script_file, str):
@@ -2308,8 +2326,8 @@ async def execute_video_task(
         raise ValueError("current script unit is missing video_prompt")
     requested_visual_prompt = copy.deepcopy(prompt)
     delivery_options = NarrationDeliveryRequestOptions.from_payload(payload)
-    # lane 归桶按项目路线求值，与提交入口（``generate_video``）同源：入口挡掉参考路线后
-    # 到达这里的项目恒为 i2v，但桶不在两处各硬编码一次，避免路线口径分叉。
+    # lane 归桶按项目生成模式求值，与提交入口（``generate_video``）同源：入口挡掉参考生视频后
+    # 到达这里的项目恒为 i2v，但桶不在两处各硬编码一次，避免生成模式口径分叉。
     execution_payload = without_video_execution_identity(payload) if task_id is not None else payload
     ctx = await resolve_generation_context(
         project_name,
@@ -2375,7 +2393,7 @@ async def execute_video_task(
     if isinstance(prompt, dict):
         prompt = strip_voice_profiles(prompt)
 
-    # drama 口型台词单一真相源在场景级有序 utterances：从 dialogue-kind 条目取台词注入 video YAML
+    # drama 口型台词单一真相源在分镜级有序 utterances：从 dialogue-kind 条目取台词注入 video YAML
     # 的 dialogue 出口（覆盖 payload 里 drama 已不再携带的 video_prompt.dialogue）。narration / ad
     # 的 item 无 utterances 字段，payload.dialogue 原样透传；SDK 路径 prompt 已是渲染好的字符串、跳过。
     if isinstance(item, dict) and isinstance(prompt, dict) and content_mode == "drama":
@@ -2464,6 +2482,7 @@ async def execute_video_task(
                 project_name=project_name,
                 resource_id=resource_id,
                 script_file=str(script_file),
+                user_id=user_id,
             ),
         )
         narration_actual_duration = delivery_projection.narration.actual_duration_seconds
@@ -2697,6 +2716,7 @@ async def execute_video_task(
             service_tier=service_tier,
             visual_basis_digest=visual_basis_digest,
             generate_audio=ctx.video.requested_generate_audio,
+            poll_timeout_seconds=poll_timeout_seconds,
         )
 
         async def _finalize() -> dict[str, Any]:
@@ -2864,7 +2884,7 @@ _DESIGN_PROMPT_BUILDERS: dict[str, Any] = {
 
 
 def _collect_product_reference_images(project: dict, project_path: Path, resource_id: str) -> list[Path] | None:
-    """产品原图（保真验收锚点）作为 sheet 标准化整理的参考输入；缺失文件跳过。"""
+    """商品原图（保真验收锚点）作为 sheet 标准化整理的参考输入；缺失文件跳过。"""
     entry = normalize_asset_bucket(project.get("products")).get(normalize_asset_name(resource_id)) or {}
     refs = entry.get("reference_images")
     if not isinstance(refs, list):
@@ -2872,10 +2892,10 @@ def _collect_product_reference_images(project: dict, project_path: Path, resourc
     # safe_exists 同时兜住脏数据（非字符串）、越出项目目录的绝对路径 / `..` 穿越与文件缺失
     existing = [project_path / ref for ref in refs if safe_exists(project_path, ref)]
     if refs and not existing:
-        # 声明了原图却全部缺失：下游（sheet 生成 / 镜头保真注入）静默退化会丢失保真锚定，
+        # 声明了原图却全部缺失：下游（sheet 生成 / 分镜保真注入）静默退化会丢失保真锚定，
         # 留观测痕迹便于诊断（不阻塞——文件缺失可能是归档迁移等正常历史原因）。
-        # 文案保持场景中立：本函数同时服务 sheet 生成与产品镜头参考收集两个调用方。
-        logger.warning("产品 '%s' 声明了 %d 张原图但磁盘均缺失", resource_id, len(refs))
+        # 文案保持场景中立：本函数同时服务 sheet 生成与商品分镜参考收集两个调用方。
+        logger.warning("商品 '%s' 声明了 %d 张原图但磁盘均缺失", resource_id, len(refs))
     return existing or None
 
 
@@ -3157,10 +3177,7 @@ async def execute_grid_task(
     resource_id is the grid_id. Steps:
     1. Load GridGeneration, set status to generating
     2. Generate the joint image via MediaGenerator (versioned as resource_type "grids")
-    3. Mark completed
-
-    只产出联合图，不触碰任何分镜格；落格由独立的切分操作
-    （server.services.grid_split.apply_grid_split）显式执行。
+    3. Mark completed and split the requested cells before the task settles
     """
     from lib.grid.layout import GRID_FALLBACK_RESOLUTION, grid_aspect_ratio_for
     from lib.grid.prompt_builder import build_grid_prompt
@@ -3408,6 +3425,47 @@ async def execute_grid_task(
             await run_noninterruptible_sync(frozen_references.cleanup)
 
     created_at = grid.created_at
+    unit_results: dict[str, dict[str, Any]] = {}
+    report_scene_ids = payload.get("report_scene_ids")
+    if isinstance(report_scene_ids, list) and report_scene_ids:
+        from server.services.grid_split import apply_grid_split
+
+        try:
+            with project_change_source("worker"):
+                split = await apply_grid_split(
+                    project_name,
+                    grid,
+                    only_scene_ids=frozenset(str(scene_id) for scene_id in report_scene_ids),
+                    task_aware=task_id is not None,
+                )
+            if task_id is not None:
+                receipt = _CompositeCancellationReceipt(
+                    tuple(candidate for candidate in (split, receipt) if candidate is not None)
+                )
+            cut = set(split.updated_scene_ids)
+            for scene_id in report_scene_ids:
+                if scene_id in cut:
+                    unit_results[scene_id] = {"file_path": resource_relative_path("storyboards", scene_id)}
+                else:
+                    unit_results[scene_id] = {
+                        "problem": {
+                            "code": "generation_post_processing_failed",
+                            "detail": f"联合图已生成，但分镜 {scene_id} 未落格（已不在剧本中）",
+                            "action": "fix_input",
+                            "params": {"grid_id": grid.id},
+                        }
+                    }
+        except Exception:  # noqa: BLE001
+            logger.exception("联合图切分落格失败: grid_id=%s", grid.id)
+            for scene_id in report_scene_ids:
+                unit_results[scene_id] = {
+                    "problem": {
+                        "code": "generation_post_processing_failed",
+                        "detail": "联合图已生成，但切分落格失败（不要重新生成）",
+                        "action": "none",
+                        "params": {"grid_id": grid.id},
+                    }
+                }
 
     return compensable_formal_task_result(
         {
@@ -3416,6 +3474,7 @@ async def execute_grid_task(
             "created_at": created_at,
             "resource_type": "grids",
             "resource_id": resource_id,
+            "unit_results": unit_results,
         },
         receipt,
     )
@@ -3430,6 +3489,7 @@ async def _execute_reference_video_task_proxy(
     user_id: str,
     task_id: str | None = None,
     claimed_provider_id: str | None = None,
+    poll_timeout_seconds: int = DEFAULT_VIDEO_POLL_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     """Lazy proxy to avoid circular import: reference_video_tasks imports from this module."""
     from server.services.reference_video_tasks import execute_reference_video_task
@@ -3442,6 +3502,7 @@ async def _execute_reference_video_task_proxy(
         user_id=user_id,
         task_id=task_id,
         claimed_provider_id=claimed_provider_id,
+        poll_timeout_seconds=poll_timeout_seconds,
     )
 
 
@@ -3481,6 +3542,8 @@ async def execute_generation_task(task: dict[str, Any], *, claimed_provider_id: 
     payload = task.get("payload") or {}
     user_id = task.get("user_id", DEFAULT_USER_ID)
     queue_task_id = task.get("task_id")
+    # worker 派发时把当下的全局设置写进任务字典；非 worker 调用方（测试 / 直生）落回缺省。
+    video_poll_timeout_seconds = int(task.get("video_poll_timeout_seconds", DEFAULT_VIDEO_POLL_TIMEOUT_SECONDS))
 
     if not project_name:
         raise ValueError("task.project_name is required")
@@ -3488,6 +3551,10 @@ async def execute_generation_task(task: dict[str, Any], *, claimed_provider_id: 
         raise ValueError("task.task_type is required")
 
     executor = _TASK_EXECUTORS.get(task_type)
+    if task_type.startswith("text_"):
+        from server.tool_runtime import execute_queued_text_task
+
+        return await execute_queued_text_task(task)
     if executor is None:
         raise ValueError(f"unsupported task_type: {task_type}")
 
@@ -3504,6 +3571,7 @@ async def execute_generation_task(task: dict[str, Any], *, claimed_provider_id: 
                 user_id=user_id,
                 task_id=queue_task_id,
                 claimed_provider_id=claimed_provider_id,
+                poll_timeout_seconds=video_poll_timeout_seconds,
             )
         elif task_type == "video":
             result = await executor(
@@ -3514,6 +3582,7 @@ async def execute_generation_task(task: dict[str, Any], *, claimed_provider_id: 
                 user_id=user_id,
                 task_id=queue_task_id,
                 claimed_provider_id=claimed_provider_id,
+                poll_timeout_seconds=video_poll_timeout_seconds,
             )
         else:
             result = await executor(project_name, resource_id, payload, user_id=user_id, task_id=queue_task_id)

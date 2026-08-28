@@ -36,7 +36,7 @@ import {
   lookupVideoAudioControl,
 } from "@/utils/provider-models";
 import { ACCENT_BTN_CLS, ACCENT_BUTTON_STYLE, CARD_STYLE } from "@/components/ui/darkroom-tokens";
-import type { ProviderInfo } from "@/types/provider";
+import type { ProviderInfo, VideoRoute } from "@/types/provider";
 
 interface CardProps {
   kicker: string;
@@ -167,6 +167,8 @@ export function MediaModelSection() {
   const currentImageT2I = draft.default_image_backend_t2i ?? settings.default_image_backend_t2i ?? "";
   const currentImageI2I = draft.default_image_backend_i2i ?? settings.default_image_backend_i2i ?? "";
   const currentAudio = draft.video_generate_audio ?? settings.video_generate_audio ?? false;
+  const currentPollTimeout =
+    draft.video_poll_timeout_seconds ?? settings.video_poll_timeout_seconds;
 
   // 全局层是解析链的基准，细分项留空即回退全局默认模型；默认模型也留空时是自动推断，
   // 前端算不出具体模型，故不显示生效值（下拉里显示「自动选择」）。
@@ -220,14 +222,16 @@ export function MediaModelSection() {
     ? (lookupCatalogVideoAudio(providers, currentVideo)?.voiceConsistency ?? null)
     : null;
   // 音频勾选框按两个生效桶（细分桶留空即回退基础默认）的开关可控性判定：两桶同为恒有声或
-  // 同为恒无声时，无论走哪条路线都收不到音轨开关，置灰并展示成片的实际音轨状态。只要还有一个
+  // 同为恒无声时，无论选择哪种生成模式都收不到音轨开关，置灰并展示成片的实际音轨状态。只要还有一个
   // 桶可控就不置灰——否则闲置的基础默认会连带禁掉可控桶的合法关闭。
   // 两桶不一致时只由下方警告提示，存量的「关闭」由警告给一键修正入口，不静默改写配置
   // （入队前预检按实际执行的桶拒绝）。
-  const bucketAudioControl = (backend: string) =>
-    backend ? lookupVideoAudioControl(providers, backend) : null;
-  const i2vAudioControl = bucketAudioControl(currentVideoI2V || currentVideo);
-  const r2vAudioControl = bucketAudioControl(currentVideoR2V || currentVideo);
+  // 每个桶按它自己的执行路径取值：同一模型在两条路径上的音轨形态可以不同（可灵 v3-omni 图生
+  // 可控、参考生无开关），按无路径上下文的值取会让 r2v 桶报出一个执行期不存在的开关。
+  const bucketAudioControl = (backend: string, route: VideoRoute) =>
+    backend ? lookupVideoAudioControl(providers, backend, route) : null;
+  const i2vAudioControl = bucketAudioControl(currentVideoI2V || currentVideo, "i2v");
+  const r2vAudioControl = bucketAudioControl(currentVideoR2V || currentVideo, "r2v");
   const audioLockedControl =
     i2vAudioControl === r2vAudioControl &&
     (i2vAudioControl === "always_on" || i2vAudioControl === "always_off")
@@ -241,6 +245,9 @@ export function MediaModelSection() {
     ? lookupResolutions(providers, currentVideo, customProviders, endpointToMediaType).options
     : [];
 
+  // 不传 defaultRoute：全局默认模型两条路径都会用到，取任一条都会误报另一条；无项目上下文
+  // 时按目录 i2v 位展示。两个细分项下拉各按自己的桶取值，与上方 i2vAudioControl / r2vAudioControl
+  // 同口径。
   const renderVideoOptionMeta = videoOptionMetaRenderer({ t, providers, customProviders, endpointToMediaType });
   const currentAudioBackend = draft.default_audio_backend ?? settings.default_audio_backend ?? "";
   const currentNarrationVoice = draft.narration_voice ?? settings.narration_voice ?? "";
@@ -357,6 +364,29 @@ export function MediaModelSection() {
             }}
           />
         )}
+        <div className="mt-4">
+          <label
+            htmlFor="video-poll-timeout-input"
+            className="mb-1.5 block font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-text-4"
+          >
+            {t("video_poll_timeout_label")}
+          </label>
+          <input
+            id="video-poll-timeout-input"
+            type="number"
+            min={60}
+            step={1}
+            value={currentPollTimeout}
+            onChange={(e) => {
+              const next = Number(e.target.value);
+              if (Number.isInteger(next)) {
+                setDraft((prev) => ({ ...prev, video_poll_timeout_seconds: next }));
+              }
+            }}
+            className="w-full rounded-[8px] border border-hairline bg-bg-grad-a/55 px-3 py-2 text-[12.5px] text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          />
+          <p className="mt-1 text-[11px] text-text-4">{t("video_poll_timeout_hint")}</p>
+        </div>
       </SectionCard>
 
       {/* Image */}

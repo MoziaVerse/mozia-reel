@@ -25,7 +25,6 @@ from typing import Literal
 import httpx
 
 from lib.dashscope_shared import (
-    DASHSCOPE_POLL_INTERVAL_SECONDS,
     dashscope_failure_reason,
     dashscope_headers,
     dashscope_native_base_url,
@@ -52,6 +51,7 @@ from lib.video_backends.base import (
     ProviderJobIdPersistenceMixin,
     ReferenceAudioMode,
     ResumeExpiredError,
+    VideoAudioMode,
     VideoCapabilities,
     VideoCapabilityError,
     VideoGenerationRequest,
@@ -99,8 +99,6 @@ DEFAULT_MODEL = "happyhorse-1.1-i2v"
 
 _VIDEO_ENDPOINT = "/services/aigc/video-generation/video-synthesis"
 
-_MIN_POLL_TIMEOUT_SECONDS = 900.0
-_POLL_TIMEOUT_PER_SECOND = 60.0
 
 # wan2.7-r2v 的 reference_voice 逐段挂在参考素材项上，故音频段数上限等同参考素材总数上限
 # （官方：参考图像 + 参考视频 ≤ 5）。
@@ -137,7 +135,7 @@ WAN3_PATTERN = re.compile(r"(?<![a-z0-9])wan[-_]?3(?![a-z0-9])", re.I)
 #
 # 只锚 2.7、不覆盖其余 2.x 小版本：本后端固定请求
 # `/services/aigc/video-generation/video-synthesis`（_VIDEO_ENDPOINT），而 wan2.1 / wan2.2-s2v
-# 按 docs/research/arcreel-video-api-protocol-research.md 记录走的是旧端点
+# 走的是旧端点
 # `/services/aigc/image2video/video-synthesis/`、payload 字段也不同（如 wan2.6 用 `size` 而非
 # 2.7 的 `resolution`+`ratio`），并入本正则会把协议不兼容的请求送到这个端点。
 # 点号形态（如 "wan2.1-kf2v"）不受本正则约束，归 WAN_DOT_FORM_PATTERN 判定，其路由是否也应
@@ -159,7 +157,7 @@ HAPPYHORSE_PATTERN = re.compile(r"(?<![a-z0-9])happyhorse(?![a-z0-9])", re.I)
 # "wan2.7-fooimage-to-video" / "wan2.7-image-to-videofoo" 这类相邻字母被误判命中。
 WAN_IMAGE_TO_VIDEO_PATTERN = re.compile(r"(?<![a-z0-9])image[-_]?(?:to|2)[-_]?video(?![a-z0-9])", re.I)
 
-# wan2.7-videoedit（指令式视频编辑，见 docs/research/arcreel-vendor-integration-research.md）是
+# wan2.7-videoedit（指令式视频编辑）是
 # 万相家族内真实存在的独立模态，但本后端只实现了 t2v/i2v/r2v 三档的请求构造，没有该模态所需的
 # 输入视频传输字段。命中家族正则但落这个模态的 id 须排除出原生路由与已知能力档，否则会带着
 # _DEFAULT_PROFILE（丢失该模态实际所需的能力声明）发出本后端无法正确构造的请求。两侧标识符边界
@@ -326,15 +324,27 @@ def _normalize_wan27_alias(family_suffix: str) -> str:
 
 # 按 model id 派发能力声明。happyhorse-r2v 仅 reference_image（无 first_frame）；
 # wan2.7-r2v 额外支持首帧与参考音色。
+#
+# audio_track：只有 wan3.0 的请求带音轨开关（``_build_payload`` 里的 ``parameters["audio"]``），
+# 其余型号恒有声——下发该参数会被上游当非法参数拒。两条路径共用同一份声明：这些型号没有参考
+# 生视频专属的请求形态差异，故不另设 reference_route_audio_track。
 _MODEL_PROFILES: dict[str, VideoCapabilities] = {
-    "happyhorse-1.1-t2v": VideoCapabilities(first_frame=False),
-    "happyhorse-1.1-i2v": VideoCapabilities(first_frame=True),
-    "happyhorse-1.1-r2v": VideoCapabilities(first_frame=False, max_reference_images=9),
-    "happyhorse-1.0-t2v": VideoCapabilities(first_frame=False),
-    "happyhorse-1.0-i2v": VideoCapabilities(first_frame=True),
-    "happyhorse-1.0-r2v": VideoCapabilities(first_frame=False, max_reference_images=9),
-    "wan2.7-t2v": VideoCapabilities(first_frame=False, max_prompt_chars=_WAN27_MAX_PROMPT_CHARS),
-    "wan2.7-i2v": VideoCapabilities(first_frame=True, max_prompt_chars=_WAN27_MAX_PROMPT_CHARS),
+    "happyhorse-1.1-t2v": VideoCapabilities(first_frame=False, audio_track=VideoAudioMode.ALWAYS_ON),
+    "happyhorse-1.1-i2v": VideoCapabilities(first_frame=True, audio_track=VideoAudioMode.ALWAYS_ON),
+    "happyhorse-1.1-r2v": VideoCapabilities(
+        first_frame=False, max_reference_images=9, audio_track=VideoAudioMode.ALWAYS_ON
+    ),
+    "happyhorse-1.0-t2v": VideoCapabilities(first_frame=False, audio_track=VideoAudioMode.ALWAYS_ON),
+    "happyhorse-1.0-i2v": VideoCapabilities(first_frame=True, audio_track=VideoAudioMode.ALWAYS_ON),
+    "happyhorse-1.0-r2v": VideoCapabilities(
+        first_frame=False, max_reference_images=9, audio_track=VideoAudioMode.ALWAYS_ON
+    ),
+    "wan2.7-t2v": VideoCapabilities(
+        first_frame=False, max_prompt_chars=_WAN27_MAX_PROMPT_CHARS, audio_track=VideoAudioMode.ALWAYS_ON
+    ),
+    "wan2.7-i2v": VideoCapabilities(
+        first_frame=True, max_prompt_chars=_WAN27_MAX_PROMPT_CHARS, audio_track=VideoAudioMode.ALWAYS_ON
+    ),
     # 带首帧的参考生视频是 wan2.7-r2v 的官方形态（_build_media 同请求组装
     # first_frame + reference_image）。
     "wan2.7-r2v": VideoCapabilities(
@@ -346,6 +356,7 @@ _MODEL_PROFILES: dict[str, VideoCapabilities] = {
         # 编排层必须显式给出「谁的声音配哪张图」的映射，不能假设与 reference_audio_files 同序。
         reference_audio_per_image=True,
         max_prompt_chars=_WAN27_MAX_PROMPT_CHARS,
+        audio_track=VideoAudioMode.ALWAYS_ON,
     ),
     # wan3.0 的参考音频是 media 数组里的独立条目（不像 2.7 挂在参考素材项上），故不声明
     # reference_audio_per_image，改由 max_reference_audio_total_seconds 约束总量。
@@ -360,7 +371,10 @@ _MODEL_PROFILES: dict[str, VideoCapabilities] = {
     ),
 }
 
-# 未知 model（如代理中转自定义命名）按通用 i2v/t2v 处理，VideoCapabilities() 默认支持首帧。
+# 未知 model（如代理中转自定义命名）按通用 i2v/t2v 处理，VideoCapabilities() 默认支持首帧、
+# 音轨开关按「无信号不收紧」保持可控。请求侧的对应判定是「无信号不发未知参数」（_build_payload
+# 只对 _is_wan3 命中的型号下发 audio），两者方向不同是有意的：声明侧误判恒有声会把用户的开关
+# 锁死，请求侧误发未知参数会被上游直接拒。
 _DEFAULT_PROFILE = VideoCapabilities()
 
 
@@ -517,8 +531,9 @@ class DashScopeVideoBackend(ProviderJobIdPersistenceMixin):
             parameters["ratio"] = request.aspect_ratio
         if request.seed is not None:
             parameters["seed"] = request.seed
-        # 音轨开关只对 wan3.0 下发：其余型号恒有声（registry 侧 audio_always_on），下发该参数
-        # 会被上游当非法参数拒绝。开关可控与否的真相源在 registry，此处按型号分派运输形态。
+        # 音轨开关只对 wan3.0 下发：其余型号恒有声，下发该参数会被上游当非法参数拒绝。本行就是
+        # `_MODEL_PROFILES` 里 audio_track 声明的执行侧对应物（恒有声型号声明 ALWAYS_ON，wan3.0
+        # 取默认的 CONTROLLABLE），改一侧须同改另一侧。
         if _is_wan3(self._model):
             parameters["audio"] = request.generate_audio
 
@@ -743,8 +758,7 @@ class DashScopeVideoBackend(ProviderJobIdPersistenceMixin):
             poll_fn=_gated_poll,
             is_done=is_dashscope_terminal,
             is_failed=dashscope_failure_reason,
-            poll_interval=DASHSCOPE_POLL_INTERVAL_SECONDS,
-            max_wait=self._max_wait(request.duration_seconds),
+            max_wait=request.poll_timeout_seconds,
             retry_if=should_retry_poll,
             label="DashScope",
             on_progress=lambda v, elapsed: logger.info(
@@ -787,7 +801,3 @@ class DashScopeVideoBackend(ProviderJobIdPersistenceMixin):
     )
     async def _download_with_retry(video_url: str, output_path: Path) -> None:
         await download_video(video_url, output_path)
-
-    @staticmethod
-    def _max_wait(duration_seconds: int) -> float:
-        return max(_MIN_POLL_TIMEOUT_SECONDS, duration_seconds * _POLL_TIMEOUT_PER_SECOND)

@@ -91,13 +91,13 @@ export interface ModelConfigSectionProps {
     textComplex: string;
   };
   /**
-   * 项目级「视频生成音频」覆盖（null=跟随全局，true/false=显式覆盖）。
+   * 项目级「生成有声视频」覆盖（null=跟随全局，true/false=显式覆盖）。
    * 仅在传入 onVideoGenerateAudioChange 时于视频通道内渲染该开关——此项是视频模型的能力开关，
    * 与旁白配音（TTS）无关，故归在视频通道而非单列。创建项目向导不传则不渲染。
    */
   videoGenerateAudio?: boolean | null;
   /**
-   * 全局「视频生成音频」的生效值，用于把 `videoGenerateAudio` 的 null（跟随全局）折叠成实际
+   * 全局「生成有声视频」的生效值，用于把 `videoGenerateAudio` 的 null（跟随全局）折叠成实际
    * 生效值——矛盾提示要按生效值给，否则项目留空而全局为「关闭」时界面无从察觉。省略即按开启处理。
    */
   globalVideoGenerateAudio?: boolean;
@@ -270,7 +270,9 @@ export function ModelConfigSection({
 
   // 音频开关按执行模型的可控性判定：恒有声 / 恒无声的模型收不到音轨开关，置灰并展示成片的
   // 实际音轨状态（而非存量配置值），存量的「关闭」由下方警告给一键修正入口，不静默改写配置。
-  const audioControl = lookupVideoAudioControl(providers, executingVideo);
+  // 按路径取值而非按模型：可灵 v3-omni 图生可控、参考生无开关，只按模型取会让参考生视频放行一个
+  // 执行期必然被丢弃的开关。
+  const audioControl = lookupVideoAudioControl(providers, executingVideo, usesReferenceImages ? "r2v" : "i2v");
   const audioLocked = audioControl === "always_on" || audioControl === "always_off";
   const audioDisplayValue = audioLocked
     ? audioControl === "always_on"
@@ -293,7 +295,15 @@ export function ModelConfigSection({
     endpointToMediaType,
   ).options;
 
-  const renderVideoOptionMeta = videoOptionMetaRenderer({ t, providers, customProviders, endpointToMediaType });
+  // 默认层下拉展示的是本项目实际会执行的那条路径（与上方 audioControl 同口径）；两个细分项
+  // 下拉各按自己的桶取值，不受此处影响。
+  const renderVideoOptionMeta = videoOptionMetaRenderer({
+    t,
+    providers,
+    customProviders,
+    endpointToMediaType,
+    defaultRoute: usesReferenceImages ? "r2v" : "i2v",
+  });
 
   const handleVideoChange = (next: string) => applyVideoLayer({ videoBackend: next });
 

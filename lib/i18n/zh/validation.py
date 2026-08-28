@@ -18,6 +18,7 @@ MESSAGES = {
     "val_field_must_be_string_typed": "{field} 必须是字符串，当前为 {actual}",
     "val_field_must_be_array": "{field} 必须是数组",
     "val_field_must_be_nonempty_array": "{field} 必须是非空数组",
+    "val_field_must_be_nonempty_string": "{field} 必须是非空字符串",
     "val_field_must_be_object": "{field} 必须是对象",
     "val_field_invalid": "{field} 不合法: {detail}",
     "val_ledger_source_file_not_relative": "source_file 必须是项目内相对 POSIX 路径",
@@ -52,7 +53,7 @@ MESSAGES = {
     "val_ad_only_field": "{field} 仅广告/短片项目（content_mode=ad）可用",
     "val_ad_missing_target_duration": "缺少必填字段: target_duration（广告/短片项目的目标总时长，秒）",
     "val_ad_target_duration_invalid": "target_duration 值无效: {value}，必须为正整数秒",
-    "val_ad_no_default_duration": "广告/短片项目不持有 default_duration（镜头时长按 target_duration 预算逐镜头规划）",
+    "val_ad_no_default_duration": "广告/短片项目不持有 default_duration（分镜时长按 target_duration 预算逐个分镜规划）",
     "val_ad_no_grid_storyboard": "广告/短片项目不支持多宫格分镜（grid_storyboard）",
     "val_ad_episodes_single": "广告/短片项目 episodes 必须恒为第 1 集单条",
     "val_ad_shots_missing": "ad 脚本缺少 shots 数组或为空",
@@ -86,10 +87,10 @@ MESSAGES = {
     "val_utterance_dialogue_speaker": "{prefix} dialogue 必须带非空 speaker",
     "val_utterance_voiceover_speaker": "{prefix} voiceover 不得带 speaker",
     "val_scene_speech_overflow": (
-        "{prefix}: 估算说话时长 {spoken:.1f} 秒超过场景时长 {duration} 秒逾 {tolerance:.0%}"
+        "{prefix}: 估算说话时长 {spoken:.1f} 秒超过分镜时长 {duration} 秒逾 {tolerance:.0%}"
         "（容差上界 {budget:.1f} 秒），长对白可能说不完或语速畸快（仅提示，不阻塞保存）"
     ),
-    # ---- ad 镜头 ----
+    # ---- ad 分镜 ----
     "val_shot_duration_missing_zero": "{prefix}: 缺少 duration_seconds，将按 0 计入总时长",
     "val_shot_duration_out_of_range": (
         "{prefix}: duration_seconds 值无效 '{value}'，reference_video 路径必须是 {low}-{high} 之间的整数"
@@ -101,40 +102,30 @@ MESSAGES = {
     "val_unit_id_duplicate": "{prefix}: unit_id 重复 '{value}'",
     "val_video_units_missing": "reference_video 脚本缺少 video_units 数组或为空",
     "val_unit_duration_range": "{prefix}: duration_seconds 必须是 {low}-{high} 之间的整数",
-    "val_unit_shots_too_many": "{prefix}: shots 含 {count} 个条目，最多允许 {max} 个",
-    "val_migration_content_replan_requires_needs_replan": (
-        "{prefix}: migration_requires_content_replan=true 时 needs_replan 必须为 true"
-    ),
-    "val_reference_entry_must_be_object": "{prefix}: reference 条目必须是对象",
-    "val_reference_type_invalid": "{prefix}: reference.type 无效: {value}",
-    "val_reference_name_invalid": "{prefix}: reference.name 必须是非空字符串: {value}",
-    "val_reference_not_in_bucket": "{prefix}: 引用的{asset_type} '{name}' 不在 project.json 对应 bucket 中",
-    "val_ref_type_invalid": "{prefix}: type 无效: {value}",
-    "val_ref_name_invalid": "{prefix}: name 必须是非空字符串: {value}",
-    # ---- 骨架与路线失配 ----
+    # ---- 骨架与生成模式失配 ----
     "val_skeleton_noun_segments": "分镜",
-    "val_skeleton_noun_scenes": "场景",
-    "val_skeleton_noun_shots": "镜头",
+    "val_skeleton_noun_scenes": "分镜",
+    "val_skeleton_noun_shots": "分镜",
     "val_skeleton_noun_video_units": "视频单元",
     "val_route_reference_video": "参考生视频（reference_video）",
     "val_route_storyboard": "分镜图生视频（storyboard）",
     "val_skeleton_mismatch_reference_known": (
-        "脚本骨架与项目生成路线不符：项目路线是{route}，要求 {expected}（{expected_noun}）骨架，"
+        "脚本骨架与项目生成模式不符：项目生成模式是{route}，要求 {expected}（{expected_noun}）骨架，"
         "当前脚本是 {actual}（{actual_noun}）骨架。"
-        "请重跑 split-reference-video-units 重新拆分该集，再重新生成脚本。该脚本仍可查看、编辑与导出。"
+        "请调用 generate_step1 重新拆分该集，再重新生成脚本。该脚本仍可查看、编辑与导出。"
     ),
     "val_skeleton_mismatch_reference_none": (
-        "脚本骨架与项目生成路线不符：项目路线是{route}，要求 {expected}（{expected_noun}）骨架，"
+        "脚本骨架与项目生成模式不符：项目生成模式是{route}，要求 {expected}（{expected_noun}）骨架，"
         "当前脚本没有任何骨架数组。"
-        "请重跑 split-reference-video-units 重新拆分该集，再重新生成脚本。该脚本仍可查看、编辑与导出。"
+        "请调用 generate_step1 重新拆分该集，再重新生成脚本。该脚本仍可查看、编辑与导出。"
     ),
     "val_skeleton_mismatch_storyboard_known": (
-        "脚本骨架与项目生成路线不符：项目路线是{route}，要求 {expected}（{expected_noun}）骨架，"
+        "脚本骨架与项目生成模式不符：项目生成模式是{route}，要求 {expected}（{expected_noun}）骨架，"
         "当前脚本是 {actual}（{actual_noun}）骨架。"
         "请重跑分集拆分（step1）重新拆分该集，再重新生成脚本。该脚本仍可查看、编辑与导出。"
     ),
     "val_skeleton_mismatch_storyboard_none": (
-        "脚本骨架与项目生成路线不符：项目路线是{route}，要求 {expected}（{expected_noun}）骨架，"
+        "脚本骨架与项目生成模式不符：项目生成模式是{route}，要求 {expected}（{expected_noun}）骨架，"
         "当前脚本没有任何骨架数组。"
         "请重跑分集拆分（step1）重新拆分该集，再重新生成脚本。该脚本仍可查看、编辑与导出。"
     ),
@@ -156,8 +147,8 @@ MESSAGES = {
     "arch_missing_asset_definition": (
         "{items_key}[{index}]: {field} 引用了不存在于 project.json 的{asset_type}: {names}"
     ),
-    "arch_unit_missing_asset_definition": (
-        "video_units[{index}]: references 引用了不存在于 project.json 的{asset_type}: {names}"
+    "arch_unit_unresolved_mentions": (
+        "video_units[{index}]: 正文引用了不存在于 project.json 的资产名: {names}；这些引用不会生成参考图"
     ),
     "arch_generated_assets_defaults": "{label}[{index}].generated_assets: 补全默认字段 {fields}",
     "arch_missing_generated_assets": "{label}[{index}]: 补全缺失字段 generated_assets",
@@ -184,4 +175,64 @@ MESSAGES = {
     "arch_extract_path_traversal": "解压路径越界: {path}",
     "arch_conflict_detected": "检测到项目编号冲突",
     "arch_project_name_conflict": "项目编号 '{name}' 已存在，请选择覆盖现有项目或自动重命名导入。",
+    # ---- 自定义调用端点 · 定义校验 ----
+    "val_ce_missing_field": "缺少必填字段：{field}",
+    "val_ce_unknown_field": "不认识的字段：{field}",
+    "val_ce_removed_field": "字段已移除：{field}——{reason}",
+    "val_ce_invalid_type": "类型不符，应为 {expected}",
+    "val_ce_invalid_enum_value": "取值不在允许范围内，可选：{allowed}",
+    "val_ce_invalid_value": "取值不符合格式约定：{detail}",
+    "val_ce_schema_violation": "不符合定义格式：{detail}",
+    "val_ce_removed_reason_request_query": "静态与动态 query 都写进 url 模板，凭证 query 归 auth.query",
+    "val_ce_removed_reason_status_codes": "HTTP 码策略归运行时：2xx 成功、429 与 5xx 重试、其余失败",
+    "val_ce_removed_reason_polling_policy": "轮询间隔与超时是运行时策略，不进定义",
+    "val_ce_removed_reason_extract_source": "取值根一律是响应体，HTTP 状态码不走 JSONPath",
+    "val_ce_removed_reason_extract_usage_keys": "用量改挂 poll.extract.usage",
+    "val_ce_removed_reason_mime_types": "素材格式不做白名单，由供应商在提交时拒绝",
+    "val_ce_removed_reason_media_type": "首期只有视频一种媒体类型",
+    "val_ce_malformed_placeholder": (
+        "{fragment} 不是合法占位符：只支持裸变量（如 prompt、inputs.first_frame），"
+        "没有过滤器、下标与表达式，开括号也必须闭合"
+    ),
+    "val_ce_undeclared_variable": "占位符 {name} 引用了未声明的变量",
+    "val_ce_api_key_outside_auth": "api_key 只能出现在 auth 节：凭证不进请求体与 URL，分享出去的定义也不该带上它",
+    "val_ce_auth_without_api_key": "auth 节非空却没有引用 api_key：无凭证接口请把这一节留空，否则让它写入凭证",
+    "val_ce_auth_header_conflict": "{header} 与 auth.headers 同名（不区分大小写）：凭证 header 只能由 auth 节写入",
+    "val_ce_header_name_duplicate": "{header} 与同表里的 {first} 只差大小写：HTTP 头名不区分大小写，两条会一起发出去",
+    "val_ce_auth_query_conflict": "URL 自带的 query 参数 {param} 与 auth.query 同名：凭证 query 只能由 auth 节写入",
+    "val_ce_task_id_out_of_scope": "task_id 只在 poll 与 result 节可用",
+    "val_ce_result_id_out_of_scope": "result_id 只在 result 节可用",
+    "val_ce_result_id_without_extract": "引用了 result_id，但 poll.extract 没有声明 result_id",
+    "val_ce_input_out_of_scope": "素材 {name} 只能在 submit 节引用：轮询与取件请求不携带素材",
+    "val_ce_list_input_requires_each": "{name} 是列表型素材，只能经 $each 展开，不能直接内插",
+    "val_ce_each_in_not_list_input": "$each.in 指向的 {name} 不是已声明的列表型素材",
+    "val_ce_each_shape_invalid": "$each 要么写 item 铺成数组元素，要么同时写 key 与 value 铺成键值对，两种写法不能混用",
+    "val_ce_each_position_mismatch": (
+        "$each 的写法与所在位置不符：数组位置写 item 铺成元素，对象位置写 key 与 value 铺成键值对"
+    ),
+    "val_ce_each_alias_reserved": "{name} 是循环体内的保留变量，不能用作 $each 的元素别名",
+    "val_ce_when_unknown_input": "$when 指向的 {name} 不是已声明的素材",
+    "val_ce_input_not_referenced": "声明了素材却没有在 submit 里引用：既不会发给供应商，也不能据此声明能力",
+    "val_ce_enum_map_variable_not_allowed": "{variable} 不支持枚举映射，可映射的变量：{allowed}",
+    "val_ce_status_map_target_invalid": "状态档位 {target} 不在 {allowed} 之内，过期语义请映射到 failed",
+    "val_ce_capability_declared_without_input": "声明了 {capability}，但 submit 没有引用任何 {source} 素材，能力会撒谎",
+    "val_ce_capability_input_without_declaration": (
+        "submit 引用了 {source} 素材，却没有声明 {capability}，素材会发出去而界面不开放该能力"
+    ),
+    "val_ce_capability_incoherent": "能力 {capability} 与同组声明矛盾，须满足：{requirement}",
+    "val_ce_jsonpath_not_a_string": "取值路径必须是字符串：{path_expression}",
+    "val_ce_jsonpath_surrounding_whitespace": "取值路径首尾不得有空白：{path_expression}",
+    "val_ce_jsonpath_missing_root": "取值路径必须以 $ 开头：{path_expression}",
+    "val_ce_jsonpath_recursive_descent": "取值路径禁用递归下降（第 {position} 个字符）：{path_expression}",
+    "val_ce_jsonpath_union": "取值路径禁用联合选择器（第 {position} 个字符）：{path_expression}",
+    "val_ce_jsonpath_slice_step": "取值路径禁用切片步长（第 {position} 个字符）：{path_expression}",
+    "val_ce_jsonpath_function_extension": "取值路径禁用函数扩展（第 {position} 个字符）：{path_expression}",
+    "val_ce_jsonpath_filter_root_reference": "过滤器内不得引用根节点（第 {position} 个字符）：{path_expression}",
+    "val_ce_jsonpath_filter_non_singular": "过滤器内只允许单值查询（第 {position} 个字符）：{path_expression}",
+    "val_ce_jsonpath_regex_operator": "取值路径禁用正则匹配运算符（第 {position} 个字符）：{path_expression}",
+    "val_ce_jsonpath_syntax": "取值路径语法错误（第 {position} 个字符）：{path_expression}",
+    "val_ce_poll_without_task_id": "轮询请求没有引用 task_id，请确认这是有意的",
+    "val_ce_jsonpath_wildcard_order": (
+        "{path_expression} 含通配：对象通配只取首个，键序在前端预览与后端执行之间可能不同"
+    ),
 }

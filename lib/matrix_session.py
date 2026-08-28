@@ -27,7 +27,10 @@ SESSION_COOKIE_NAME = "arcreel_matrix_session"
 
 # 阶段一为单租户：全局唯一的网关供应商用这个 display_name 认领，
 # 避免每次握手都新建一行。多租户改造（待办 T-1）时这里要改成按 user 维度。
-GATEWAY_PROVIDER_DISPLAY_NAME = "Matrix 网关"
+# 定义在 lib.matrix_constants（零依赖）并在此再导出：低层模块只为这一个字符串
+# import 整个 matrix_session 会拖进 lib.custom_provider，撞分层契约。
+from lib.matrix_base import GATEWAY_PROVIDER_DISPLAY_NAME as GATEWAY_PROVIDER_DISPLAY_NAME
+from lib.matrix_base import session_signing_secret as session_signing_secret
 
 
 def dev_bound_account() -> dict | None:
@@ -108,18 +111,6 @@ def session_ttl_seconds() -> int:
     except ValueError:
         value = 604800
     return max(60, value)
-
-
-def session_signing_secret() -> bytes:
-    """握手 cookie 的签名密钥，同时是签名直链派生子键的来源（见 lib/signed_media_url）。
-
-    刻意不自动生成兜底值：单实例重启后 secret 变了会让所有人被登出，而这种
-    "偶发全员掉线" 排查起来指不到根因。缺配置就明确拒绝启动握手功能。
-    """
-    secret = os.environ.get("SESSION_COOKIE_SECRET", "").strip()
-    if len(secret) < 32:
-        raise RuntimeError("SESSION_COOKIE_SECRET 必须配置且不短于 32 字符（生成：openssl rand -base64 32）")
-    return secret.encode("utf-8")
 
 
 def cookie_secure() -> bool:

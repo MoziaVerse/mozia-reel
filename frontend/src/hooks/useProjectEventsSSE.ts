@@ -138,6 +138,11 @@ export function useProjectEventsSSE(projectName?: string | null): void {
   useEffect(() => {
     tRef.current = t;
   }, [t]);
+  const { t: tEvents } = useTranslation("events");
+  const tEventsRef = useRef(tEvents);
+  useEffect(() => {
+    tEventsRef.current = tEvents;
+  }, [tEvents]);
   const [, setLocation] = useLocation();
   const invalidateEntities = useAppStore((s) => s.invalidateEntities);
   const triggerScrollTo = useAppStore((s) => s.triggerScrollTo);
@@ -282,12 +287,15 @@ export function useProjectEventsSSE(projectName?: string | null): void {
               if (!hasImportantChanges(group)) {
                 continue;
               }
-              pushNotification(formatGroupedNotificationText(group), "success");
+              pushNotification(
+                formatGroupedNotificationText(group, tEventsRef.current),
+                "success",
+              );
             }
           }
 
           if (entityChanges.length > 0 && payload.source !== "webui") {
-            // Draft 事件 — 自动导航到剧集预处理 Tab
+            // Draft 事件 — 自动导航到剧集内容整理 Tab
             let draftHandled = false;
             for (const change of entityChanges) {
               if (
@@ -313,7 +321,7 @@ export function useProjectEventsSSE(projectName?: string | null): void {
                       return null;
                     }
                     pushWorkspaceNotification({
-                      text: formatGroupedDeferredText(group),
+                      text: formatGroupedDeferredText(group, tEventsRef.current),
                       target,
                     });
                     return target;

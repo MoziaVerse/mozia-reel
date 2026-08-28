@@ -8,7 +8,7 @@ import type {
 } from "@/types/workflow";
 
 /**
- * 面板里所有「哪里出了问题」的统一呈现形状。三类来源（批量准入的逐单元缺口、
+ * 面板里所有「哪里出了问题」的统一呈现形状。三类来源（整批准入判定的逐单元缺口、
  * 计划里的结构化问题、数据损坏 blocker）归一到这里，界面只认这一种行。
  *
  * 四个位置各司其职，不互相顶替：`unitId` / `field` 说的是**在哪**，`summary` 说的是
@@ -114,7 +114,7 @@ export function blockerViews(t: Translate, blockers: WorkflowBlocker[]): Problem
   }));
 }
 
-/** 批量准入里「自身没问题、随本批一起未提交」的标记。 */
+/** 整批准入判定里「自身没问题、随本批一起未提交」的标记。 */
 const WITHHELD_CODE = "generation_batch_admission_withheld";
 
 export function isWithheld(unit: BatchAdmissionUnit): boolean {
@@ -159,4 +159,28 @@ export function admissionUnitViews(
     });
   }
   return views;
+}
+
+/**
+ * 入队中断时没轮到的目标。准入已经通过，缺口不在单元自身，所以不带档位对比——
+ * 用户要知道的是哪几个没排上、各自为什么，档位在这里只是噪声。
+ *
+ * 参数取结构而非具体类型：这层是通用问题行的归一处，不反向依赖某条路线的回执类型。
+ * 服务端已把文案本地化进 `message`，与准入缺口同一形状；`detail` 是可选字段，缺省时
+ * 问题行不带折叠详情。
+ */
+export function enqueueFailureViews(
+  t: Translate,
+  failures: readonly { unit_id: string; problem: AdmissionProblem }[],
+): ProblemView[] {
+  return failures.map((failure, index) => ({
+    key: `enqueue-${failure.unit_id}-${index}`,
+    unitId: failure.unit_id,
+    field: problemField(failure.problem),
+    summary:
+      failure.problem.message ??
+      localizedSummary(t, failure.problem.code, failure.problem.detail ?? ""),
+    nextStep: nextStepFor(t, failure.problem.action),
+    detail: failure.problem.detail ?? null,
+  }));
 }

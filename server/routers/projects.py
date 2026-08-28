@@ -77,6 +77,9 @@ def get_workflow_state_service() -> WorkflowStateService:
     return WorkflowStateService(get_project_manager())
 
 
+WorkflowStateServiceDep = Annotated[WorkflowStateService, Depends(get_workflow_state_service)]
+
+
 def _project_status_payload(summary: ProjectSummary) -> dict[str, Any]:
     """项目级状态负载：项目摘要去掉每集明细。
 
@@ -115,8 +118,19 @@ def get_archive_service() -> ProjectArchiveService:
     return ProjectArchiveService(get_project_manager())
 
 
+ArchiveServiceDep = Annotated[ProjectArchiveService, Depends(get_archive_service)]
+
+
 def get_script_batch_editor(manager: Any | None = None) -> ScriptBatchEditor:
     return ScriptBatchEditor(manager or get_project_manager())
+
+
+def get_script_batch_editor_factory() -> Callable[[Any], ScriptBatchEditor]:
+    """批量编辑器的路由依赖；编辑器要绑处理器内解析出的 manager，故注入工厂而非实例。"""
+    return get_script_batch_editor
+
+
+ScriptBatchEditorFactoryDep = Annotated[Callable[[Any], ScriptBatchEditor], Depends(get_script_batch_editor_factory)]
 
 
 # 项目级模型字段：创建时逐一校验并写入 project.json，PATCH 时另加 audio_backend。
@@ -177,24 +191,22 @@ class CreateProjectRequest(BaseModel):
     target_duration: int | None = Field(default=None, gt=0)
     # 仅 content_mode=ad：创作诉求短文本（可空，不走 source_loader）
     brief: str | None = None
-    # 生成路线：必填二选一、无默认值——缺失或旧三值 grid 由 Pydantic 校验返回 422，
-    # 不再被默认值悄悄锁进某条路线。创建后不可更改（PATCH 模型结构上无此字段）。
+    # 生成模式：创建时必须显式选择 storyboard 或 reference_video；缺失或旧 grid 值由
+    # Pydantic 校验返回 422。创建后不可更改（PATCH 模型结构上无此字段）。
     generation_mode: Literal["storyboard", "reference_video"]
-    # 宫格分镜开关：只改变分镜图的生产方式，不是独立路线；仅 storyboard 路线有意义，
+    # 宫格分镜开关：只改变分镜图的生产方式，不是独立生成模式；仅 storyboard 生成模式有意义，
     # 创建后可经项目 PATCH 随时切换。ad 项目拒绝开启。
     grid_storyboard: bool = False
     # 口播语速估算（阅读单位 / 秒）项目级覆盖：空 = 回退 lib.speech_rate 的语言默认。
     # 与 TTS 的 narration_speed（供应商配音倍率）无关，两者不联动。
     speech_rate_units_per_second: SpeechRateOverride = None
-    # ===== 新增 =====
     style_template_id: str | None = None
     video_backend: str | None = None
-    # 视频能力桶（docs/adr/0054）项目级覆盖：i2v = 图生视频 / 宫格，r2v = 参考生视频；
+    # 视频任务类型桶（docs/adr/0054）项目级覆盖：i2v = 图生视频 / 宫格，r2v = 参考生视频；
     # 空值 = 回退项目默认（video_backend）与全局层
     video_provider_i2v: str | None = None
     video_provider_r2v: str | None = None
-    image_backend: str | None = None
-    # 图片能力桶（docs/adr/0054）项目级覆盖 + 项目默认模型：t2i = 文生图，i2i = 图生图；
+    # 图片任务类型桶（docs/adr/0054）项目级覆盖 + 项目默认模型：t2i = 文生图，i2i = 图生图；
     # 桶为空 = 回退项目默认（default_image_backend）与全局层
     image_provider_t2i: str | None = None
     image_provider_i2i: str | None = None
@@ -207,12 +219,7 @@ class CreateProjectRequest(BaseModel):
 
 
 class EpisodePatch(BaseModel):
-    """PATCH body entry for a single episode.
-
-    The declared fields are the writable set; derived fields the API serves on
-    episodes (item_count, status, storyboards, etc.) are not declared here and
-    are silently dropped via extra='ignore', so they can never be written back.
-    """
+    """单集更新请求体。仅包含可写字段；未声明字段会被忽略。"""
 
     model_config = ConfigDict(extra="ignore")
     episode: int
@@ -222,21 +229,17 @@ class EpisodePatch(BaseModel):
 class UpdateProjectRequest(BaseModel):
     title: str | None = None
     style: str | None = None
-    content_mode: ContentMode | None = None
-    # 源文件性质创建即定、不可变；出现即拒（与 content_mode 同性质）。
-    source_kind: SourceKind | None = None
     aspect_ratio: str | None = None
     default_duration: int | None = None
     # 仅 ad 项目：目标总时长（秒），任意正整数合法，不可清空
     target_duration: int | None = Field(default=None, gt=0)
     # 仅 ad 项目：创作诉求短文本；显式 null 清为空字符串
     brief: str | None = None
-    # 生成路线创建即定、不可变，PATCH 结构上无 generation_mode 字段；宫格开关随时可切
+    # 生成模式创建即定、不可变，PATCH 结构上无 generation_mode 字段；宫格开关随时可切
     grid_storyboard: bool | None = None
     video_backend: str | None = None
     video_provider_i2v: str | None = None
     video_provider_r2v: str | None = None
-    image_backend: str | None = None
     image_provider_t2i: str | None = None
     image_provider_i2i: str | None = None
     default_image_backend: str | None = None
@@ -271,6 +274,7 @@ def _cleanup_temp_dir(dir_path: str) -> None:
 @router.post("/projects/import")
 async def import_project_archive(
     _t: Translator,
+    archive_service: ArchiveServiceDep,
     file: UploadFile = File(...),
     conflict_policy: str = Form("prompt"),
 ):
@@ -295,7 +299,7 @@ async def import_project_archive(
         await asyncio.to_thread(_write_upload)
 
         def _sync():
-            return get_archive_service().import_project_archive(
+            return archive_service.import_project_archive(
                 Path(upload_path),
                 uploaded_filename=file.filename,
                 conflict_policy=conflict_policy,
@@ -339,6 +343,7 @@ async def create_export_token(
     name: str,
     current_user: CurrentUser,
     _t: Translator,
+    archive_service: ArchiveServiceDep,
     scope: str = Query("full"),
 ):
     """签发短时效下载 token，用于浏览器原生下载认证。"""
@@ -349,7 +354,7 @@ async def create_export_token(
         def _sync():
             if not get_project_manager().project_exists(name):
                 raise HTTPException(status_code=404, detail=_t("project_not_found", name=name))
-            return get_archive_service().get_export_diagnostics(name, scope=scope, translate=_t)
+            return archive_service.get_export_diagnostics(name, scope=scope, translate=_t)
 
         diagnostics = await asyncio.to_thread(_sync)
         username = current_user.sub
@@ -370,6 +375,7 @@ async def create_export_token(
 async def export_project_archive(
     name: str,
     _t: Translator,
+    archive_service: ArchiveServiceDep,
     download_token: str = Query(...),
     scope: str = Query("full"),
 ):
@@ -390,9 +396,7 @@ async def export_project_archive(
         raise HTTPException(status_code=401, detail=_t("download_token_invalid"))
 
     try:
-        archive_path, download_name = await asyncio.to_thread(
-            lambda: get_archive_service().export_project(name, scope=scope)
-        )
+        archive_path, download_name = await asyncio.to_thread(lambda: archive_service.export_project(name, scope=scope))
         return FileResponse(
             archive_path,
             media_type="application/zip",
@@ -417,6 +421,10 @@ def get_jianying_draft_service() -> JianyingDraftService:
     return JianyingDraftService(get_project_manager())
 
 
+# 具体类型只在 TYPE_CHECKING 下可见：pyJianYingDraft 是重依赖，运行期仍按需惰性导入。
+JianyingDraftServiceDep = Annotated[Any, Depends(get_jianying_draft_service)]
+
+
 def _validate_draft_path(draft_path: str, _t: Callable[..., str]) -> str:
     """校验 draft_path 合法性"""
     if not draft_path or not draft_path.strip():
@@ -432,6 +440,7 @@ def _validate_draft_path(draft_path: str, _t: Callable[..., str]) -> str:
 async def export_jianying_draft(
     name: str,
     _t: Translator,
+    svc: JianyingDraftServiceDep,
     episode: int = Query(..., description="集数编号"),
     draft_path: str = Query(..., description="用户本地剪映草稿目录"),
     download_token: str = Query(..., description="下载 token"),
@@ -461,7 +470,6 @@ async def export_jianying_draft(
     from server.services.jianying_draft_service import NoCompletedSegmentsError
     from server.services.presentation_read_model import PresentationUnavailableError
 
-    svc = get_jianying_draft_service()
     try:
         zip_path = await svc.export_episode_draft(
             project_name=name,
@@ -497,12 +505,11 @@ async def export_jianying_draft(
 
 
 @router.get("/projects")
-async def list_projects():
+async def list_projects(summaries: WorkflowStateServiceDep):
     """列出所有项目"""
 
     def _sync():
         manager = get_project_manager()
-        summaries = get_workflow_state_service()
         projects = []
         for name in manager.list_projects():
             try:
@@ -533,7 +540,7 @@ async def list_projects():
 
                     # 封面走 resolve_project_cover fallback 链：
                     # video_thumbnail → storyboard_image → scene_sheet → character_sheet
-                    # —— 兼顾 reference / grid / storyboard 三种生成模式。
+                    # —— 同时覆盖分镜图生视频（含宫格装配）与参考生视频。
                     thumbnail = resolve_project_cover(manager, name, project, preloaded_scripts=preloaded_scripts)
 
                     # 阶段与产物计数一律来自项目摘要投影（读时计算，产物口径取产物清单）
@@ -601,11 +608,6 @@ async def create_project(
                     )
                 style_prompt = resolve_template_prompt(req.style_template_id)
 
-            # legacy image_backend 已退役（拆为 image_provider_t2i/i2i）；写路径直接拒绝，
-            # 避免迁移后再写时被解析链忽略、静默落到全局默认的另一供应商。
-            if req.image_backend:
-                raise HTTPException(status_code=400, detail=_t("deprecated_image_backend"))
-
             # 模式专属字段互斥：target_duration/brief 仅 ad 可用；
             # ad 不暴露 default_duration、不开放宫格分镜
             content_mode = req.content_mode or "narration"
@@ -641,7 +643,7 @@ async def create_project(
             extras = {field: value for field in _PROJECT_BACKEND_FIELDS if (value := getattr(req, field))}
             if req.model_settings is not None:
                 extras["model_settings"] = req.model_settings
-            # 生成路线与宫格开关并入 extras 一次性写入，避免 create 后再 load-save 的额外 RMW；
+            # 生成模式与宫格开关并入 extras 一次性写入，避免 create 后再 load-save 的额外 RMW；
             # 两字段恒写显式值（grid_storyboard 默认 false 也落盘），新项目即 v5 完整形态
             extras["generation_mode"] = req.generation_mode
             extras["grid_storyboard"] = req.grid_storyboard
@@ -685,14 +687,14 @@ async def get_video_capabilities(
 
     三级模型选择（项目 > 系统设置 > 系统默认）后，读 model 的 `supported_durations`
     并派生 `max_duration`；同时带回 `project.json.default_duration`（用户偏好）。
-    两条生成路线（storyboard/reference_video）都可复用。
+    两条生成模式（storyboard/reference_video）都可复用。
 
     `video_backend`（"provider/model"）用于设置表单里尚未保存的候选模型：不带该参数时按已
-    落盘配置解析，带上则按候选模型 × 本项目的生成路线解析，使 voice_consistency 等二维派生值
+    落盘配置解析，带上则按候选模型 × 本项目的生成模式解析，使 voice_consistency 等二维派生值
     对应用户当前选中的模型而非上一次保存的模型。裸 provider（无 "/"）按其 registry
     默认视频 model 补全，与 project.json 存量裸 provider 覆盖同口径（见 `_parse_project_provider`）。
 
-    能力按项目生成路线定轴、全项目同一口径，故无需集号：路线创建即定、之后不可更改。
+    能力按项目生成模式定轴、全项目同一口径，故无需集号：生成模式创建即定、之后不可更改。
     """
     resolver = ConfigResolver(async_session_factory)
     try:
@@ -708,7 +710,7 @@ async def get_video_capabilities(
     except FileNotFoundError as exc:
         raise NotFoundError("project_not_found", name=name) from exc
     except VideoBucketCapabilityError as exc:
-        # 能力桶解析闸的报错自带 errors 目录 key 与渲染参数，转成结构化 400 让用户看到修复指引，
+        # 任务类型桶解析闸的报错自带 errors 目录 key 与渲染参数，转成结构化 400 让用户看到修复指引，
         # 不被下面的通用 422 文案吞掉（ValueError 子类，须先于其捕获）
         raise BadRequestError(exc.code, **exc.params) from exc
     except ValueError as exc:
@@ -736,11 +738,15 @@ async def get_workflow_status(
 
 
 @router.post("/projects/{name}/workflow-plan", response_model=WorkflowPlan)
-async def get_workflow_plan(name: str, request: WorkflowPlanRequest):
+async def get_workflow_plan(name: str, request: WorkflowPlanRequest, current_user: CurrentUser):
     """Return the side-effect-free plan for one transient workflow request."""
 
     try:
-        return await workflow_plan_service.get_workflow_planner(get_project_manager()).get_plan(name, request)
+        return await workflow_plan_service.get_workflow_planner(get_project_manager()).get_plan(
+            name,
+            request,
+            user_id=current_user.id,
+        )
     except FileNotFoundError as exc:
         raise NotFoundError("project_not_found", name=name) from exc
     except WorkflowRequestError as exc:
@@ -751,6 +757,7 @@ async def get_workflow_plan(name: str, request: WorkflowPlanRequest):
 async def get_project(
     name: str,
     _t: Translator,
+    summaries: WorkflowStateServiceDep,
 ):
     """获取项目详情（含实时计算字段）"""
     try:
@@ -763,7 +770,7 @@ async def get_project(
             project = manager.load_project(name)
 
             # 阶段、产物计数与每集明细一律来自项目摘要投影（读时计算，不写入 JSON）
-            summary = get_workflow_state_service().get_project_summary(name)
+            summary = summaries.get_project_summary(name)
             project = _merge_episode_summaries(project, summary)
             project["status"] = _project_status_payload(summary)
 
@@ -821,7 +828,7 @@ async def get_agent_profile_status(name: str, _t: Translator):
     except ApiError:
         raise
     except Exception:
-        logger.exception("读取项目 Agent Profile 状态失败: project=%s", name)
+        logger.exception("读取项目 Agent profile 状态失败: project=%s", name)
         raise HTTPException(status_code=500, detail=_t("internal_server_error"))
 
 
@@ -847,7 +854,7 @@ async def reset_agent_profile(name: str, _t: Translator):
     except ApiError:
         raise
     except Exception:
-        logger.exception("重置项目 Agent Profile 失败: project=%s", name)
+        logger.exception("重置项目 Agent profile 失败: project=%s", name)
         raise HTTPException(status_code=500, detail=_t("internal_server_error"))
 
 
@@ -858,21 +865,6 @@ async def update_project(name: str, req: UpdateProjectRequest, _t: Translator):
 
         def _sync():
             manager = get_project_manager()
-            if req.content_mode is not None:
-                raise HTTPException(
-                    status_code=400,
-                    detail=_t("project_id_not_editable"),
-                )
-            if "source_kind" in req.model_fields_set:
-                raise HTTPException(
-                    status_code=400,
-                    detail=_t("source_kind_not_editable"),
-                )
-
-            # legacy image_backend 已退役（拆为 image_provider_t2i/i2i）；写路径直接拒绝，
-            # 避免迁移后再写时被解析链忽略、静默落到全局默认的另一供应商。
-            if req.image_backend:
-                raise HTTPException(status_code=400, detail=_t("deprecated_image_backend"))
 
             def _mutate(project: dict) -> None:
                 # 整段 read-modify-write 在单一 _project_lock 内完成，避免并发 PATCH / 任务回写丢更新
@@ -1060,7 +1052,12 @@ async def get_script(name: str, script_file: str, _t: Translator):
     response_model=None,
     dependencies=[Depends(require_project_migration_ok)],
 )
-async def edit_script_batch(name: str, command: ScriptBatchEditCommand, _t: Translator) -> JSONResponse:
+async def edit_script_batch(
+    name: str,
+    command: ScriptBatchEditCommand,
+    _t: Translator,
+    make_script_batch_editor: ScriptBatchEditorFactoryDep,
+) -> JSONResponse:
     """Execute the same revisioned script-edit command exposed to the in-process Agent."""
 
     manager = None
@@ -1074,7 +1071,7 @@ async def edit_script_batch(name: str, command: ScriptBatchEditCommand, _t: Tran
             raise NotFoundError("project_not_found", name=name) from exc
 
         with project_change_source("webui"):
-            result = await asyncio.to_thread(get_script_batch_editor(manager).execute, name, command)
+            result = await asyncio.to_thread(make_script_batch_editor(manager).execute, name, command)
         return JSONResponse(status_code=script_batch_status(result), content=result.model_dump(mode="json"))
     except FileNotFoundError as exc:
         if manager is None or not manager.project_exists(name):
@@ -1093,9 +1090,15 @@ class UpdateSceneRequest(BaseModel):
     updates: dict
 
 
-@router.patch("/projects/{name}/script-scenes/{scene_id}")
-async def update_scene(name: str, scene_id: str, req: UpdateSceneRequest, _t: Translator):
-    """更新 drama 模式剧本中的单个场景镜头（按 scene_id 定位）。
+@router.patch("/projects/{name}/script-scenes/{scene_id}", dependencies=[Depends(require_project_migration_ok)])
+async def update_scene(
+    name: str,
+    scene_id: str,
+    req: UpdateSceneRequest,
+    _t: Translator,
+    make_script_batch_editor: ScriptBatchEditorFactoryDep,
+):
+    """更新剧情演绎剧本中的单个分镜（按 scene_id 定位）。
 
     路径与项目场景资产 CRUD（``/projects/{name}/scenes/{entry_name}``）做明确区分，
     避免 FastAPI 按注册顺序优先匹配本端点导致 SceneCard 保存请求被截获、Pydantic
@@ -1139,7 +1142,7 @@ async def update_scene(name: str, scene_id: str, req: UpdateSceneRequest, _t: Tr
                     name,
                     req.script_file,
                     [{"op": "update", "id": scene_id, "fields": fields}],
-                    editor=get_script_batch_editor(manager),
+                    editor=make_script_batch_editor(manager),
                 )
             require_script_edit_result(
                 result,
@@ -1168,7 +1171,7 @@ class UpdateShotRequest(BaseModel):
     updates: dict
 
 
-# ad 镜头 PATCH 白名单：shot_id（定位键）与 generated_assets（运行时状态）不可改写。
+# ad 分镜 PATCH 白名单：shot_id（定位键）与 generated_assets（运行时状态）不可改写。
 _SHOT_UPDATABLE_FIELDS = (
     "section",
     "voiceover_text",
@@ -1203,16 +1206,22 @@ def _require_ad_script(script: dict, _t: Translator) -> list[dict]:
     # reorder 的 s["shot_id"] 索引会 KeyError 变 500。
     if not all(isinstance(s.get("shot_id"), str) and s["shot_id"] for s in shots):
         raise ValueError("ad script field 'shots' contains elements missing valid 'shot_id'")
-    # shot_id 是单镜头身份键：重复值会让 PATCH 静默更新首个命中项、reorder 失去 1:1 映射
+    # shot_id 是单个分镜的身份键：重复值会让 PATCH 静默更新首个命中项、reorder 失去 1:1 映射
     shot_ids = [s["shot_id"] for s in shots]
     if len(set(shot_ids)) != len(shot_ids):
         raise ValueError("ad script field 'shots' contains duplicate 'shot_id' values")
     return shots
 
 
-@router.patch("/projects/{name}/script-shots/{shot_id}")
-async def update_shot(name: str, shot_id: str, req: UpdateShotRequest, _t: Translator):
-    """更新 ad 模式剧本中的单个镜头（按 shot_id 定位）。
+@router.patch("/projects/{name}/script-shots/{shot_id}", dependencies=[Depends(require_project_migration_ok)])
+async def update_shot(
+    name: str,
+    shot_id: str,
+    req: UpdateShotRequest,
+    _t: Translator,
+    make_script_batch_editor: ScriptBatchEditorFactoryDep,
+):
+    """更新广告/短片剧本中的单个分镜（按 shot_id 定位）。
 
     路径风格与 ``script-scenes`` 对齐；口播文案 / section / 时长 / 引用列表等
     白名单字段可改，结构合法性由写盘统一入口的「不更坏」校验兜底。
@@ -1239,7 +1248,7 @@ async def update_shot(name: str, shot_id: str, req: UpdateShotRequest, _t: Trans
                     name,
                     req.script_file,
                     [{"op": "update", "id": shot_id, "fields": fields}],
-                    editor=get_script_batch_editor(manager),
+                    editor=make_script_batch_editor(manager),
                 )
             require_script_edit_result(
                 result,
@@ -1268,9 +1277,14 @@ class ReorderShotsRequest(BaseModel):
     shot_ids: list[str]
 
 
-@router.post("/projects/{name}/script-shots/reorder")
-async def reorder_shots(name: str, req: ReorderShotsRequest, _t: Translator):
-    """按给定全排列重排 ad 剧本的 shots 顺序（与参考视频 units/reorder 同语义）。"""
+@router.post("/projects/{name}/script-shots/reorder", dependencies=[Depends(require_project_migration_ok)])
+async def reorder_shots(
+    name: str,
+    req: ReorderShotsRequest,
+    _t: Translator,
+    make_script_batch_editor: ScriptBatchEditorFactoryDep,
+):
+    """按给定全排列重排 ad 剧本的 shots 顺序（与视频单元重排端点同语义）。"""
     try:
 
         def _sync():
@@ -1298,7 +1312,7 @@ async def reorder_shots(name: str, req: ReorderShotsRequest, _t: Translator):
                     name,
                     req.script_file,
                     operations,
-                    editor=get_script_batch_editor(manager),
+                    editor=make_script_batch_editor(manager),
                 )
             require_script_edit_result(result)
             reordered = manager.load_script(name, req.script_file)["shots"]
@@ -1340,9 +1354,15 @@ class UpdateEpisodeRequest(BaseModel):
     title: str
 
 
-@router.patch("/projects/{name}/segments/{segment_id}")
-async def update_segment(name: str, segment_id: str, req: UpdateSegmentRequest, _t: Translator):
-    """更新说书模式片段"""
+@router.patch("/projects/{name}/segments/{segment_id}", dependencies=[Depends(require_project_migration_ok)])
+async def update_segment(
+    name: str,
+    segment_id: str,
+    req: UpdateSegmentRequest,
+    _t: Translator,
+    make_script_batch_editor: ScriptBatchEditorFactoryDep,
+):
+    """更新旁白/解说分镜"""
     try:
 
         def _sync():
@@ -1387,7 +1407,7 @@ async def update_segment(name: str, segment_id: str, req: UpdateSegmentRequest, 
                     name,
                     req.script_file,
                     [{"op": "update", "id": segment_id, "fields": fields}],
-                    editor=get_script_batch_editor(manager),
+                    editor=make_script_batch_editor(manager),
                 )
             require_script_edit_result(
                 result,
@@ -1411,7 +1431,7 @@ async def update_segment(name: str, segment_id: str, req: UpdateSegmentRequest, 
         raise HTTPException(status_code=500, detail=_t("internal_server_error"))
 
 
-@router.patch("/projects/{name}/episodes/{episode}")
+@router.patch("/projects/{name}/episodes/{episode}", dependencies=[Depends(require_project_migration_ok)])
 async def update_episode(name: str, episode: int, req: UpdateEpisodeRequest, _t: Translator):
     """更新分集顶层元数据（当前仅标题）。
 

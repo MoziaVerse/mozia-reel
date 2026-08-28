@@ -4,8 +4,10 @@
 管理视频项目的目录结构、分镜剧本读写、状态追踪。
 """
 
+import asyncio
 import copy
 import errno
+import hashlib
 import json
 import logging
 import os
@@ -15,8 +17,8 @@ import secrets
 import shutil
 import time
 import unicodedata
-from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import ExitStack, contextmanager
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -26,7 +28,7 @@ from pydantic import BaseModel, Field
 
 from lib.agent_profile import agent_profile_dir
 from lib.app_data_dir import app_data_dir
-from lib.artifact_manifest import ArtifactBasisDescriptor
+from lib.artifact_manifest import ArtifactBasisDescriptor, ArtifactEntryRekeyReceipt
 from lib.asset_rename import (
     AssetRenameConflictError,
     AssetRenameNotFoundError,
@@ -49,15 +51,15 @@ from lib.asset_types import (
     validate_asset_name,
 )
 from lib.audio_utils import discard_stale_reference_audio, resolve_audio_ref_path, resolve_stale_reference_audio
+from lib.content_digest import canonical_json_digest
+from lib.draft_quarantine import QUARANTINE_FILENAMES
 from lib.episode_ledger import SOURCE_TEXT_SUFFIXES
 from lib.episode_paths import (
     REFERENCE_VIDEO_STEP1_FILENAME,
-    REFERENCE_VIDEO_STEP1_QUARANTINE_FILENAME,
-    REFERENCE_VIDEO_STEP2_QUARANTINE_FILENAME,
     STEP1_FILENAMES,
     episode_script_relpath,
 )
-from lib.formal_write import formal_write_transaction, project_metadata_lock
+from lib.formal_write import FormalWriteReceipt, formal_write_transaction, project_metadata_lock
 from lib.json_io import atomic_write_bytes, atomic_write_json, load_json, load_json_or_none
 from lib.path_safety import PathTraversalError, safe_join
 from lib.profile_manifest import (
@@ -85,8 +87,8 @@ logger = logging.getLogger(__name__)
 PROJECT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9-]+$")
 PROJECT_SLUG_SANITIZER = re.compile(r"[^a-zA-Z0-9]+")
 
-# 生成路线（generation_mode）：二值必填，创建即定、之后不可变（可变性由 PATCH 模型结构保证）。
-# 宫格不是路线：它由独立的 grid_storyboard 布尔表达，仅 storyboard 路线有意义。
+# 生成模式（generation_mode）：二值必填，创建即定、之后不可变（可变性由 PATCH 模型结构保证）。
+# 宫格不是生成模式：它由独立的 grid_storyboard 布尔表达，仅 `storyboard` 生成模式有意义。
 # 存量三值 "grid" 已由 v4→v5 迁移重编码为 storyboard + grid_storyboard=true。
 VALID_GENERATION_MODES: frozenset[str] = frozenset({"storyboard", "reference_video"})
 _DEFAULT_GENERATION_MODE = "storyboard"
@@ -106,10 +108,32 @@ class _Unset:
 _UNSET = _Unset()
 
 
+class ScriptWriteConflict(Exception):
+    """A formal script changed after an optimistic-concurrency baseline was captured."""
+
+    def __init__(self, *, expected: str | None, actual: str | None, current_content: dict[str, Any] | None):
+        super().__init__(f"script changed: expected {expected}, actual {actual}")
+        self.expected = expected
+        self.actual = actual
+        self.current_content = current_content
+
+
+def _file_content_fingerprint(path: Path) -> tuple[str | None, dict[str, Any] | None]:
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return None, None
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return hashlib.sha256(raw).hexdigest(), None
+    return canonical_json_digest(parsed), parsed if isinstance(parsed, dict) else None
+
+
 def grid_storyboard_enabled(project: dict[str, Any]) -> bool:
     """项目是否按宫格生产分镜图。
 
-    宫格是 storyboard 路线内的分镜图生产方式：reference_video 路线无分镜图步骤，
+    宫格是分镜图生视频内的分镜图生产方式：参考生视频无分镜图步骤，
     即使残留 grid_storyboard=true 也不激活宫格分支。
     """
     return project.get("generation_mode") == "storyboard" and bool(project.get("grid_storyboard"))
@@ -156,10 +180,10 @@ def resolve_episode_script_binding(
 
 
 def is_reference_video_project(project: Mapping[str, Any]) -> bool:
-    """项目是否走参考生视频路线。
+    """项目是否使用参考生视频。
 
-    project.json 的 ``generation_mode`` 是该判定的唯一真相源：路线创建即定、之后不可变，
-    整个项目按同一条路径生成；ad 内容模式的剧本骨架也不携带剧本级 ``generation_mode`` 戳
+    project.json 的 ``generation_mode`` 是该判定的唯一真相源：模式创建即定、之后不可变，
+    整个项目按同一生成模式生成；广告/短片的剧本骨架也不携带剧本级 ``generation_mode`` 戳
     （见 ``script_generator``），只看剧本判不出参考生视频。
     """
     return project.get("generation_mode") == "reference_video"
@@ -174,12 +198,12 @@ def resolve_source_kind(project: Mapping[str, Any]) -> SourceKind:
 
 
 def _resolve_items_or_warn(script: dict, *, script_filename: str | None = None) -> list[dict]:
-    """读取路径的脏数据降级：基于 `resolve_items` 三模式判别（narration/drama/reference_video），
+    """读取路径的脏数据降级：基于 `resolve_items` 判别三种剧本结构，
     脏数据（键存在但值非 list）下 log warning + 返回 []。
 
     与写入路径（`update_scene_asset` / `batch_update_scene_assets`）共用 `resolve_items` 判别
-    保证三模式一致——上一版本用 `_script_items_shape` 在 reference 模式下会静默落到 drama
-    兜底返回 []，破坏一致性。写入侧应该 fail-loud（让 ScriptEditError 上冒，worker 显式失败，
+    保证三种剧本结构的读写判别一致，避免参考生视频静默落到 drama 兜底返回 []。
+    写入侧应该 fail-loud（让 ScriptEditError 上冒，worker 显式失败，
     上层 API 5xx 告知数据损坏）；读取侧在脏数据下返回 [] 不阻塞 UI 渲染，但 warning 给运维
     可观测信号去人工修复，不让降级变隐形。
     """
@@ -327,12 +351,20 @@ class ProjectManager:
             raise FileNotFoundError(f"当前目录不是有效的项目目录: {cwd}")
         return pm, project_name
 
-    def __init__(self, projects_root: str | Path | None = None):
+    def __init__(
+        self,
+        projects_root: str | Path | None = None,
+        *,
+        script_reader: Callable[[Path], dict] | None = None,
+        script_writer: Callable[[Path, dict], None] | None = None,
+    ):
         """
         初始化项目管理器
 
         Args:
             projects_root: 项目根目录，默认为当前目录下的 projects/
+            script_reader: 剧本 JSON 读取 seam；缺省时从文件系统读取。
+            script_writer: 剧本 JSON 原子写入 seam；缺省时使用 atomic_write_json。
         """
         if projects_root is None:
             # 尝试从环境变量或默认路径获取
@@ -340,6 +372,8 @@ class ProjectManager:
 
         self.projects_root = Path(projects_root)
         self.projects_root.mkdir(parents=True, exist_ok=True)
+        self._script_reader = script_reader
+        self._script_writer = script_writer
 
     def list_projects(self) -> list[str]:
         """列出所有项目"""
@@ -353,13 +387,20 @@ class ProjectManager:
             (root / sub).mkdir(exist_ok=True)
         return root
 
-    def create_project(self, name: str, content_mode: ContentMode = "narration") -> Path:
+    def create_project(
+        self,
+        name: str,
+        content_mode: ContentMode = "narration",
+        *,
+        publish: bool = True,
+    ) -> Path:
         """
         创建新项目
 
         Args:
             name: 项目标识（全局唯一，用于 URL 和文件系统）
-            content_mode: 内容模式（narration / drama），影响 profile 物化时选哪份变体
+            content_mode: 创作类型（narration / drama），影响 profile 物化时选哪份变体
+            publish: 是否立即写入最小 project.json；组合创建流程应在完整元数据就绪后再发布
 
         Returns:
             项目目录路径
@@ -367,17 +408,17 @@ class ProjectManager:
         name = self.normalize_project_name(name)
         project_dir = self.projects_root / name
 
-        if project_dir.exists():
-            raise FileExistsError(f"项目 '{name}' 已存在")
-
-        # 创建所有子目录
-        for subdir in self.SUBDIRS:
-            (project_dir / subdir).mkdir(parents=True, exist_ok=True)
-
-        # 持久化 content_mode 到 project.json，让后续 sync_all_agent_profiles 启动遍历能恢复模式。
-        # server 路径随后会调 create_project_metadata 覆盖为完整版（也含 content_mode）。
         try:
-            atomic_write_json(project_dir / self.PROJECT_FILE, {"content_mode": content_mode})
+            project_dir.mkdir()
+        except FileExistsError as exc:
+            raise FileExistsError(f"项目 '{name}' 已存在") from exc
+
+        # 单步调用默认持久化 content_mode；组合创建流程可延迟到完整 metadata 一次发布。
+        try:
+            for subdir in self.SUBDIRS:
+                (project_dir / subdir).mkdir(exist_ok=True)
+            if publish:
+                atomic_write_json(project_dir / self.PROJECT_FILE, {"content_mode": content_mode})
             self.sync_agent_profile(project_dir, content_mode=content_mode)
         except Exception:
             # sync 失败时回滚 project_dir，避免残缺目录阻塞重试（同名 create 撞 FileExistsError）
@@ -416,15 +457,15 @@ class ProjectManager:
         *,
         content_mode: ContentMode | None = None,
     ) -> dict:
-        """同步 agent_runtime_profile 到项目目录的 .claude / CLAUDE.md。
+        """物化 agent_runtime_profile 到项目目录的 .claude / CLAUDE.md。
 
         ``content_mode=None`` 时从 ``project_dir/project.json`` 读取；
         project.json 缺失或 ``content_mode`` 字段缺失 → 回退到 ``"narration"`` + log info。
         ``content_mode`` 显式非法值 → 抛 ``ValueError``。
 
         详见 ``lib.profile_manifest.sync_profile_to_project``：manifest-driven
-        sync，sha256 区分内置 skill 升级（自动传播）/ 用户修改（保留）/ 用户主动
-        删除（不复活）；profile 上游删除时同步删除项目内未改副本；命名碰撞 /
+        物化流程用 sha256 区分内置 skill 升级（自动传播）/ 用户修改（保留）/ 用户主动
+        删除（不复活）；profile 上游删除时移除项目内未改副本；命名碰撞 /
         状态机回流等 15 行决策表完整覆盖。
 
         Returns:
@@ -465,7 +506,7 @@ class ProjectManager:
         ``project.json`` 不存在或缺 ``content_mode`` 字段 → 回退 narration（兼容
         老项目）。文件存在但读取/解析失败 → raise，让上层 sync_all_agent_profiles
         走 failed_projects 分支；若静默回退到 narration，drama 项目会因 manifest
-        记录的 mode 不匹配触发破坏性 reset，把 profile 错误切回说书变体。
+        记录的 mode 不匹配触发破坏性 reset，把 profile 错误切回旁白/解说变体。
         """
         pj_path = project_dir / self.PROJECT_FILE
         try:
@@ -485,7 +526,7 @@ class ProjectManager:
         return cast(ContentMode, mode)
 
     def sync_all_agent_profiles(self) -> dict:
-        """扫描所有项目目录，同步 agent_runtime_profile（启动 hook 用）。
+        """扫描所有项目目录，物化 agent_runtime_profile（启动 hook 用）。
 
         单项目失败隔离：捕获普通异常后继续下一项目（``failed_projects`` 计数）。
         ``ProfileMissingError`` / ``ProfileEmptyError`` 是部署级错误，全部跳过
@@ -524,7 +565,7 @@ class ProjectManager:
         for project_dir in sorted(self.projects_root.iterdir()):
             # 与 ``list_projects`` 同规则：跳过点开头（.git 等）和下划线开头
             # （``_global_assets`` 保留目录 — 跨项目共享 character/scene/prop 库，
-            # 不是项目，不该 sync agent profile）
+            # 不是项目，不应物化 Agent profile）
             if not project_dir.is_dir() or project_dir.name.startswith((".", "_")):
                 continue
             try:
@@ -666,6 +707,9 @@ class ProjectManager:
         *,
         validate: bool = True,
         artifact_basis: ArtifactBasisDescriptor | None = None,
+        expected_fingerprint: str | None | _Unset = _UNSET,
+        cancellation_file_receipts: list[FormalWriteReceipt] | None = None,
+        cancellation_manifest_receipts: list[ArtifactEntryRekeyReceipt] | None = None,
     ) -> Path:
         """
         保存分镜剧本
@@ -677,6 +721,7 @@ class ProjectManager:
             validate: 是否做「不更坏」结构校验（默认 True，fail-safe）。直连保存不持有
                 改前剧本，由写盘统一入口按需读盘取改前（已存在则不更坏，全新保存则严格校验）。
             artifact_basis: 生成调用开始前冻结的剧本来源 basis；普通编辑不传，按提交时现值解析。
+            expected_fingerprint: 可选的正式剧本内容基线；在剧本锁内不匹配时拒绝写入。
 
         Returns:
             保存的文件路径
@@ -691,6 +736,15 @@ class ProjectManager:
         episode = script.get("episode")
 
         with self._script_lock(project_name, filename):
+            if not isinstance(expected_fingerprint, _Unset):
+                script_path = Path(self._safe_subpath(self.get_project_path(project_name) / "scripts", filename))
+                actual_fingerprint, current_content = _file_content_fingerprint(script_path)
+                if actual_fingerprint != expected_fingerprint:
+                    raise ScriptWriteConflict(
+                        expected=expected_fingerprint,
+                        actual=actual_fingerprint,
+                        current_content=current_content,
+                    )
             prepare_on_commit: Callable[[], Callable[[Path], None] | None] | None = None
             before_script: dict | None | _Unset = _UNSET
             if type(episode) is int and episode > 0 and self.project_exists(project_name):
@@ -730,6 +784,7 @@ class ProjectManager:
                         resource_ids=resource_ids,
                         removed_resource_ids=tuple(set(previous_resource_ids) - set(resource_ids)),
                         basis=artifact_basis,
+                        cancellation_receipts=cancellation_manifest_receipts,
                     )
                     if manifest_commit is None:
                         return None
@@ -748,6 +803,7 @@ class ProjectManager:
                 validate=validate,
                 before=before_script,
                 prepare_on_commit=prepare_on_commit,
+                cancellation_receipts=cancellation_file_receipts,
             )
 
     def _commit_script_unlocked(
@@ -760,6 +816,7 @@ class ProjectManager:
         before: dict | None | _Unset = _UNSET,
         on_commit: Callable[[Path], None] | None = None,
         prepare_on_commit: Callable[[], Callable[[Path], None] | None] | None = None,
+        cancellation_receipts: list[FormalWriteReceipt] | None = None,
     ) -> Path:
         """Commit a script, its project index, and an optional sidecar hook together.
 
@@ -783,7 +840,7 @@ class ProjectManager:
             with self._project_lock(project_name):
                 prepared_on_commit = prepare_on_commit() if prepare_on_commit is not None else on_commit
                 transaction_paths = (output_path, project_file) if sync_project else (output_path,)
-                with formal_write_transaction(*transaction_paths):
+                with formal_write_transaction(*transaction_paths, cancellation_receipts=cancellation_receipts):
                     output = self._write_script_unlocked(
                         project_name,
                         script,
@@ -809,7 +866,7 @@ class ProjectManager:
             changed_paths = [f"scripts/{output_path.name}", *([self.PROJECT_FILE] if sync_project else [])]
         else:
             prepared_on_commit = prepare_on_commit() if prepare_on_commit is not None else on_commit
-            with formal_write_transaction(output_path):
+            with formal_write_transaction(output_path, cancellation_receipts=cancellation_receipts):
                 output = self._write_script_unlocked(
                     project_name,
                     script,
@@ -878,7 +935,7 @@ class ProjectManager:
         metadata["updated_at"] = now
 
         # 原子写（含路径遍历防护，output_path 已在守卫前解析），避免并发 PATCH 导致 JSON 损坏
-        atomic_write_json(output_path, script)
+        self._persist_script_json(output_path, script)
 
         # 同步到 project.json，保证 script 写入与元数据同步是单一事务
         # （sync 走的是 `_project_lock`，与外层 `_script_lock` 不同锁，不会冲突）。
@@ -1073,10 +1130,27 @@ class ProjectManager:
                 f"episode={filename_episode} 不一致，拒绝操作以避免污染 project.json"
             )
 
-    @staticmethod
-    def _load_script_or_none(path: Path) -> dict | None:
-        """裸读剧本 JSON 取「改前」快照；文件不存在或损坏时返回 None（→ 按严格校验处理）。"""
-        loaded = load_json_or_none(path)
+    def _persist_script_json(self, path: Path, script: dict) -> None:
+        """剧本 JSON 落盘的单一出口：缺省原子写，注入了 ``script_writer`` 时改走注入实现。"""
+        if self._script_writer is None:
+            atomic_write_json(path, script)
+        else:
+            self._script_writer(path, script)
+
+    def _load_script_or_none(self, path: Path) -> dict | None:
+        """裸读剧本 JSON 取「改前」快照；剧本不存在或损坏时返回 None（→ 按严格校验处理）。
+
+        与 ``_read_script_unlocked`` 共用 ``script_reader`` seam，改前快照与正式读取取自同一
+        来源。注入的 reader 以 ``OSError``（不存在或不可读）或 ``ValueError``（内容损坏）表达
+        取不到剧本，本函数据此归一为 None；其余异常照常上抛。
+        """
+        if self._script_reader is None:
+            loaded = load_json_or_none(path)
+        else:
+            try:
+                loaded = self._script_reader(path)
+            except (OSError, ValueError):
+                return None
         return loaded if isinstance(loaded, dict) else None
 
     @staticmethod
@@ -1201,7 +1275,7 @@ class ProjectManager:
             script, migrated = self._read_script_unlocked(project_name, norm)
             if migrated:
                 real = Path(self._safe_subpath(self.get_project_path(project_name) / "scripts", norm))
-                atomic_write_json(real, script)
+                self._persist_script_json(real, script)
         return script
 
     def load_script_readonly(self, project_name: str, filename: str) -> dict:
@@ -1223,11 +1297,14 @@ class ProjectManager:
         filename = self.normalize_script_filename(filename)
         real = Path(self._safe_subpath(project_dir / "scripts", filename))
 
-        if not real.exists():
-            raise FileNotFoundError(f"剧本文件不存在: {real}")
-
-        with open(real, encoding="utf-8") as f:  # noqa: PTH123
-            script = json.load(f)
+        if self._script_reader is None:
+            # 存在性检查只对文件系统这条路径成立；剧本是否存在由实际读取方判定。
+            if not real.exists():
+                raise FileNotFoundError(f"剧本文件不存在: {real}")
+            with open(real, encoding="utf-8") as f:  # noqa: PTH123
+                script = json.load(f)
+        else:
+            script = self._script_reader(real)
 
         migrated, warnings = migrate_script_unit_durations(script)
         for message in warnings:
@@ -1243,7 +1320,7 @@ class ProjectManager:
     # ==================== 角色管理 ====================
 
     def update_character_sheet(self, project_name: str, script_filename: str, name: str, sheet_path: str) -> dict:
-        """更新角色设计图路径"""
+        """更新角色资产图路径"""
         # 资产回写热路径：只动运行时字段，结构不可能因此变坏，豁免结构校验。
         with self.locked_script(project_name, script_filename, validate=False) as script:
             key = resolve_asset_key(script.get("characters"), name)
@@ -1261,7 +1338,7 @@ class ProjectManager:
         创建标准的 generated_assets 结构
 
         Args:
-            content_mode: 内容模式（'narration' 或 'drama'）
+            content_mode: 创作类型（'narration' 或 'drama'）
 
         Returns:
             标准的 generated_assets 字典
@@ -1285,8 +1362,8 @@ class ProjectManager:
         创建标准场景对象模板
 
         Args:
-            scene_id: 场景 ID（如 "E1S01"），集号已编码在 ID 中
-            duration_seconds: 场景时长（秒）
+            scene_id: 分镜 ID（如 "E1S01"），集号已编码在 ID 中
+            duration_seconds: 分镜时长（秒）
 
         Returns:
             标准的场景字典
@@ -1452,7 +1529,7 @@ class ProjectManager:
         Args:
             project_name: 项目名称
             script_filename: 剧本文件名
-            scene_id: 场景/片段 ID
+            scene_id: 分镜 ID
             asset_type: 资源类型 ('storyboard_image' 或 'video_clip')
             asset_path: 资源路径
 
@@ -1463,9 +1540,9 @@ class ProjectManager:
         # 但「分镜数组键损坏（如 segments: null）」是更严重的损坏，写入侧必须 fail-loud——
         # 静默 no-op 等于把数据丢失藏起来：worker 写完 N 个 video_clip 还以为成功了，UI 却
         # 看不到任何回写。让 ScriptEditError 上冒，worker 层负责降级（记 task 失败、人工修复）。
-        # `resolve_items` 三模式判别（narration/drama/reference_video）与 `_write_script_unlocked`
-        # / 读取 helper 共用同一源——避免 `_script_items_shape` 那种 reference 模式落到 drama 兜底
-        # 取 "scenes" 键、静默返回 [] 然后 KeyError 报"场景不存在"的根因被掩盖路径。
+        # `resolve_items` 对三种剧本结构的判别与 `_write_script_unlocked` / 读取 helper 共用同一源，
+        # 避免参考生视频落到 drama 兜底
+        # 取 "scenes" 键、静默返回 [] 然后 KeyError 报"分镜不存在"的根因被掩盖路径。
         with self.locked_script(
             project_name,
             script_filename,
@@ -1503,7 +1580,7 @@ class ProjectManager:
             assets[asset_type] = asset_path
             self.update_scene_status(item)
             return item
-        raise KeyError(f"场景 '{scene_id}' 不存在")
+        raise KeyError(f"分镜 '{scene_id}' 不存在")
 
     def update_scene_asset_across_scripts(
         self,
@@ -1612,7 +1689,7 @@ class ProjectManager:
         # 静默 no-op 等于把 worker 写完的 N 个 clip 路径丢弃但 SSE 仍广播「all updated」、UI
         # 永远 pending。id 未命中收集一轮再统一抛，让 worker 看到完整失败集合而不是只看到首个；
         # locked_script 在 with 体内抛异常时整体不写回（与 update_scene_asset 单个版本对齐）。
-        # resolve_items 让 reference 模式 worker 也能正确按 unit_id 索引 video_units。
+        # resolve_items 让参考生视频 worker 也能正确按 unit_id 索引 video_units。
         with self.locked_script(
             project_name,
             script_filename,
@@ -1653,7 +1730,7 @@ class ProjectManager:
 
     def get_pending_scenes(self, project_name: str, script_filename: str, asset_type: str) -> list[dict]:
         """
-        获取待处理的场景/片段列表
+        获取待处理的分镜列表
 
         Args:
             project_name: 项目名称
@@ -1661,15 +1738,15 @@ class ProjectManager:
             asset_type: 资源类型
 
         Returns:
-            待处理场景/片段列表
+            待处理分镜列表
         """
         script = self.load_script(project_name, script_filename)
 
-        # `_resolve_items_or_warn` 三模式判别 + 脏数据 warn-and-skip 降级——读取侧 silent
+        # `_resolve_items_or_warn` 对三种剧本结构统一判别，并对脏数据 warn-and-skip 降级——读取侧 silent
         # 比写入侧 silent 安全（UI 渲染空列表好过 5xx 阻塞页面），但 warning 给可观测信号；
         # 写入侧（update_scene_asset / batch_update_scene_assets）则用 `resolve_items` 直接
-        # 抛 ScriptEditError 保证数据损坏永远有显式信号。reference 模式下也能正确返回
-        # video_units，不会静默落到 drama 兜底丢失 reference 数据。
+        # 抛 ScriptEditError 保证数据损坏永远有显式信号。参考生视频也能正确返回
+        # video_units，不会静默落到 drama 兜底丢失参考生视频数据。
         items = _resolve_items_or_warn(script, script_filename=script_filename)
 
         # item.generated_assets 缺失 / null / 非 dict 一律视为"未生成"——读取侧脏数据容错，
@@ -1687,7 +1764,7 @@ class ProjectManager:
         return self.get_project_path(project_name) / "source" / filename
 
     def get_character_path(self, project_name: str, filename: str) -> Path:
-        """获取角色设计图路径"""
+        """获取角色资产图路径"""
         return self._get_asset_path("character", project_name, filename)
 
     def get_storyboard_path(self, project_name: str, filename: str) -> Path:
@@ -1704,14 +1781,14 @@ class ProjectManager:
 
     def get_scenes_needing_storyboard(self, project_name: str, script_filename: str) -> list[dict]:
         """
-        获取需要生成分镜图的场景/片段列表（两种模式统一逻辑）
+        获取需要生成分镜图的分镜列表（两种模式统一逻辑）
 
         Args:
             project_name: 项目名称
             script_filename: 剧本文件名
 
         Returns:
-            需要生成分镜图的场景/片段列表
+            需要生成分镜图的分镜列表
         """
         script = self.load_script(project_name, script_filename)
 
@@ -1822,8 +1899,35 @@ class ProjectManager:
         project_path = self.get_project_path(project_name)
         with self._project_lock(project_name):
             source_dir = project_path / "source"
+            if source_dir.is_symlink() or source_dir.is_junction():
+                raise ValueError("source 目录不得是符号链接或 junction")
             source_dir.mkdir(parents=True, exist_ok=True)
             yield source_dir
+
+    @asynccontextmanager
+    async def async_file_lock(
+        self,
+        path: Path,
+    ) -> AsyncIterator[None]:
+        """Cancellation-safe async counterpart of :meth:`file_lock`."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = path.parent / f".{path.name}.lock"
+        handle = lock_path.open("a+b")
+        acquired = False
+        try:
+            while not acquired:
+                try:
+                    portalocker.lock(handle, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                    acquired = True
+                except portalocker.AlreadyLocked:
+                    await asyncio.sleep(0.05)
+            yield
+        finally:
+            try:
+                if acquired:
+                    portalocker.unlock(handle)
+            finally:
+                handle.close()
 
     @contextmanager
     def file_lock(self, path: Path):
@@ -1890,6 +1994,8 @@ class ProjectManager:
         mutate_fn: Callable[[dict], None],
         *,
         on_commit: Callable[[Path], None] | None = None,
+        formal_paths: Sequence[Path] = (),
+        cancellation_receipts: list[FormalWriteReceipt] | None = None,
     ) -> dict:
         """原子性地更新 project.json：加文件锁 → 读 → 修改 → 原子写回。
 
@@ -1907,8 +2013,14 @@ class ProjectManager:
         project_file = self._get_project_file_path(project_name)
 
         with self._project_lock(project_name), ExitStack() as transaction:
-            if on_commit is not None:
-                transaction.enter_context(formal_write_transaction(project_file))
+            if on_commit is not None or formal_paths or cancellation_receipts is not None:
+                transaction.enter_context(
+                    formal_write_transaction(
+                        project_file,
+                        *formal_paths,
+                        cancellation_receipts=cancellation_receipts,
+                    )
+                )
             with open(project_file, encoding="utf-8") as f:
                 project = json.load(f)
             self._apply_project_mutation_unlocked(project, mutate_fn)
@@ -2248,7 +2360,7 @@ class ProjectManager:
         # 数据层守卫：模式专属字段互斥。路由层已返回 400，这里再兜一道防非路由调用方。
         if resolved_mode == "ad":
             if default_duration is not None:
-                raise ValueError("广告/短片项目不持有 default_duration（镜头时长按 target_duration 预算逐镜头规划）")
+                raise ValueError("广告/短片项目不持有 default_duration（分镜时长按 target_duration 预算逐个分镜规划）")
             if target_duration is not None and (
                 not isinstance(target_duration, int) or isinstance(target_duration, bool) or target_duration <= 0
             ):
@@ -2307,7 +2419,7 @@ class ProjectManager:
                 raise ValueError(f"extras 不允许覆盖核心字段: {sorted(forbidden)}")
             project.update(extras)
 
-        # 生成路线与宫格开关：路由层已做必填二值校验与 ad 互斥（400/422），这里再兜一道防非路由
+        # 生成模式与宫格开关：路由层已做必填二值校验与 ad 互斥（400/422），这里再兜一道防非路由
         # 调用方；未传时按数据层默认补写显式值，保证新项目落盘即含两字段（与 schema v5 形态对齐）。
         generation_mode = project.setdefault("generation_mode", _DEFAULT_GENERATION_MODE)
         if not isinstance(generation_mode, str) or generation_mode not in VALID_GENERATION_MODES:
@@ -2465,24 +2577,24 @@ class ProjectManager:
         返回**诊断 dict**（不是 project 元数据）：``added``（新建条目名列表）、``merged``
         （合并已有条目名列表）、``dropped_fields``（被白名单丢弃的非允许字段，{name: [字段名]}）、
         ``dropped_legacy``（被剔除的历史字段如 type/importance，{name: [字段名]}）。caller
-        （MCP tool 层）据此构造对 agent 的明确反馈——silent drop 是设计意图（least privilege），
-        但纯 silent 让 agent 误以为 reference_image / sheet_field 写入成功；返回诊断让工具层
-        把忽略原因明示给 agent，避免 agent 重复尝试同样会被丢的字段。
+        （MCP tool 层）据此构造对 Agent 的明确反馈——silent drop 是设计意图（least privilege），
+        但纯 silent 让 Agent 误以为 reference_image / sheet_field 写入成功；返回诊断让工具层
+        把忽略原因明示给 Agent，避免 Agent 重复尝试同样会被丢的字段。
         """
         # data_validator 在模块级 import 本模块（VALID_GENERATION_MODES），故惰性 import 破环。
         from lib.data_validator import DataValidator
 
         asset_type = self._resolve_asset_type(table)
-        # 拆开两种失败 case 让 agent 错误更精确（之前合并的 "entries 不能为空" 无法区分两者）
+        # entries 类型错误与空对象需要不同提示，便于 Agent 精确修正输入。
         if not isinstance(entries, dict):
             raise ValueError(f"entries 必须是对象（dict），当前为 {type(entries).__name__}")
         if not entries:
             raise ValueError("entries 不能为空（至少需要一个 name → attrs 条目）")
         # 规范化 name：strip + NFC 后非空，且须是路径安全的单段组件（validate_asset_name，
-        # 名称会被拼进文件路径与单段路由参数）。agent 误传 "  李白  " 这种带空格的 name 会让
+        # 名称会被拼进文件路径与单段路由参数）。Agent 误传 "  李白  " 这种带空格的 name 会让
         # 后续按 name 索引查找（角色生成等）因空格差异 mismatch。非法 name fail-loud。
         # 同时检测规范化后冲突：{"李白": {...}, "  李白  ": {...}} 或 NFC/NFD 双形态规范化后
-        # key 相同 → 后者会 silent overwrite 前者；fail-loud 让 agent 明确感知 collision 并去重。
+        # key 相同 → 后者会 silent overwrite 前者；fail-loud 让 Agent 明确感知 collision 并去重。
         normalized_entries: dict[str, dict] = {}
         raw_keys_by_normalized: dict[str, str] = {}
         for raw_name, attrs in entries.items():
@@ -2501,15 +2613,15 @@ class ProjectManager:
             raw_keys_by_normalized[name] = raw_name
 
         spec = ASSET_SPECS[asset_type]
-        # 字段白名单走 spec 的「agent 权限维度」`agent_editable_extra_fields`，**不复用** schema 维度
+        # 字段白名单走 spec 的「Agent 权限维度」`agent_editable_extra_fields`，**不复用** schema 维度
         # `extra_string_fields`——后者包括 `reference_image` 这类系统/用户路径字段（与 sheet_field
-        # 同性质，更新走 `update_character_reference_image` 专用 API），不该被 agent patch_project 直改。
+        # 同性质，更新走 `update_character_reference_image` 专用 API），不该被 Agent patch_project 直改。
         # 不允许的字段同样含 `sheet_field`（character_sheet / scene_sheet / prop_sheet，资产生成流水线
         # 在图像就绪后通过 `_update_asset_sheet` 专用 API 回写）以及 spec 之外的任意 key。
         # `_strip_legacy_asset_fields` 处理 type/importance 等历史字段，这层再加白名单形成「最小特权」。
         allowed_fields = {"description", *spec.agent_editable_extra_fields}
-        # 收集白名单丢字段 / 历史字段丢弃 给 caller 用于明示 agent。silent drop 仍是设计意图,
-        # 但通过返回 dict 把"被丢了什么"显式告诉工具层,工具层据此告知 agent,避免 LLM 重复尝试。
+        # 收集白名单丢字段 / 历史字段丢弃 给 caller 用于明示 Agent。silent drop 仍是设计意图,
+        # 但通过返回 dict 把"被丢了什么"显式告诉工具层,工具层据此告知 Agent,避免 LLM 重复尝试。
         cleaned: dict[str, dict[str, Any]] = {}
         dropped_fields: dict[str, list[str]] = {}  # name → [被白名单丢的字段]
         dropped_legacy: dict[str, list[str]] = {}  # name → [被 _LEGACY_ASSET_FIELDS 剔除的字段]
@@ -2526,7 +2638,7 @@ class ProjectManager:
                 else:
                     non_allowed.append(k)
                     logger.debug(
-                        "upsert_assets: %s '%s' 的字段 %r 不在 agent 可编辑白名单 %s,已忽略",
+                        "upsert_assets: %s '%s' 的字段 %r 不在 Agent 可编辑白名单 %s,已忽略",
                         table,
                         name,
                         k,
@@ -2642,22 +2754,23 @@ class ProjectManager:
         """剔除旧式 type/importance 字段（schema 演进遗留），返回新 dict。"""
         return {k: v for k, v in attrs.items() if k not in cls._LEGACY_ASSET_FIELDS}
 
-    #: 级联重命名须一并改写的 step1 草稿文件名（结构化 JSON，含隔离草稿——它们承载
-    #: 引用数组 / ``@[名称]`` 正文，晋升后会回流为正式内容）。旧版 ``.md`` 自由文本别名
+    #: 级联重命名须一并改写的 step1 正式内容、可编辑草稿与待修复草稿文件名（结构化 JSON——它们承载
+    #: 引用数组 / ``@[名称]`` 正文，晋升后会回流为正式内容）。草稿部分取
+    #: ``lib.draft_quarantine`` 的登记表全集而非逐个列举：漏一种来源就会让那条路线的草稿留着
+    #: 旧名，晋升时被「引用未登记」判违约、直到人工改草稿才解得开。旧版 ``.md`` 自由文本别名
     #: 不在列：读取层仅兼认浏览，写盘与生成侧已不认。
     _RENAME_DRAFT_FILENAMES = frozenset(
         {
             *STEP1_FILENAMES.values(),
             REFERENCE_VIDEO_STEP1_FILENAME,
-            REFERENCE_VIDEO_STEP1_QUARANTINE_FILENAME,
-            REFERENCE_VIDEO_STEP2_QUARANTINE_FILENAME,
+            *QUARANTINE_FILENAMES,
         }
     )
 
     def rename_asset(
         self, project_name: str, table: str, old_name: str, new_name: str, *, dry_run: bool = False
     ) -> AssetRenameReport:
-        """资产级联重命名的单一事务入口（UI 与智能体共用，见 docs/adr/0057）。
+        """资产级联重命名的单一事务入口（UI 与 Agent 共用，见 docs/adr/0057）。
 
         在「全部剧本锁（按文件名排序）→ 草稿文件锁 → 项目锁」内一次完成：扫描全部剧集
         剧本与 step1 草稿的名称引用、规划关联文件迁移、对 project.json 变更做「不更坏」
@@ -3007,7 +3120,7 @@ class ProjectManager:
             name: 角色名称
             description: 角色描述
             voice_style: 声音风格
-            character_sheet: 角色设计图路径
+            character_sheet: 角色资产图路径
 
         Returns:
             更新后的项目元数据
@@ -3030,7 +3143,7 @@ class ProjectManager:
         return self.update_project(project_name, _mutate)
 
     def update_project_character_sheet(self, project_name: str, name: str, sheet_path: str) -> dict:
-        """更新项目级角色设计图路径"""
+        """更新项目级角色资产图路径"""
         return self._update_asset_sheet("character", project_name, name, sheet_path)
 
     def update_character_reference_image(self, project_name: str, char_name: str, ref_path: str) -> dict:
@@ -3187,7 +3300,7 @@ class ProjectManager:
     # ==================== 场景管理（scene） ====================
 
     def update_scene_sheet(self, project_name: str, name: str, sheet_path: str) -> dict:
-        """更新场景设计图路径"""
+        """更新场景资产图路径"""
         return self._update_asset_sheet("scene", project_name, name, sheet_path)
 
     def get_scene(self, project_name: str, name: str) -> dict:
@@ -3199,13 +3312,13 @@ class ProjectManager:
         return self._get_pending_assets("scene", project_name)
 
     def get_scene_path(self, project_name: str, filename: str) -> Path:
-        """获取场景设计图路径"""
+        """获取场景资产图路径"""
         return self._get_asset_path("scene", project_name, filename)
 
     # ==================== 道具管理（prop） ====================
 
     def update_prop_sheet(self, project_name: str, name: str, sheet_path: str) -> dict:
-        """更新道具设计图路径"""
+        """更新道具资产图路径"""
         return self._update_asset_sheet("prop", project_name, name, sheet_path)
 
     def get_prop(self, project_name: str, name: str) -> dict:
@@ -3217,42 +3330,42 @@ class ProjectManager:
         return self._get_pending_assets("prop", project_name)
 
     def get_prop_path(self, project_name: str, filename: str) -> Path:
-        """获取道具设计图路径"""
+        """获取道具资产图路径"""
         return self._get_asset_path("prop", project_name, filename)
 
     def get_pending_characters(self, project_name: str) -> list[dict]:
         """产物清单未登记可用 character_sheet 的角色；项目未迁移时阻断。"""
         return self._get_pending_assets("character", project_name)
 
-    # ==================== 产品管理（product） ====================
+    # ==================== 商品管理（product） ====================
 
     def update_product_sheet(self, project_name: str, name: str, sheet_path: str) -> dict:
-        """更新产品标准参考图（product sheet）路径"""
+        """更新商品标准参考图（product sheet）路径"""
         return self._update_asset_sheet("product", project_name, name, sheet_path)
 
     def get_product(self, project_name: str, name: str) -> dict:
-        """获取产品定义"""
+        """获取商品定义"""
         return self._get_asset("product", project_name, name)
 
     def get_pending_project_products(self, project_name: str) -> list[dict]:
-        """产物清单未登记可用 product_sheet 的产品；项目未迁移时阻断。"""
+        """产物清单未登记可用 product_sheet 的商品；项目未迁移时阻断。"""
         return self._get_pending_assets("product", project_name)
 
     def get_product_path(self, project_name: str, filename: str) -> Path:
-        """获取产品图片路径"""
+        """获取商品图片路径"""
         return self._get_asset_path("product", project_name, filename)
 
     def add_product_reference_image(self, project_name: str, product_name: str, ref_path: str) -> dict:
-        """向产品的 reference_images 列表追加一张原图路径（已存在则不重复追加）。
+        """向商品的 reference_images 列表追加一张原图路径（已存在则不重复追加）。
 
-        原图是产品保真的验收锚点，只增不改；删除/重排走资产 PATCH 通道。
+        原图是商品保真的验收锚点，只增不改；删除/重排走资产 PATCH 通道。
         """
 
         def _mutate(project: dict) -> None:
             bucket = project.get("products")
             key = resolve_asset_key(bucket, product_name)
             if not isinstance(bucket, dict) or key is None:
-                raise KeyError(f"产品 '{product_name}' 不存在")
+                raise KeyError(f"商品 '{product_name}' 不存在")
             refs = bucket[key].setdefault("reference_images", [])
             if not isinstance(refs, list):
                 raise ValueError(
@@ -3304,7 +3417,7 @@ class ProjectManager:
         return self._add_asset("prop", project_name, name, entry)
 
     def add_product(self, project_name: str, name: str, description: str, brand: str = "") -> bool:
-        """直接添加产品到 project.json；同类型已存在返回 False，跨类型冲突则抛错。"""
+        """直接添加商品到 project.json；同类型已存在返回 False，跨类型冲突则抛错。"""
         entry = self._build_asset_entry("product", description, {"brand": brand})
         return self._add_asset("product", project_name, name, entry)
 

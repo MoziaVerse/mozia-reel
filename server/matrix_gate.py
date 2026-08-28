@@ -41,9 +41,24 @@ _PUBLIC_PREFIXES = (
     "/handoff",
     "/api/v1/matrix-session/init",
     "/health",
-    "/skill.md",
     MEDIA_URL_PREFIX,
 )
+
+# 托管态下整条关闭的挂载点。
+#
+# ``/mcp`` 是上游的远程 MCP 端点，自带一套 ArcReel 原生 API Key 鉴权
+# （``server/remote_mcp.py`` 的 ``ArcApiKeyVerifier``），与 matrix 会话不是一套身份：
+# 它全程不调 ``set_current_tenant``，``AccessToken.client_id`` 取的是 ArcReel 自己的
+# user id 而非 ssoSub。
+#
+# 更要命的是它挂在 ``/mcp`` 而不是 ``/api/`` 下：下面那条"静态资源放行"的兜底分支
+# 只看 ``/api/`` 前缀与是否浏览器导航，MCP 客户端的 POST 两条都不满足，会被**放行**且
+# tenant 恒为 None —— 那三十个 ``remote_*`` 工具于是落到不带租户段的共享数据根上。
+# 眼下还靠"key 表也按租户分片、查不到 → 401"挡着，但那是巧合不是设计。
+#
+# 托管态本就撤掉了"外部 Agent 凭令牌驱动本站"那条链路（入口与令牌管理都不提供），
+# 这里一并 404，与 ``/agent-installation-guide.md`` 同一口径。
+_MANAGED_DISABLED_PREFIXES = ("/mcp",)
 
 
 def _cookie_value(headers: list[tuple[bytes, bytes]], name: str) -> str | None:
@@ -96,6 +111,9 @@ class MatrixSessionGate:
             return
 
         path: str = scope.get("path", "")
+        if path.startswith(_MANAGED_DISABLED_PREFIXES):
+            await self._not_found(send)
+            return
         if path.startswith(_PUBLIC_PREFIXES):
             await self.app(scope, receive, send)
             return
@@ -187,6 +205,25 @@ class MatrixSessionGate:
             {
                 "type": "http.response.start",
                 "status": 403,
+                "headers": [
+                    (b"content-type", b"application/json; charset=utf-8"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+    async def _not_found(self, send) -> None:
+        """托管态整条关闭的挂载点：回 404 而不是 401/403。
+
+        401 会让客户端以为"换个凭据就能进"，403 会让人以为"权限不够"——两者都暗示
+        该端点在这个部署里存在。它不存在，404 才是事实。
+        """
+        body = json.dumps({"error": "not_found"}, ensure_ascii=False).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 404,
                 "headers": [
                     (b"content-type", b"application/json; charset=utf-8"),
                     (b"content-length", str(len(body)).encode("ascii")),

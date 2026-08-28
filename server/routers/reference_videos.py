@@ -12,11 +12,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
-from pydantic import BaseModel, Field, PositiveInt
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 
 from lib.api_errors import ApiError, BadRequestError, NotFoundError
 from lib.artifact_activation import resolve_artifact_episode
-from lib.asset_types import asset_name_comparison_key
 from lib.batch_admission import BatchAdmission, BatchAdmissionDecision, refused_ticket
 from lib.db import async_session_factory
 from lib.generation_queue import get_generation_queue
@@ -45,12 +44,7 @@ from lib.narration_delivery import (
 from lib.path_safety import PathTraversalError, safe_join
 from lib.project_change_hints import project_change_source
 from lib.project_manager import get_project_manager, is_reference_video_project
-from lib.reference_video import (
-    assemble_shots_text,
-    derive_references_from_text,
-    missing_registered_references,
-    parse_prompt,
-)
+from lib.reference_video import derive_references_from_text
 from lib.reference_video.request_projection import (
     ReferenceRequestOptions,
     ReferenceUnitRequestProjection,
@@ -104,18 +98,17 @@ router = APIRouter(
 # ============ 请求模型 ============
 
 
-class ReferenceDto(BaseModel):
-    type: str = Field(pattern=r"^(product|character|scene|prop)$")
-    name: str
-
-
 class ScriptPreviewRequest(BaseModel):
     prompt: str = ""
 
 
 class AddUnitRequest(BaseModel):
+    # extra="forbid"：正文是单元的唯一真相，参考图执行期才派生。旧客户端仍带着
+    # ``references`` 调用时要拿到 422 而不是被静默丢弃——被丢弃的话它会以为自己
+    # 指定的参考图生效了。
+    model_config = ConfigDict(extra="forbid")
+
     prompt: str
-    references: list[ReferenceDto] = Field(default_factory=list)
     duration_seconds: int | None = Field(default=None, ge=1)
     transition_to_next: str = Field(default="cut", pattern=r"^(cut|fade|dissolve)$")
     note: str | None = None
@@ -124,7 +117,7 @@ class AddUnitRequest(BaseModel):
 class GenerateUnitRequest(BaseModel):
     # 单目标入口保留后期配音默认（docs/adr/0061）：请求由用户在这条 unit 的界面上直接触发，
     # 界面已呈现该 unit 的旁白状态与费用，代价也止于这一条视频。必填只加在替整批选定准入判据
-    # 与时长基准的入口（``GenerateUnitsBatchRequest``）与由模型推断参数的智能体视频工具上。
+    # 与时长基准的入口（``GenerateUnitsBatchRequest``）与由模型推断参数的 Agent 视频工具上。
     narration_delivery: NarrationDelivery = POST_PRODUCTION
     confirmed_request_duration_seconds: int | None = Field(default=None, gt=0)
 
@@ -136,12 +129,10 @@ class GenerateUnitRequest(BaseModel):
 
 
 class GenerateUnitsBatchRequest(BaseModel):
-    """One batch video request: which units, how narration is delivered, what was agreed.
+    """批量视频生成请求。
 
-    ``unit_ids`` omitted means missing-only; naming ids regenerates exactly those.
-    ``confirmed_request_durations`` carries the tiers the user accepted in the
-    aggregate confirmation, bound to this request's targets and options — it does
-    not freeze what the worker will read when execution starts.
+    ``unit_ids`` 省略时只补齐缺失项；指定 id 则重新生成对应单元。
+    ``confirmed_request_durations`` 为用户在聚合确认中接受的时长档位。
     """
 
     unit_ids: list[str] | None = None
@@ -249,13 +240,6 @@ async def _quote_reference_request(
     )
 
 
-def _validate_references_exist(project: dict, refs: list[dict], _t: Translator) -> None:
-    """确保 references 都在 project.json 对应 bucket 中。"""
-    missing = missing_registered_references(refs, project)
-    if missing:
-        raise HTTPException(status_code=400, detail=_t("ref_not_registered", missing=", ".join(missing)))
-
-
 def _next_unit_id(script: dict, episode: int) -> str:
     existing = {str(u.get("unit_id", "")) for u in (script.get("video_units") or [])}
     idx = 1
@@ -268,16 +252,13 @@ def _build_unit_dict(
     *,
     unit_id: str,
     prompt: str,
-    references: list[dict],
     duration_seconds: int,
     transition: str,
     note: str | None,
 ) -> dict:
-    shots, _names = parse_prompt(prompt)
     unit = {
         "unit_id": unit_id,
-        "shots": [s.model_dump() for s in shots],
-        "references": references,
+        "text": prompt,
         "duration_seconds": duration_seconds,
         "transition_to_next": transition,
         "note": note,
@@ -296,7 +277,7 @@ def _build_unit_dict(
 
 
 def _require_unit_ready(unit: dict, *, ignore_marker: bool = False, allow_blank_draft: bool = False) -> None:
-    if allow_blank_draft and not assemble_shots_text(unit.get("shots") or []).strip():
+    if allow_blank_draft and not str(unit.get("text") or "").strip():
         return
     admission = admit_script_unit("video_units", unit, ignore_marker=ignore_marker)
     if not admission.allowed:
@@ -312,15 +293,6 @@ async def list_units(project_name: str, episode: int, _t: Translator) -> dict[st
     return {"units": script.get("video_units") or []}
 
 
-def _normalized_refs(references: list[Any]) -> list[dict]:
-    """把请求里的 reference 条目转成落盘 dict，资产名统一归一到比对坐标系。
-
-    请求可能携带两端空白或 NFD 形态的资产名，持久化前收敛到 strip + NFC，
-    与镜头正文及前端 mergeReferences 的写回口径一致。
-    """
-    return [{**r.model_dump(), "name": asset_name_comparison_key(r.name)} for r in references]
-
-
 @router.post("/episodes/{episode}/units", status_code=status.HTTP_201_CREATED)
 async def add_unit(
     project_name: str,
@@ -328,15 +300,10 @@ async def add_unit(
     req: AddUnitRequest,
     _t: Translator,
 ) -> dict[str, Any]:
-    refs = _normalized_refs(req.references)
-    references_supplied = "references" in req.model_fields_set
-
     project, current, script_file = _load_episode_script(project_name, episode, _t)
-    if references_supplied:
-        _validate_references_exist(project, refs, _t)
-    else:
-        derived_refs, _missing = derive_references_from_text(req.prompt, project)
-        refs = [reference.model_dump() for reference in derived_refs]
+    # 取档要看这条 unit 执行时到底会不会带参考图，故按正文里已登记的 `@[名称]` 判定——
+    # 与执行期的解析同一个出口，未登记的提及不产生参考图、也就不施加带图档位约束。
+    refs, _missing = derive_references_from_text(req.prompt, project)
 
     # 时长是 unit 级单一真相：请求未给出时按项目能力解析默认档位（异步 IO 不进项目锁临界区）
     duration_seconds = req.duration_seconds
@@ -353,15 +320,10 @@ async def add_unit(
     unit = _build_unit_dict(
         unit_id=_next_unit_id(current, episode),
         prompt=req.prompt,
-        references=refs,
         duration_seconds=int(duration_seconds),
         transition=req.transition_to_next,
         note=req.note,
     )
-    if not references_supplied:
-        # Omission means mechanical derivation. Let the shared editor do it from the
-        # project snapshot held by the commit lock, rather than persisting this preview.
-        unit.pop("references", None)
     result = execute_current_episode_edit(
         get_project_manager(),
         project_name,
@@ -380,8 +342,10 @@ async def add_unit(
 
 
 class PatchUnitRequest(BaseModel):
+    # extra="forbid" 同 ``AddUnitRequest``。
+    model_config = ConfigDict(extra="forbid")
+
     prompt: str | None = None
-    references: list[ReferenceDto] | None = None
     duration_seconds: int | None = Field(default=None, ge=1)
     transition_to_next: str | None = Field(default=None, pattern=r"^(cut|fade|dissolve)$")
     note: str | None = None
@@ -406,17 +370,11 @@ async def patch_unit(
     req: PatchUnitRequest,
     _t: Translator,
 ) -> dict[str, Any]:
-    refs: list[dict] | None = _normalized_refs(req.references) if req.references is not None else None
-    project, current, script_file = _load_episode_script(project_name, episode, _t)
+    _project, current, script_file = _load_episode_script(project_name, episode, _t)
     _find_unit(current, unit_id, _t)
-    if refs is not None:
-        _validate_references_exist(project, refs, _t)
     fields: dict[str, Any] = {}
-    if refs is not None:
-        fields["references"] = refs
     if req.prompt is not None:
-        shots, _mentions = parse_prompt(req.prompt)
-        fields["shots"] = [shot.model_dump() for shot in shots]
+        fields["text"] = req.prompt
     if req.duration_seconds is not None:
         fields["duration_seconds"] = req.duration_seconds
     if req.transition_to_next is not None:
@@ -501,6 +459,7 @@ async def precheck_unit_duration(
     project_name: str,
     episode: int,
     unit_id: str,
+    user: CurrentUser,
     _t: Translator,
     narration_delivery: NarrationDelivery = POST_PRODUCTION,
 ) -> dict[str, Any]:
@@ -512,11 +471,14 @@ async def precheck_unit_duration(
     project, script, script_file = _load_episode_script(project_name, episode, _t)
     unit = _find_unit(script, unit_id, _t)
     _require_unit_ready(unit)
+    queue = get_generation_queue()
     tts_in_progress = (
         await tts_task_in_progress(
             project_name=project_name,
             resource_id=unit_id,
             script_file=script_file,
+            user_id=user.id,
+            queue=queue,
         )
         if narration_delivery == USE_TTS
         else False
@@ -531,6 +493,7 @@ async def precheck_unit_duration(
         project_path=project_path,
         options=ReferenceRequestOptions(narration_delivery=narration_delivery),
         project_name=project_name,
+        user_id=user.id,
         tts_in_progress=tts_in_progress,
     )
     projection = await project_reference_unit_request(
@@ -581,9 +544,9 @@ async def preview_script(
     req: ScriptPreviewRequest,
     _t: Translator,
 ) -> dict[str, Any]:
-    """分镜文稿的读时派生预览：shots / references / utterances + 降级可见性 warning。
+    """视频单元正文的读时派生预览：utterances + 降级可见性 warning。
 
-    只读、不落盘——文稿是唯一真相，utterances 与 references 都是机械派生物。声音相关的
+    只读、不落盘——正文是唯一真相，utterances 与参考图都是机械派生物。声音相关的
     warning 依赖该集视频后端的能力（``voice_consistency`` 与参考音频段数上限）与本集的无声
     开关，与执行层同一份解析出口；能力解析失败时按 ``soft`` 降级，只是少发这几条提示。
     """
@@ -596,16 +559,9 @@ async def preview_script(
         max_reference_images=caps.get("max_reference_images"),
     )
     return {
-        "shots": [{"index": i, "text": s.text} for i, s in enumerate(preview.shots, start=1)],
-        "references": [r.model_dump() for r in preview.references],
         "utterances": [
-            {
-                "shot_index": u.shot_index,
-                "kind": u.utterance.kind,
-                "speaker": u.utterance.speaker,
-                "text": u.utterance.text,
-            }
-            for u in preview.utterances
+            {"index": index, "kind": u.kind, "speaker": u.speaker, "text": u.text}
+            for index, u in enumerate(preview.utterances, start=1)
         ],
         "warnings": [{"key": w["key"], "message": _t(w["key"], **w["params"])} for w in preview.warnings],
     }
@@ -626,13 +582,16 @@ async def generate_unit(
     project, script, script_file = _load_episode_script(project_name, episode, _t)
     unit = _find_unit(script, unit_id, _t)  # raises 404 if missing
     _require_unit_ready(unit)
-    guard_prompt = assemble_shots_text(unit.get("shots") or [])
+    guard_prompt = str(unit.get("text") or "")
     request_options = (req or GenerateUnitRequest()).projection_options()
+    queue = get_generation_queue()
     tts_in_progress = (
         await tts_task_in_progress(
             project_name=project_name,
             resource_id=unit_id,
             script_file=script_file,
+            user_id=user.id,
+            queue=queue,
         )
         if request_options.narration_delivery == USE_TTS
         else False
@@ -646,6 +605,7 @@ async def generate_unit(
         project_path=project_path,
         options=request_options,
         project_name=project_name,
+        user_id=user.id,
         tts_in_progress=tts_in_progress,
     )
     projection = await project_reference_unit_request(
@@ -679,7 +639,6 @@ async def generate_unit(
     except TaskSpecValidationError as exc:
         raise HTTPException(status_code=400, detail=_t(exc.code, **exc.params)) from exc
 
-    queue = get_generation_queue()
     result = await queue.enqueue_task(
         project_name=project_name,
         task_type=spec.task_type,
@@ -725,7 +684,7 @@ def _admission_payload(admission: BatchAdmission, _t: Translator) -> dict[str, A
 def _enqueue_failure_payload(failure: BatchTaskResult, _t: Translator) -> dict[str, Any]:
     """一个没能入队的目标，按共享契约的问题形状转述给浏览器。
 
-    问题码与下一步动作与智能体侧同源，只多一句本地化说明。原始异常文本（`detail`）来自数据库与
+    问题码与下一步动作与 Agent 侧同源，只多一句本地化说明。原始异常文本（`detail`）来自数据库与
     队列层，可能带出连接串或内部拓扑，因此只落服务端日志，不进浏览器响应体——与 `_admission_payload`
     只转述受控问题码的姿态一致。
     """
@@ -787,6 +746,7 @@ async def generate_units_batch(
         )
         for unit_id in selection.unmatched_ids
     ]
+    queue = get_generation_queue()
     admission = await admit_reference_video_batch(
         project_name=project_name,
         project=project,
@@ -804,6 +764,8 @@ async def generate_units_batch(
         # 产物状态不可读的 unit 被选目标环节排除在外，但它属于这次请求：不带进准入，
         # 同批健康的 unit 会照常入队，剩下这一个被无声略过。
         extra_tickets=[*unmatched, *malformed, *artifact_state_tickets(selection.unavailable)],
+        user_id=user.id,
+        queue=queue,
     )
     payload = _admission_payload(admission, _t)
     payload["skipped_unit_ids"] = sorted(state.unit_id for state in selection.skipped)
@@ -828,7 +790,12 @@ async def generate_units_batch(
             **(spec.payload or {}),
             "reference_request_options": options.to_payload(),
         }
-    enqueued, enqueue_failures = await batch_enqueue_only(project_name=project_name, specs=specs, user_id=user.id)
+    enqueued, enqueue_failures = await batch_enqueue_only(
+        project_name=project_name,
+        specs=specs,
+        user_id=user.id,
+        queue=queue,
+    )
     # 入队中断不撤销已创建的任务：它们是准入通过的完整付费单元，照常执行。没轮到的目标
     # 逐 ID 报出来，界面据此释放乐观占用标记，下次「缺失即生成」只补这些。
     payload["enqueue_failures"] = [_enqueue_failure_payload(failure, _t) for failure in enqueue_failures]

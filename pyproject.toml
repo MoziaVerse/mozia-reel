@@ -1,7 +1,7 @@
 [project]
 name = "arcreel"
 # managed by release-please — do not bump manually
-version = "0.26.0"
+version = "0.27.0"
 description = "AI video generation workspace"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -37,6 +37,9 @@ dependencies = [
     "portalocker>=2.10.1",
     "pdf-oxide>=0.3.46",
     "socksio>=1.0.0",
+    "mcp>=1.29.0,<2",
+    "jsonschema>=4.26.0",
+    "jsonpath-rfc9535>=1.0.0",
 ]
 
 [dependency-groups]
@@ -49,6 +52,9 @@ dev = [
     "python-docx>=1.2.0",
     "basedpyright>=1.39.4",
     "import-linter>=2.13",
+    "pytest-xdist>=3.8.0",
+    "pytest-timeout>=2.4.0",
+    "respx>=0.22.0",
 ]
 
 [build-system]
@@ -60,8 +66,16 @@ packages = ["lib", "server"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--strict-markers"
+addopts = "--strict-markers --durations=25"
 asyncio_mode = "auto"
+# 卡死保护，不是耗时预算：当前最慢用例 30s，留 4 倍余量。个别用例需要更大预算时用
+# `@pytest.mark.timeout(N)` 单独放宽，不抬全局值。
+timeout = 120
+# signal 法对 async 与 sync 用例均生效，超时表现为普通 failure（会话继续、teardown
+# 正常、可归因）；thread 法以 os._exit 硬杀进程，xdist 下等价于 worker crash。
+timeout_method = "signal"
+# 并行不写进 addopts，只在 CI 命令里显式开（-n 4 --dist loadfile）：小选集并行更慢，
+# 每 worker 重新 import server.app 的固定开销吃掉全部收益，而本地调试几乎都是小选集。
 markers = [
     "unit: 快速、隔离、不触达真实 I/O 或外部服务的测试",
     "integration: 跨模块真实协作测试；禁止 mock 被测 module 的公共入口（否则是在测 mock 本身）",
@@ -101,6 +115,11 @@ layers = [
 ]
 containers = ["lib"]
 ignore_imports = [
+    # lib.config.service 取 CUSTOM_PROVIDER_PREFIX 判断默认音频 backend 是否为自定义供应商
+    # （自定义 TTS 不接受任何 preset voice，默认音色须回落到模型自带）。名义边而非结构依赖：
+    # lib.custom_provider.__init__ 只有常量、自身无下游依赖。就地清零要么把常量复制一份、
+    # 要么为一个字符串新开一个基础层模块，两者都比这行更差。
+    "lib.config.service -> lib.custom_provider",
     # lib.config.resolver 直接向上引用自定义供应商装配层（函数体内延迟导入，静态分析仍计入）
     "lib.config.resolver -> lib.custom_provider",
     "lib.config.resolver -> lib.custom_provider.capabilities",
@@ -125,6 +144,22 @@ ignore_imports = [
     "lib.db.repositories.custom_provider_repo -> lib.custom_provider.endpoints",
     "lib.db.models.custom_provider -> lib.custom_provider",
 ]
+
+# 路线中立层不得依赖某一条具体路线的子包。违约条目类型（draft_violation）、草稿信封
+# （draft_quarantine）、正式 step1 的路径与写禁表（episode_paths）对 drama / narration /
+# reference_video 一视同仁，任一处 import lib.reference_video 都是把三条路线共用的机制绑在
+# 其中一条上。
+# lib.script_review 不在列：它另有一条 lib.reference_video.duration_migration 的依赖（参考
+# 生视频专属的时长收编），纳入就要加 baseline 掩盖，那等于让契约声明一件它此刻并不成立的事。
+[[tool.importlinter.contracts]]
+name = "路线中立层不依赖参考生视频子包"
+type = "forbidden"
+source_modules = [
+    "lib.draft_violation",
+    "lib.draft_quarantine",
+    "lib.episode_paths",
+]
+forbidden_modules = ["lib.reference_video"]
 
 [tool.ruff]
 line-length = 120

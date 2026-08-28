@@ -44,6 +44,7 @@ MESSAGES = {
     "task_fail_dispatch_provider_requeue_failed": "The task provider changed from {claimed_provider_id} to {actual_provider_id}, but the task could not be requeued for a new slot; please retry",
     "task_fail_restart_lost_image": "The image task was interrupted by a service restart and cannot be resumed; please retry manually to avoid duplicate billing",
     "task_fail_restart_lost_audio": "The audio task was interrupted by a service restart and cannot be resumed; please retry manually to avoid duplicate billing",
+    "task_fail_restart_lost_text": "The text task was interrupted by a service restart and cannot be resumed; please retry manually to avoid duplicate billing",
     "task_fail_restart_lost_no_job_id": "The video task did not persist a resume handle before the service restart and cannot recover automatically; please retry manually",
     "task_fail_restart_lost_resume_no_job_id": "The task is missing a resume handle and cannot be recovered; please retry manually",
     "task_fail_restart_lost_checkpoint_no_job_id": "The task crossed the submission boundary without saving a provider job ID and cannot retry automatically without risking duplicate billing",
@@ -62,11 +63,10 @@ MESSAGES = {
     "prompt_text_empty": "prompt must not be empty",
     "storyboard_task_submitted": "Storyboard generation task for '{segment_id}' submitted",
     "generate_storyboard_first": "Please generate storyboard scene_{segment_id}.png first",
-    "video_route_is_reference_video": "This project uses the reference-video route, which has no storyboard-to-video step; generate by video unit in the reference video editor",
+    "video_route_is_reference_video": "This project uses Reference-to-video mode, which has no storyboard-to-video step; generate by video unit in the reference video editor",
     "invalid_storyboard_image_path": "Segment '{segment_id}' has an invalid storyboard image reference; please regenerate the storyboard",
     "invalid_end_frame_image_path": "Segment '{segment_id}' has an invalid end-frame image reference; please capture the end frame again",
     "video_audio_switch_not_supported": "{provider}/{model} always produces audio and cannot be muted; turn the audio switch back on in settings and try again",
-    "reference_declaration_invalid": "The reference declaration is malformed ({count} item(s)); repair references and try again",
     "reference_asset_missing": "Reference assets are missing or unavailable: {missing_text}",
     "reference_capability_changed": "The declared capability is {declared}, but hydrated assets require {hydrated}; repair the assets and try again",
     "reference_images_clamped": "The {count} reference images exceed the {max_count} image limit for {provider}/{model}; the request will use the first {max_count}",
@@ -111,21 +111,22 @@ MESSAGES = {
     "tts_stale": "The narration audio is older than the current content; regenerate it before using TTS delivery",
     "tts_state_unavailable": "The narration audio state is unavailable; repair it before using TTS delivery",
     "tts_duration_unavailable": "The narration audio duration cannot be measured; repair or regenerate it",
-    "video_duration_unavailable": "The generated video duration cannot be measured against the {tts_duration:.1f}s narration; regenerate the video",
-    "video_shorter_than_tts": "The generated video is {video_duration:.1f}s, shorter than the {tts_duration:.1f}s narration; regenerate it without truncating or speeding up speech",
+    "video_duration_unavailable": "The generated video duration cannot be measured against the {tts_duration:.1f}s narration audio; regenerate the video",
+    "video_shorter_than_tts": "The generated video is {video_duration:.1f}s, shorter than the {tts_duration:.1f}s narration audio; regenerate it without truncating or speeding up speech",
     "audio_provider_not_configured": "Please configure an audio provider first: add a text-to-speech capable provider in Settings → Providers",
     "narration_speed_must_be_positive": "Narration speed must be a positive number",
+    "video_poll_timeout_minimum": "Video polling timeout must be at least 60 seconds",
     "speech_rate_out_of_range": "Spoken pace must be between {min} and {max} (characters or words per second)",
     "character_not_found": "Character '{name}' does not exist",
-    "character_task_submitted": "Character design generation task for '{name}' submitted",
+    "character_task_submitted": "Character asset sheet generation task for '{name}' submitted",
     "voice_sample_voice_required": "Please select a voice first",
     "voice_sample_text_too_long": "Sample text cannot exceed {max_length} characters",
     "voice_sample_task_submitted": "Voice sample generation task for character '{name}' submitted",
     "voice_sample_not_ready": "The voice sample has not finished generating successfully; cannot confirm yet",
     "voice_sample_file_missing": "The voice sample file no longer exists; please regenerate it",
-    "scene_task_submitted": "Scene design generation task for '{name}' submitted",
-    "prop_task_submitted": "Prop design generation task for '{name}' submitted",
-    "product_task_submitted": "Merchandise reference image generation task for '{name}' submitted",
+    "scene_task_submitted": "Scene asset sheet generation task for '{name}' submitted",
+    "prop_task_submitted": "Prop asset sheet generation task for '{name}' submitted",
+    "product_task_submitted": "Merchandise asset sheet generation task for '{name}' submitted",
     # Files
     "file_not_found": "File does not exist: {path}",
     "forbidden_access": "Access to files outside the project directory is forbidden",
@@ -162,9 +163,6 @@ MESSAGES = {
     "script_review_quarantine_unreadable": (
         "The draft needing fixes is corrupted or malformed and can't be read; ask the agent to re-split this episode"
     ),
-    "draft_event_label": "Episode {episode} {label_prefix}",
-    "normalized_script": "Normalized Script",
-    "segment_splitting": "Segment Splitting",
     # Source loader
     "source_unsupported_format": "Unsupported source format: {ext} (supported: .txt / .md / .docx / .epub / .pdf)",
     "source_decode_failed": "Failed to decode source file '{filename}' (tried: {tried})",
@@ -204,10 +202,14 @@ MESSAGES = {
     "duplicate_model_id": "Duplicate model_id: {model_id}",
     "default_model_conflict": "Each media_type can have at most one default model. Conflict: {conflict}",
     "provider_not_found": "Provider does not exist",
+    "custom_endpoint_not_found": "Endpoint does not exist",
+    "custom_endpoint_definition_invalid": "The endpoint definition failed validation. Fix the reported issues and try again",
+    "custom_endpoint_referenced_by_models": "This endpoint is used by {count} model(s). Remove those references before deleting it",
     "at_least_one_field_required": "At least one field must be provided for update",
     "discovery_failed": "Model discovery failed: {err_msg}",
     "anthropic_discovery_no_key": "API Key not configured, cannot discover models",
     "unknown_endpoint": "Unknown endpoint: {endpoint}",
+    "endpoint_definition_not_found": "Endpoint {endpoint} has no declarative definition",
     "unknown_discovery_format": "Unsupported discovery_format: {discovery_format}",
     "endpoint_required": "Enabled models must specify endpoint",
     "endpoint_media_type_mismatch": "Endpoint media_type mismatch: {detail}",
@@ -238,8 +240,6 @@ MESSAGES = {
     "ad_grid_not_supported": "Ad/short-video projects do not support Multi-grid Storyboard to Video",
     "grid_storyboard_not_enabled": "Multi-grid Storyboard is not enabled for this project",
     "ad_target_duration_required": "Ad/short-video projects require a target duration (positive integer seconds)",
-    "project_id_not_editable": "content_mode cannot be modified after project creation",
-    "source_kind_not_editable": "source_kind cannot be modified after project creation",
     "project_deleted": "Project '{name}' deleted",
     "scene_updated": "Scene '{scene_id}' updated",
     "segment_updated": "Segment '{segment_id}' updated",
@@ -270,7 +270,6 @@ MESSAGES = {
     # Validators
     "invalid_backend_format": "Model selection format is invalid; use provider/model",
     "backend_media_type_mismatch": "Model type mismatch: this setting needs a {expected} model, but {provider}/{model} is a {actual} model",
-    "deprecated_image_backend": "The image_backend field is deprecated; use image_provider_t2i and image_provider_i2i instead",
     # Versions
     "unsupported_resource_type": "Unsupported resource type: {resource_type}",
     "invalid_resource_id": "Invalid resource ID: {resource_id}",
@@ -287,10 +286,8 @@ MESSAGES = {
     "ref_payload_too_large": "Reference image payload exceeded provider limits, retried with extra compression",
     "ref_payload_floor_exceeded": "Reference images are too large or too many; even compressed to the lowest quality they still exceed the provider's request size limit. Please reduce the number of reference images or their resolution and try again",
     "ref_sora_single_ref": "Sora reference mode does not currently support multiple images, downgraded to single image",
-    "ref_shot_parse_fallback": "No Shot N (Xs) header detected, treated as a single shot",
     "ref_episode_not_found": "Episode {episode} not found",
     "ref_not_reference_video_mode": "Episode script is not in reference-video mode",
-    "ref_not_registered": "Referenced assets are not registered: {missing}",
     "ref_unit_not_found": "Video unit '{unit_id}' not found",
     "ref_unit_needs_replan": "This video unit has a speech-ownership or migration problem; replan it before generating",
     "ref_unit_ids_length_mismatch": "unit_ids count does not match existing units",
@@ -305,10 +302,10 @@ MESSAGES = {
         "attached. Check the name or create the asset first"
     ),
     "ref_warn_unclosed_brace": (
-        "Shot {shot}: unclosed dialogue braces, not recognized as dialogue. The line is sent verbatim: {excerpt}…"
+        "Line {line}: unclosed dialogue braces, not recognized as dialogue. The line is sent verbatim: {excerpt}…"
     ),
     "ref_warn_braces_not_speech": (
-        "Shot {shot}: braces were not recognized as speech and are sent verbatim. Write dialogue as "
+        "Line {line}: braces were not recognized as speech and are sent verbatim. Write dialogue as "
         "@[character]{{dialogue}} and voice-over as {{dialogue}}; the speaker must be non-empty and "
         "braces must be paired and not nested"
     ),

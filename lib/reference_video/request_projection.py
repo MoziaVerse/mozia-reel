@@ -1,4 +1,4 @@
-"""参考视频 unit 的当前请求投影。
+"""视频单元的当前请求投影。
 
 投影是 advisory/current-state 读模型：调用方传入当前 project、script、unit，已经解析出的
 资产候选与请求选项，得到报价、提交预检和限流路由共用的一份不可变事实。结果不携带 token、
@@ -11,17 +11,19 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Protocol, cast
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from lib.asset_types import ASSET_SPECS, asset_name_comparison_key, normalize_asset_bucket
-from lib.config.registry import (
-    model_audio_switch_controllable,
-    model_has_audio_track,
-    model_info_for,
+from lib.asset_types import ASSET_SPECS, AssetSpec, asset_name_comparison_key, normalize_asset_bucket
+from lib.config.registry import model_info_for
+from lib.config.resolver import (
+    VideoBucketCapabilityError,
+    VideoCapability,
+    builtin_video_audio_track,
+    get_provider_fallback,
+    video_capability_satisfied,
 )
-from lib.config.resolver import VideoBucketCapabilityError, VideoCapability, get_provider_fallback
 from lib.narration_delivery import (
     POST_PRODUCTION as POST_PRODUCTION,
 )
@@ -38,6 +40,7 @@ from lib.narration_delivery import (
 )
 from lib.path_safety import PathTraversalError, safe_join
 from lib.reference_video.duration_slots import DurationSlot, resolve_duration_slot
+from lib.reference_video.text_parser import derive_references_from_text
 from lib.script_models import ReferenceResource
 from lib.speech_composition import admit_script_unit
 
@@ -122,7 +125,7 @@ class ResolvedReferenceAsset:
 
 @dataclass(frozen=True)
 class ProviderProjectionCandidate:
-    """当前能力桶的 provider/model 与请求能力事实。"""
+    """当前任务类型桶的供应商模型组合与请求能力事实。"""
 
     capability: VideoCapability
     provider_id: str
@@ -137,6 +140,8 @@ class ProviderProjectionCandidate:
     voice_consistency: str = "soft"
     max_reference_audio_count: int = 0
     reference_audio_per_image: bool = False
+    first_frame: bool = True
+    text_to_video: bool = True
 
     @property
     def pair_key(self) -> str:
@@ -264,7 +269,7 @@ class ReferenceAssetAvailability(Protocol):
 
 
 class ReferenceCapabilityProjection(Protocol):
-    """当前 provider/model 能力的异步适配器。"""
+    """当前供应商模型组合能力的异步适配器。"""
 
     async def resolve_candidate(self, project: dict, capability: VideoCapability) -> ProviderProjectionCandidate:
         raise NotImplementedError
@@ -305,13 +310,19 @@ def reference_audio_model_facts(
     model_id: str,
     *,
     voice_consistency: str,
+    capability: VideoCapability,
 ) -> tuple[bool, bool]:
-    """返回 ``(has_audio_track, audio_switch_controllable)`` 的模型级事实。"""
+    """返回 ``(has_audio_track, audio_switch_controllable)`` 的模型级事实。
 
-    model_info = model_info_for(provider_id, model_id)
-    if model_info is None:
+    ``capability`` 定的是执行路径：音轨形态按子路径分叉，参考生视频的镜头必须按 r2v 取值，否则
+    可灵 v3-omni 这类「图生可控、参考生无开关」的型号会被当成开关可控（用户的音频配置在多图
+    主体子路径上根本发不出去）。自定义供应商与未登记模型没有逐模型声明，按无信号不收紧。
+    """
+
+    audio_track = builtin_video_audio_track(provider_id, model_id, capability=capability)
+    if audio_track is None:
         return voice_consistency != "none", True
-    return model_has_audio_track(provider_id, model_info), model_audio_switch_controllable(model_info)
+    return audio_track != "always_off", audio_track == "controllable"
 
 
 def strict_reference_durations(
@@ -399,36 +410,58 @@ def _candidate_path(project_path: Path, value: object) -> Path | None:
         return None
 
 
-def resolve_reference_assets(project: dict, project_path: Path, unit: dict) -> tuple[ResolvedReferenceAsset, ...]:
-    """把当前逻辑引用展开为图片候选，不把“路径已登记”误当成“文件存在”。
+def unit_reference_declarations(project: dict, unit: dict) -> tuple[ReferenceResource, ...]:
+    """视频单元正文 → 该单元生成所用的逻辑参考图引用，按首次提及顺序。
 
-    产品按 sheet → 原图展开；其它资产各展开一张 sheet。缺字段、未登记或越界路径不制造
-    候选，由 projector 对照声明引用统一产出 ``reference_asset_missing``。
+    正文是唯一真相：引用不落盘，读侧一律经本函数派生，商品与其它资产走同一条规则、
+    没有类型优先级（见 ADR 0064）。未登记的名字不产生引用——它只在渲染与预览侧发一条
+    非阻断 warning，不挡住这次生成。
     """
 
-    references = canonicalize_references(unit.get("references"))
+    raw_text = unit.get("text")
+    text = raw_text if isinstance(raw_text, str) else ""
+    references, _missing = derive_references_from_text(text, project)
+    return tuple(references)
+
+
+def resolve_reference_assets(project: dict, project_path: Path, unit: dict) -> tuple[ResolvedReferenceAsset, ...]:
+    """把正文派生的逻辑引用展开为图片候选，不把「路径已登记」误当成「文件存在」。
+
+    每件资产同一条规则：有资产图就用资产图，没有才退到该资产的全部原图。商品与其它资产
+    共用这条规则，不按类型排序、也不在有资产图时额外注入原图（见 ADR 0064 与 ADR 0034）。
+    缺字段、未登记或越界路径不制造候选，由 projector 对照派生引用统一产出
+    ``reference_asset_missing``。
+    """
+
     result: list[ResolvedReferenceAsset] = []
-    for reference in references:
+    for reference in unit_reference_declarations(project, unit):
         spec = ASSET_SPECS[reference.type]
         bucket = normalize_asset_bucket(project.get(spec.bucket_key))
         entry = bucket.get(asset_name_comparison_key(reference.name))
         if not isinstance(entry, dict):
             continue
-        if reference.type == "product":
-            sheet = _candidate_path(project_path, entry.get(spec.sheet_field))
-            if sheet is not None:
-                result.append(ResolvedReferenceAsset(path=sheet, reference=reference, kind="sheet"))
-            originals = entry.get("reference_images")
-            if isinstance(originals, list):
-                for raw_path in originals:
-                    original = _candidate_path(project_path, raw_path)
-                    if original is not None:
-                        result.append(ResolvedReferenceAsset(path=original, reference=reference, kind="original"))
-            continue
         sheet = _candidate_path(project_path, entry.get(spec.sheet_field))
         if sheet is not None:
-            result.append(ResolvedReferenceAsset(path=sheet, reference=reference))
+            result.append(ResolvedReferenceAsset(path=sheet, reference=reference, kind="sheet"))
+            continue
+        for raw_path in _original_image_paths(entry, spec):
+            original = _candidate_path(project_path, raw_path)
+            if original is not None:
+                result.append(ResolvedReferenceAsset(path=original, reference=reference, kind="original"))
     return tuple(result)
+
+
+def _original_image_paths(entry: dict, spec: AssetSpec) -> list[object]:
+    """该资产条目登记的全部原图路径，按声明顺序。"""
+
+    paths: list[object] = []
+    for field_name in spec.original_image_fields:
+        value = entry.get(field_name)
+        if isinstance(value, list):
+            paths.extend(value)
+        elif value:
+            paths.append(value)
+    return paths
 
 
 class ConfigReferenceCapabilityProjection:
@@ -500,6 +533,7 @@ class ConfigReferenceCapabilityProjection:
             provider_id,
             model_id,
             voice_consistency=str(caps.get("voice_consistency") or "soft"),
+            capability=capability,
         )
         max_references = caps.get("max_reference_images")
         candidate = ProviderProjectionCandidate(
@@ -516,71 +550,26 @@ class ConfigReferenceCapabilityProjection:
             voice_consistency=str(caps.get("voice_consistency") or "soft"),
             max_reference_audio_count=int(caps.get("max_reference_audio_count") or 0),
             reference_audio_per_image=bool(caps.get("reference_audio_per_image") or False),
+            first_frame=bool(caps.get("first_frame")),
+            text_to_video=bool(caps.get("text_to_video", True)),
         )
         return candidate
-
-
-def canonicalize_references(references: object) -> tuple[ReferenceResource, ...]:
-    """按 product → character → scene → prop 稳定排序、按类型与规范名去重。"""
-
-    priority = {"product": 0, "character": 1, "scene": 2, "prop": 3}
-    raw = references if isinstance(references, list) else []
-    ordered = sorted(
-        enumerate(raw),
-        key=lambda pair: (
-            priority.get(str(pair[1].get("type")), len(priority)) if isinstance(pair[1], dict) else len(priority),
-            pair[0],
-        ),
-    )
-    seen: set[tuple[str, str]] = set()
-    result: list[ReferenceResource] = []
-    for _index, item in ordered:
-        if not isinstance(item, dict):
-            continue
-        asset_type = item.get("type")
-        name = item.get("name")
-        if not isinstance(asset_type, str) or asset_type not in priority or not isinstance(name, str):
-            continue
-        canonical_name = asset_name_comparison_key(name)
-        key = (asset_type, canonical_name)
-        if not canonical_name or key in seen:
-            continue
-        seen.add(key)
-        result.append(
-            ReferenceResource(
-                type=cast(Literal["product", "character", "scene", "prop"], asset_type),
-                name=canonical_name,
-            )
-        )
-    return tuple(result)
 
 
 def clamp_reference_assets(
     assets: Sequence[ResolvedReferenceAsset], max_references: int | None
 ) -> tuple[ResolvedReferenceAsset, ...]:
-    """超过上限时优先保留产品 sheet，其次产品原图，最后其它资产。"""
+    """超过上限时按正文的提及顺序保留前若干张——没有类型优先级。"""
 
     if max_references is None or len(assets) <= max_references:
         return tuple(assets)
-    ordered = sorted(
-        enumerate(assets),
-        key=lambda pair: (
-            0
-            if pair[1].reference.type == "product" and pair[1].kind == "sheet"
-            else 1
-            if pair[1].reference.type == "product" and pair[1].kind == "original"
-            else 2,
-            pair[0],
-        ),
-    )
-    return tuple(asset for _index, asset in ordered[: max(0, max_references)])
+    return tuple(assets[: max(0, max_references)])
 
 
 _PROBLEM_PRESENTATION: dict[str, tuple[str, tuple[tuple[str | int, ...], ...]]] = {
-    "reference_declaration_invalid": ("repair_reference_declaration", (("references",),)),
-    "reference_asset_missing": ("repair_reference_assets", (("references",),)),
-    "reference_capability_changed": ("repair_reference_assets", (("references",),)),
-    "reference_images_clamped": ("review_reference_selection", (("references",),)),
+    "reference_asset_missing": ("repair_reference_assets", (("text",),)),
+    "reference_capability_changed": ("repair_reference_assets", (("text",),)),
+    "reference_images_clamped": ("review_reference_selection", (("text",),)),
     "video_audio_switch_not_supported": (
         "enable_model_audio",
         (("generation_settings", "generate_audio"),),
@@ -590,9 +579,10 @@ _PROBLEM_PRESENTATION: dict[str, tuple[str, tuple[tuple[str | int, ...], ...]]] 
     "reference_supported_durations_missing": ("configure_video_model", (("duration_seconds",),)),
     "reference_supported_durations_invalid": ("configure_video_model", (("duration_seconds",),)),
     "reference_supported_durations_incompatible": ("configure_video_model", (("duration_seconds",),)),
-    "reference_capability_unavailable": ("configure_video_model", (("references",),)),
-    "video_capability_missing_i2v": ("configure_video_model", (("references",),)),
-    "video_capability_missing_r2v": ("configure_video_model", (("references",),)),
+    "reference_capability_unavailable": ("configure_video_model", (("text",),)),
+    "video_capability_missing_i2v": ("configure_video_model", (("text",),)),
+    "video_capability_missing_r2v": ("configure_video_model", (("text",),)),
+    "video_capability_missing_t2v": ("configure_video_model", (("text",),)),
 }
 
 
@@ -602,29 +592,6 @@ def _problem(code: str, *, blocking: bool, **params: object) -> ProjectionProble
 
 def _asset_key(asset: ResolvedReferenceAsset) -> tuple[str, str]:
     return asset.reference.type, asset_name_comparison_key(asset.reference.name)
-
-
-def _invalid_reference_declaration_count(references: object) -> int:
-    """Count malformed declarations without repairing or rewriting the source unit."""
-
-    if not isinstance(references, list):
-        return 1
-    valid_types = frozenset(ASSET_SPECS)
-    invalid = 0
-    for item in references:
-        if not isinstance(item, dict):
-            invalid += 1
-            continue
-        asset_type = item.get("type")
-        name = item.get("name")
-        if (
-            not isinstance(asset_type, str)
-            or asset_type not in valid_types
-            or not isinstance(name, str)
-            or not asset_name_comparison_key(name)
-        ):
-            invalid += 1
-    return invalid
 
 
 def _planned_duration(unit: dict) -> int:
@@ -661,8 +628,7 @@ class ReferenceUnitRequestProjector:
 
         del script
         options = options or ReferenceRequestOptions()
-        raw_references = unit["references"] if "references" in unit else []
-        canonical = canonicalize_references(raw_references)
+        canonical = unit_reference_declarations(project, unit)
         declared_capability: VideoCapability = "r2v" if canonical else "i2v"
         hydration = hydrate_reference_assets(canonical, resolved_assets, self._assets)
         available = hydration.available
@@ -680,15 +646,6 @@ class ReferenceUnitRequestProjector:
                         locations=tuple(location.path for location in delivery_problem.locations),
                     )
                 )
-        invalid_reference_count = _invalid_reference_declaration_count(raw_references)
-        if invalid_reference_count:
-            problems.append(
-                _problem(
-                    "reference_declaration_invalid",
-                    blocking=True,
-                    count=invalid_reference_count,
-                )
-            )
         if hydration.missing:
             missing = tuple((ref.type, ref.name) for ref in hydration.missing)
             problems.append(
@@ -735,6 +692,25 @@ class ReferenceUnitRequestProjector:
 
         request_assets = available
         if candidate is not None:
+            if (
+                hydrated_capability == "i2v"
+                and not available
+                and not video_capability_satisfied(
+                    capability=hydrated_capability,
+                    first_frame=candidate.first_frame,
+                    max_reference_images=candidate.max_reference_images or 0,
+                    text_to_video=candidate.text_to_video,
+                    has_image=False,
+                )
+            ):
+                problems.append(
+                    _problem(
+                        "video_capability_missing_t2v",
+                        blocking=True,
+                        provider=candidate.provider_id,
+                        model=candidate.model_id,
+                    )
+                )
             request_assets = clamp_reference_assets(available, candidate.max_reference_images)
             if len(request_assets) < len(available):
                 problems.append(

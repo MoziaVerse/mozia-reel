@@ -44,6 +44,23 @@
   <img src="docs/assets/hero-screenshot.png" alt="ArcReel Workspace" width="900">
 </p>
 
+## Sponsors
+
+> [Want to appear here?](mailto:support@arc-reel.com)
+
+<table>
+  <tr>
+    <td width="200" align="center" valign="top">
+      <a href="https://metaso.cn/minimax-h3/?s=arc"><img src="docs/assets/sponsors/metaso.png" alt="Metaso" width="180"></a>
+    </td>
+    <td valign="top">
+      <strong>MiniMax H3 Video Generation API | Metaso</strong><br>
+      Metaso offers cost-effective MiniMax H3 video generation: <strong>CNY 0.09/sec at 768P, CNY 0.15/sec at 2K</strong>. Native 2K, synchronized audio and video, an API compatible with the <strong>OpenAI protocol</strong>, and <strong>ComfyUI</strong> support — no GPU deployment required.<br>
+      🎁 <a href="https://metaso.cn/minimax-h3/?s=arc">Sign up via ArcReel's exclusive link</a> to claim bonus credits and an exclusive discount.
+    </td>
+  </tr>
+</table>
+
 ## What ArcReel is
 
 ArcReel is an open-source, self-hosted workspace for AI drama and novel adaptation, narrated short videos, ads, and product shorts. It organizes content analysis, asset management, storyboards, media generation, cost tracking, and export into an inspectable and resumable production pipeline.
@@ -94,7 +111,7 @@ For the complete first-run workflow, see [Getting Started](https://docs.arc-reel
 |---|---|
 | [Documentation Home](https://docs.arc-reel.com/en/) | Entry points for users, operators, and developers |
 | [Getting Started](https://docs.arc-reel.com/en/guide/getting-started) | From first deployment to the first generated video |
-| [Workflows and Modes](https://docs.arc-reel.com/en/guide/workflows) | Novel, screenplay, and ad modes, plus the three video-making workflows |
+| [Workflows and Modes](https://docs.arc-reel.com/en/guide/workflows) | Novels, scripts, and creative ideas; three creation types and two generation modes |
 | [Provider Configuration](https://docs.arc-reel.com/en/guide/providers) | Selection and configuration of Agent, text, image, video, and TTS providers |
 | [Jianying Draft Export](https://docs.arc-reel.com/en/guide/jianying-export) | Continue editing ArcReel output in Jianying |
 | [FAQ](https://docs.arc-reel.com/en/guide/faq) | Deployment, cost, model, data, and licensing questions |

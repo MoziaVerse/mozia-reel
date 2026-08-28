@@ -12,12 +12,110 @@ import logging
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from lib.config.registry import PROVIDER_REGISTRY, model_audio_always_on
-from lib.config.resolver import ConfigResolver, VideoBucketCapabilityError, VideoCapability
+from lib.config.resolver import (
+    ConfigResolver,
+    VideoBucketCapabilityError,
+    VideoCapability,
+    builtin_video_audio_track,
+    constrain_durations_for_project,
+)
 from lib.db import async_session_factory
 from lib.reference_video.voice_settings import VoiceRenderSettings
+from lib.video_backends.base import VideoAudioMode
 
 logger = logging.getLogger(__name__)
+
+
+async def resolve_video_caps(
+    project: dict,
+    *,
+    capability: VideoCapability | None = None,
+    config_resolver: ConfigResolver | None = None,
+) -> dict:
+    """Resolve full model capabilities from an already loaded project."""
+    resolver = config_resolver or ConfigResolver(async_session_factory)
+    return await resolver.video_capabilities_for_project(project, capability=capability)
+
+
+def constrained_caps_durations(
+    project: dict,
+    caps: dict,
+    durations: list[int],
+    *,
+    generation_mode: str | None,
+    uses_reference_images: bool | None = None,
+) -> list[int]:
+    """Apply model duration linkage constraints to a caller-selected duration set."""
+    return constrain_durations_for_project(
+        project,
+        durations,
+        provider_id=caps.get("provider_id"),
+        model_id=caps.get("model"),
+        generation_mode=generation_mode,
+        uses_reference_images=uses_reference_images,
+    )
+
+
+async def reference_unit_duration_tiers(
+    project: dict,
+    caps: dict,
+    durations: list[int],
+    *,
+    config_resolver: ConfigResolver | None = None,
+) -> tuple[list[int], list[int]]:
+    """Return effective duration tiers for units with and without reference images.
+
+    Reference-video units without references execute through the i2v capability
+    bucket. If that bucket cannot be resolved, the main r2v bucket remains the
+    soft fallback so capability annotations never block the creative flow.
+    """
+    with_references = constrained_caps_durations(
+        project, caps, durations, generation_mode="reference_video", uses_reference_images=True
+    )
+    i2v_caps, i2v_durations = caps, durations
+    try:
+        if config_resolver is None:
+            resolved = await resolve_video_caps(project, capability="i2v")
+        else:
+            resolved = await resolve_video_caps(project, capability="i2v", config_resolver=config_resolver)
+        resolved_durations = [int(d) for d in resolved.get("supported_durations") or []]
+        if resolved_durations:
+            i2v_caps, i2v_durations = resolved, resolved_durations
+    except (ValueError, SQLAlchemyError) as exc:
+        logger.info("i2v 桶能力不可解析，不带图档位回退按 r2v 桶求值：%s", exc)
+    without_references = constrained_caps_durations(
+        project, i2v_caps, i2v_durations, generation_mode="reference_video", uses_reference_images=False
+    )
+    return with_references, without_references
+
+
+async def annotate_reference_unit_tiers(
+    payload: dict,
+    project: dict,
+    *,
+    config_resolver: ConfigResolver | None = None,
+) -> None:
+    """Add effective duration tiers only for episode reference-video units.
+
+    ``supported_durations`` remains the model-declared full set. The annotation
+    gives script authors the narrower execution tiers for units with and without
+    references; ad projects do not use this duration enumeration.
+    """
+    if payload.get("generation_mode") != "reference_video" or payload.get("content_mode") == "ad":
+        return
+    durations = [int(d) for d in payload.get("supported_durations") or []]
+    if not durations:
+        return
+    with_refs, without_refs = await reference_unit_duration_tiers(
+        project,
+        payload,
+        durations,
+        config_resolver=config_resolver,
+    )
+    payload["reference_unit_durations"] = {
+        "with_references": with_refs,
+        "without_references": without_refs,
+    }
 
 
 async def project_video_caps(
@@ -30,7 +128,7 @@ async def project_video_caps(
     由调用方各自降级。
 
     ``degraded_to`` 只用于日志，说明这次解析失败会让调用方退化成什么行为。
-    ``capability`` 未给定时按项目路线定桶；给定时按指定桶解析（参考路线内无参考图退化镜头
+    ``capability`` 未给定时按项目生成模式定桶；给定时按指定桶解析（参考生视频内无参考图视频单元
     按 i2v 桶取档 / 计价的读侧）。
     ``requested_generate_audio`` 独立于能力接口解析（见下方实现注释），双重失败时该键为 ``False``。
     """
@@ -53,9 +151,12 @@ async def project_video_caps(
 async def resolve_audio_switch_conflict(project: dict, capability: VideoCapability) -> tuple[str, str] | None:
     """项目的「关闭音频」意图是否落在一个收不到音轨开关的模型上；冲突时返回 ``(provider, model)``。
 
-    成片恒有声（``model_audio_always_on``）的模型请求里没有音轨开关可下发，关闭意图无法抵达
+    成片恒有声（音轨形态 ``always_on``）的模型请求里没有音轨开关可下发，关闭意图无法抵达
     供应商，却会让编排层按无声路径裁掉全部音色约束——用户拿到的是失去音色约束的有声成片。
-    视频生成的各个提交入口据此在入队前拒绝，WebUI 与智能体两条路径共用这一份判据。
+    视频生成的各个提交入口据此在入队前拒绝，WebUI 与 Agent 两条路径共用这一份判据。
+
+    判据按 ``capability`` 定的执行路径取（:func:`builtin_video_audio_track`）：同一 model 在不同
+    子路径上可以有不同的音轨形态，按无路径上下文的声明判会对参考生视频误判。
 
     解析失败一律返回 ``None``（不把配置解析问题升级为提交期拒绝），自定义供应商与未登记模型
     没有逐模型音轨声明，无信号不收紧。两次解析都读库，故同在一个 ``try`` 内并一并接住
@@ -67,9 +168,8 @@ async def resolve_audio_switch_conflict(project: dict, capability: VideoCapabili
     resolver = ConfigResolver(async_session_factory)
     try:
         selected = await resolver.resolve_video_backend(project, None, capability=capability)
-        provider_meta = PROVIDER_REGISTRY.get(selected.provider_id)
-        model_info = provider_meta.models.get(selected.model_id) if provider_meta is not None else None
-        if model_info is None or not model_audio_always_on(selected.provider_id, model_info):
+        audio_track = builtin_video_audio_track(selected.provider_id, selected.model_id, capability=capability)
+        if audio_track != VideoAudioMode.ALWAYS_ON:
             return None
         if await resolver.video_generate_audio_for_project(project):
             return None
@@ -79,10 +179,10 @@ async def resolve_audio_switch_conflict(project: dict, capability: VideoCapabili
 
 
 async def assert_audio_switch_supported(project: dict, capability: VideoCapability) -> None:
-    """智能体视频入队前的音频开关预检，冲突时抛 ``ValueError``。
+    """Agent 视频入队前的音频开关预检，冲突时抛 ``ValueError``。
 
     与 WebUI 入口的 ``server.routers._validators.require_audio_switch_supported`` 判据同源
-    （:func:`resolve_audio_switch_conflict`），差别只在出口：这里的消息面向智能体转述，不走
+    （:func:`resolve_audio_switch_conflict`），差别只在出口：这里的消息面向 Agent 转述，不走
     Translator。
     """
     conflict = await resolve_audio_switch_conflict(project, capability)
@@ -99,7 +199,7 @@ async def resolve_project_is_silent(project: dict) -> bool:
     """这一集是否听不到声音，供 drama Voice_Profiles 注入前的判定。
 
     两条无声路径（模型不产音的 C 类档位、本集关闭音频）在产品口径上同形，判据取自
-    ``VoiceRenderSettings.is_silent``，与参考路线渲染层、执行层
+    ``VoiceRenderSettings.is_silent``，与参考生视频渲染层、执行层
     ``server.services.generation_context.VideoLaneResult.is_silent`` 同源。
 
     能力解析失败时档位按「无信号不判定为真无声」退化为 ``soft``，而无声开关由

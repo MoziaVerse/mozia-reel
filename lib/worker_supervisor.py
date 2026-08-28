@@ -18,8 +18,15 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from lib.tenant_context import is_valid_tenant, tenant_scope
+
+if TYPE_CHECKING:
+    # 仅类型期导入：运行期直接 import 会把整条生成栈在本模块 import 时就拉起来，
+    # 而 factory 注入的存在理由正是避开它。
+    from lib.generation_worker import GenerationWorker
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +34,13 @@ logger = logging.getLogger(__name__)
 class WorkerSupervisor:
     """租户 → GenerationWorker 的注册表，负责启停。"""
 
-    def __init__(self, factory) -> None:
+    def __init__(self, factory: Callable[[], GenerationWorker]) -> None:
         # factory 而非直接 import GenerationWorker：便于测试替身，也避免
         # 这个模块在 import 期就把生成栈整条拉起来。
         self._factory = factory
-        self._workers: dict[str | None, object] = {}
+        self._workers: dict[str | None, GenerationWorker] = {}
 
-    async def ensure_started(self, tenant: str | None) -> object:
+    async def ensure_started(self, tenant: str | None) -> GenerationWorker:
         """确保该租户的 worker 在跑（幂等）。"""
         if tenant is not None and not is_valid_tenant(tenant):
             raise ValueError(f"非法租户标识: {tenant!r}")
@@ -84,10 +91,10 @@ class WorkerSupervisor:
                 logger.exception("停止 worker 失败: %s", tenant)
         self._workers.clear()
 
-    def get(self, tenant: str | None):
+    def get(self, tenant: str | None) -> GenerationWorker | None:
         return self._workers.get(tenant)
 
-    def all_workers(self) -> list:
+    def all_workers(self) -> list[GenerationWorker]:
         return list(self._workers.values())
 
 

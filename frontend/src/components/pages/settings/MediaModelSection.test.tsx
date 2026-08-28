@@ -6,7 +6,7 @@ import { API } from "@/api";
 import * as providerModels from "@/utils/provider-models";
 import { useAppStore } from "@/stores/app-store";
 import { MediaModelSection } from "./MediaModelSection";
-import type { ProviderInfo } from "@/types/provider";
+import type { ProviderInfo, VideoAudioControl } from "@/types/provider";
 
 const CONFIG = {
   options: {
@@ -23,6 +23,7 @@ const CONFIG = {
     text_backend_simple: "",
     text_backend_complex: "",
     video_generate_audio: false,
+    video_poll_timeout_seconds: 3600,
   },
 };
 
@@ -67,7 +68,20 @@ describe("MediaModelSection", () => {
     expect(sections).toHaveLength(3);
     expect(sections.every((d) => !d.open)).toBe(true);
     // 界面文案不出现内部术语
-    expect(container.textContent).not.toMatch(/能力桶|capability bucket/i);
+    expect(container).not.toHaveTextContent(/能力桶|任务类型桶|capability bucket/i);
+  });
+
+  it("saves the global video polling timeout", async () => {
+    const user = userEvent.setup();
+    const patch = vi.spyOn(API, "updateSystemConfig").mockResolvedValue(CONFIG as never);
+    render(<MediaModelSection />);
+
+    const timeout = await screen.findByRole("spinbutton", { name: "视频轮询超时（秒）" });
+    await user.clear(timeout);
+    await user.type(timeout, "7200");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(patch).toHaveBeenCalledWith({ video_poll_timeout_seconds: 7200 }));
   });
 
   it("keeps configured global sub-fields visible when the candidate fetch fails", async () => {
@@ -187,7 +201,7 @@ describe("MediaModelSection", () => {
     function videoProvider(
       providerId: string,
       modelId: string,
-      audio: { has_audio_track: boolean; audio_switch_controllable: boolean },
+      audio: { audio_track: VideoAudioControl; reference_route_audio_track?: VideoAudioControl },
     ): ProviderInfo {
       return {
         id: providerId,
@@ -207,34 +221,32 @@ describe("MediaModelSection", () => {
             supported_durations: [8],
             duration_resolution_constraints: {},
             resolutions: [],
+            reference_route_audio_track: audio.audio_track,
             ...audio,
-            voice_consistency: audio.has_audio_track ? "soft" : "none",
+            voice_consistency: audio.audio_track === "always_off" ? "none" : "soft",
           },
         },
       };
     }
 
-    function mockProviders(hasAudioTrack: boolean, controllable: boolean) {
+    function mockProviders(audioTrack: VideoAudioControl) {
       vi.spyOn(providerModels, "getProviderModels").mockResolvedValue([
-        videoProvider("gemini", "veo-3", {
-          has_audio_track: hasAudioTrack,
-          audio_switch_controllable: controllable,
-        }),
+        videoProvider("gemini", "veo-3", { audio_track: audioTrack }),
       ]);
     }
 
     it("keeps the checkbox interactive for a model whose audio track is controllable", async () => {
-      mockProviders(true, true);
+      mockProviders("controllable");
       render(<MediaModelSection />);
-      const box = await screen.findByRole("checkbox", { name: /生成音频/ });
+      const box = await screen.findByRole("checkbox", { name: /生成有声视频/ });
       expect(box).toBeEnabled();
     });
 
     it("locks the checkbox on an always-audible model and offers a one-click fix for a stored off setting", async () => {
       const user = userEvent.setup();
-      mockProviders(true, false);
+      mockProviders("always_on");
       render(<MediaModelSection />);
-      const box = await screen.findByRole("checkbox", { name: /生成音频/ });
+      const box = await screen.findByRole("checkbox", { name: /生成有声视频/ });
       expect(box).toBeDisabled();
       expect(box).toBeChecked();
       expect(screen.getByText(/始终带声音/)).toBeInTheDocument();
@@ -253,11 +265,11 @@ describe("MediaModelSection", () => {
       const user = userEvent.setup();
       mockConfig({ default_video_backend_i2v: "dashscope/wan" });
       vi.spyOn(providerModels, "getProviderModels").mockResolvedValue([
-        videoProvider("gemini", "veo-3", { has_audio_track: true, audio_switch_controllable: true }),
-        videoProvider("dashscope", "wan", { has_audio_track: true, audio_switch_controllable: false }),
+        videoProvider("gemini", "veo-3", { audio_track: "controllable" }),
+        videoProvider("dashscope", "wan", { audio_track: "always_on" }),
       ]);
       render(<MediaModelSection />);
-      const box = await screen.findByRole("checkbox", { name: /生成音频/ });
+      const box = await screen.findByRole("checkbox", { name: /生成有声视频/ });
       expect(box).toBeEnabled();
       expect(screen.getByRole("alert")).toHaveTextContent(/无法关闭声音/);
 
@@ -278,23 +290,68 @@ describe("MediaModelSection", () => {
         default_video_backend_r2v: "gemini/veo-3",
       });
       vi.spyOn(providerModels, "getProviderModels").mockResolvedValue([
-        videoProvider("gemini", "veo-3", { has_audio_track: true, audio_switch_controllable: true }),
-        videoProvider("dashscope", "wan", { has_audio_track: true, audio_switch_controllable: false }),
+        videoProvider("gemini", "veo-3", { audio_track: "controllable" }),
+        videoProvider("dashscope", "wan", { audio_track: "always_on" }),
       ]);
       render(<MediaModelSection />);
-      const box = await screen.findByRole("checkbox", { name: /生成音频/ });
+      const box = await screen.findByRole("checkbox", { name: /生成有声视频/ });
       expect(box).toBeEnabled();
       expect(box).not.toBeChecked();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
 
     it("locks the checkbox on a model without an audio track", async () => {
-      mockProviders(false, false);
+      mockProviders("always_off");
       render(<MediaModelSection />);
-      const box = await screen.findByRole("checkbox", { name: /生成音频/ });
+      const box = await screen.findByRole("checkbox", { name: /生成有声视频/ });
       expect(box).toBeDisabled();
       expect(box).not.toBeChecked();
       expect(screen.getByText(/没有声音/)).toBeInTheDocument();
+    });
+
+    // 全局页无项目上下文，默认模型两条路径都会用到，能力线只能给目录位；但两个细分项下拉
+    // 各自就是一条路径，与上方按桶取值的勾选框判据同源，不能共用默认层那一个答案。
+    describe("候选下拉的音轨能力线", () => {
+      function mockOmni() {
+        vi.spyOn(API, "getSystemConfig").mockResolvedValue({
+          options: { ...CONFIG.options, video_backends: ["kling/v3-omni"] },
+          settings: { ...CONFIG.settings, default_video_backend: "" },
+        } as unknown as Awaited<ReturnType<typeof API.getSystemConfig>>);
+        vi.spyOn(API, "getModelCandidates").mockResolvedValue({
+          ...CANDIDATES,
+          video: {
+            default: ["kling/v3-omni"],
+            buckets: { i2v: ["kling/v3-omni"], r2v: ["kling/v3-omni"] },
+          },
+        } as unknown as Awaited<ReturnType<typeof API.getModelCandidates>>);
+        vi.spyOn(providerModels, "getProviderModels").mockResolvedValue([
+          videoProvider("kling", "v3-omni", {
+            audio_track: "controllable",
+            reference_route_audio_track: "always_off",
+          }),
+        ]);
+      }
+
+      /** 打开指定下拉，读出 v3-omni 那一行的能力线，再关掉——同时只开一个下拉。 */
+      async function omniRowIn(user: ReturnType<typeof userEvent.setup>, comboboxName: string) {
+        await user.click(screen.getByRole("combobox", { name: comboboxName }));
+        const text = screen.getByRole("option", { name: /v3-omni/ }).textContent ?? "";
+        await user.keyboard("{Escape}");
+        return text;
+      }
+
+      it("默认模型按目录位标有声，两个细分项各按自己的路径标注", async () => {
+        const user = userEvent.setup();
+        mockOmni();
+        render(<MediaModelSection />);
+        await screen.findByRole("combobox", { name: "默认视频模型" });
+        expect(await omniRowIn(user, "默认视频模型")).toContain("有声");
+
+        await user.click(screen.getAllByText("按用途指定模型")[0]);
+        expect(await omniRowIn(user, "图生视频")).toContain("有声");
+        // 与同屏 r2vAudioControl（always_off）判定的勾选框一致：一屏之内两句话不能互相矛盾
+        expect(await omniRowIn(user, "参考生视频")).toContain("无声");
+      });
     });
   });
 

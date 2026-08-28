@@ -1,12 +1,16 @@
-"""参考生视频 step1 / step2 产出的机械校验（书写层扁平文本）。
+"""参考生视频 step1 / step2 扁平草稿结构的机械校验。
 
 LLM 产出与人在编辑器写的是同一种格式，校验因此也落在同一份文本上；本模块是「parser
 后校验」这一层的落点：schema 已卡死枚举与外层结构，剩下的语法与内容约束在这里逐 unit
 判定，任一违约 fail-loud 抛 :class:`DraftViolation`，不把违规产物当成功结果写盘。
 
 「不当成功结果写盘」不等于丢弃：调用侧用 :func:`collect_violations` 把逐 unit 的违约收齐成
-一份报告，产物落隔离草稿（``lib.draft_quarantine``）等 agent 修复后重判，不重抽。
+一份报告，产物落待修复草稿（``lib.draft_quarantine``）等 Agent 修复后重判，不重抽。
 每条违约带 ``code``（违约类）与 ``label``（unit 定位），报告因此可逐条定位、可按类断言。
+
+违约条目类型与报告渲染（:class:`DraftViolation` / :func:`collect_violations` /
+:func:`render_violation_report`）三条路线通用，定义在路线中立的 ``lib.draft_violation``；
+本模块原样再导出它们，参考生视频的既有导入路径不变。
 
 与编辑器侧（人写）的容忍口径分流：``lib.reference_video.script_preview`` 对同样的文本只
 出 warning、照常落盘——那里有作者意图要保护；本模块面向机器产物，没有意图可保护，一律拒。
@@ -16,24 +20,27 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 from lib.asset_types import BUCKET_KEY, normalize_asset_bucket
-from lib.reference_video.shot_parser import (
+from lib.draft_violation import (
+    DraftViolation,
+    DraftViolations,
+    collect_violations,
+    render_violation_report,
+    violation_items,
+)
+from lib.reference_video.text_parser import (
     SpeechMark,
     derive_references_from_text,
     find_malformed_mention,
     leading_mention_before_colon,
     line_speech_marks,
-    parse_prompt,
     speech_line_description,
     split_speech_line,
-    strip_shot_header,
     strip_speech_marks,
 )
-from lib.reference_video.writing_syntax import MAX_SHOTS_PER_UNIT
-from lib.script_models import ReferenceResource, Shot
+from lib.script_models import ReferenceResource
 from lib.speech_composition import SpeechProblem, admit_script_unit
 from lib.speech_rate import estimate_spoken_seconds
 
@@ -42,84 +49,6 @@ from lib.speech_rate import estimate_spoken_seconds
 #: 把「刚好写满」的正常产出判违约。与 drama 保存期上界 warning 的 20% 同量级——两处都是
 #: 「同一套语速估算 vs 已定时长」的比对，宽容度没有理由不同。
 SPEECH_OVERFLOW_TOLERANCE = 0.20
-
-
-class DraftViolation(ValueError):
-    """书写层产出违约。消息含 unit 定位与修复出路，供工具错误信封原样回传给 agent。
-
-    ``code`` 是违约类的机读标识，``label`` 是 unit 定位（``unit E1U02`` 一类的前缀）：消息本身
-    面向 agent、措辞可改，报告的分组与测试的按类断言不该挂在措辞上。两者均可为空——异常在
-    模块外被构造时（如生成侧对镜头数对账的补充判定）只有消息。
-
-    ``line`` 是该 unit 正文内 0-based 的原始行号（``text.splitlines()`` 坐标系，与前端
-    ``toScriptLines`` 的 ``sourceLine`` 同一坐标系），仅在校验发生于具体某一行时才有意义
-    （如语法误用）；unit 级、无自然行归属的违约（缺台词量超载、引用未登记等）留空，供
-    呈现层区分「行内锚定」与「落卡内聚合区」两条路径。
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        code: str = "",
-        label: str = "",
-        line: int | None = None,
-        locations: tuple[dict[str, object], ...] = (),
-        reason: str | None = None,
-        action: str | None = None,
-    ):
-        super().__init__(message)
-        self.code = code
-        self.label = label
-        self.line = line
-        self.locations = locations
-        self.reason = reason
-        self.action = action
-
-
-class DraftViolations(DraftViolation):
-    """一次校验收集到的多条违约。消息即逐条报告，``items`` 保留结构化条目。
-
-    继承 :class:`DraftViolation` 而非另立类型：既有调用方按 ``DraftViolation`` 捕获与断言，
-    聚合体走同一分支才不会在「一条」与「多条」之间分叉出两套处置路径。
-    """
-
-    def __init__(self, items: Sequence[DraftViolation]):
-        super().__init__(render_violation_report(items), code="multiple", label="")
-        self.items: list[DraftViolation] = list(items)
-
-
-def violation_items(exc: DraftViolation) -> list[DraftViolation]:
-    """把单条或聚合的违约一律摊平成条目列表，供报告渲染与隔离草稿落盘取用。"""
-    return list(exc.items) if isinstance(exc, DraftViolations) else [exc]
-
-
-def collect_violations(checks: Iterable[Callable[[], Any]]) -> list[DraftViolation]:
-    """依次执行各校验，收集 :class:`DraftViolation` 而不在首个违约处中断。
-
-    单个校验函数内部仍是首个违约即抛（各判定共用一次遍历、后续判定以前面的结论为前提），
-    故一次调用最多贡献一条；把「每 unit 的锚 / 正文 / 台词量」三个入口分别传进来，报告就能
-    覆盖到所有 unit 而不是停在第一个坏 unit 上——agent 一轮就能看全要改什么。
-
-    只吞 ``DraftViolation``：其余异常（解析器内部错误、脏数据引发的类型错误）照常上抛，
-    不被伪装成一条内容违约。
-    """
-    found: list[DraftViolation] = []
-    for check in checks:
-        try:
-            check()
-        except DraftViolation as exc:
-            found.extend(violation_items(exc))
-    return found
-
-
-def render_violation_report(violations: Sequence[DraftViolation]) -> str:
-    """把违约条目渲染成逐条编号的报告文本（一行一条，带违约类标注）。"""
-    lines: list[str] = []
-    for index, violation in enumerate(violations, start=1):
-        suffix = f"[{violation.code}] " if violation.code else ""
-        lines.append(f"{index}. {suffix}{violation}")
-    return "\n".join(lines)
 
 
 def _normalize_for_anchor(text: str) -> str:
@@ -156,15 +85,6 @@ def validate_source_text_anchor(label: str, source_text: str, novel_text: str) -
         )
 
 
-def _content_lines(text: str) -> list[str]:
-    """逐行剥掉 ``镜头N：`` header 后的正文行。
-
-    与 ``extract_mentions`` 同口径：写在 header 同一行的台词在 ``parse_prompt`` 切分后
-    就是独立的规范行，判定必须在剥 header 之后进行，否则同一行在切分前后两种结论。
-    """
-    return [strip_shot_header(line) for line in text.splitlines()]
-
-
 #: 全角花括号。语法只认半角，但中文输入法下模型很容易写出全角形；行里出现全角花括号时
 #: 该段不成发声记号，会被当成画面描述放行——台词静默降级成描述、说话人反而被派生成参考图。
 #: 故在语法判定处显式识别并拒绝，不静默、也不代模型改写。
@@ -172,13 +92,13 @@ _FULLWIDTH_BRACES = "｛｝"
 
 
 def _assert_line_syntax(label: str, text: str, characters: dict[str, Any]) -> None:
-    """逐行判书写层语法：花括号用法、写坏的 ``@[`` 引用、缺花括号的台词。
+    """逐行判引用语法：花括号用法、写坏的 ``@[`` 引用、缺花括号的台词。
 
     三类共性是「解析器不报错、但派生结果与作者意图相反」：台词降级成画面描述、说话人反被
     派生成参考图、坏 token 原样进供应商请求。机器产物没有作者意图可保护，一律在语法判定处
     响亮拒绝，不静默、也不代模型改写。
     """
-    for idx, line in enumerate(_content_lines(text)):
+    for idx, line in enumerate(text.splitlines()):
         if any(ch in line for ch in _FULLWIDTH_BRACES):
             raise DraftViolation(
                 f"{label} 使用了全角花括号：{line.strip()[:40]!r}；"
@@ -227,21 +147,21 @@ def _assert_line_syntax(label: str, text: str, characters: dict[str, Any]) -> No
         )
 
 
-def _has_description_line(shot_text: str) -> bool:
-    """该镜头是否有画面描述：某一行剥掉全部发声记号后仍有非空文本。"""
-    return any(strip_speech_marks(line).strip() for line in _content_lines(shot_text))
+def _has_description_line(text: str) -> bool:
+    """该单元是否有画面描述：某一行剥掉全部发声记号后仍有非空文本。"""
+    return any(strip_speech_marks(line).strip() for line in text.splitlines())
 
 
 def dialogue_speakers(text: str) -> list[str]:
     """按出现顺序取出台词记号的说话人（去重）——登记校验据此判说话人是否为登记角色。
 
     说话人取自 ``split_speech_line``，已在解析器入口归一到资产名比对坐标系
-    （``lib.reference_video.shot_parser`` 的 ``_normalize_source``），与资产表归一后的 key
+    （``lib.reference_video.text_parser`` 的 ``_normalize_source``），与资产表归一后的 key
     同形，本函数直接使用该结果，不再额外归一。
     """
     seen: set[str] = set()
     speakers: list[str] = []
-    for line in _content_lines(text):
+    for line in text.splitlines():
         for mark in line_speech_marks(line):
             if mark.speaker and mark.speaker not in seen:
                 seen.add(mark.speaker)
@@ -254,13 +174,13 @@ def normative_lines(text: str) -> list[tuple[str, str, str]]:
 
     step2 的保结构 diff 以此为比对项：画面描述可自由展开，发声记号必须逐字不变。
 
-    台词与说话人已在解析器入口归一到 NFC（``lib.reference_video.shot_parser`` 的
+    台词与说话人已在解析器入口归一到 NFC（``lib.reference_video.text_parser`` 的
     ``_normalize_source``）：源文可能以 NFD 落盘而模型回写 NFC，两种形式肉眼同字、逐字比对
     却不等，保结构 diff 会把纯编码差异判成改写；口播时长估算同样要求 NFC（按词计的语种下
     组合附加符会把一个词拆成多个阅读单位）。归一在解析器一处完成，两个消费方口径天然一致。
     """
     result: list[tuple[str, str, str]] = []
-    for line in _content_lines(text):
+    for line in text.splitlines():
         for mark in line_speech_marks(line):
             result.append(("dialogue" if mark.speaker else "voiceover", mark.speaker, mark.text))
     return result
@@ -273,13 +193,12 @@ def validate_unit_text(
     *,
     unit_id: str | None = None,
     max_refs: int | None,
-) -> tuple[list[Shot], list[ReferenceResource]]:
-    """校验一个 unit 的正文并机械派生 ``(shots, references)``。
+) -> list[ReferenceResource]:
+    """校验一个 unit 的正文并机械派生参考图引用。
 
-    覆盖四类阻断违约：正文为空 / 单镜头正文为空 / 镜头行数超上限、书写层语法误用（花括号、
-    写坏的引用、缺花括号的台词）、``@[名称]`` 未登记（含台词记号的说话人位）、references
-    超模型上限。派生结果即落盘值——校验与派生同一次遍历，杜绝「校验看到的文本」与「落盘的
-    references」出自两套解析。
+    覆盖四类阻断违约：正文为空或只有发声记号、引用语法误用（花括号、写坏的引用、缺花
+    括号的台词）、``@[名称]`` 未登记（含台词记号的说话人位）、参考图数超模型上限。正文是
+    唯一落盘物，派生结果只服务本次校验与能力判定，不写回。
     """
     if not text.strip():
         raise DraftViolation(f"{label} 的正文为空", code="empty_text", label=label)
@@ -288,28 +207,16 @@ def validate_unit_text(
     characters = normalize_asset_bucket(project.get(BUCKET_KEY["character"]))
     _assert_line_syntax(label, text, characters)
 
-    shots, _mentions = parse_prompt(text)
-    # 镜头缺画面描述（``镜头1：`` 后无正文，或该镜头除发声记号外没有别的文字）：整段非空时上面的
-    # 空正文检查放不住它，而画面正是 unit 要生成的东西。单镜头 unit 因此落盘后进不了队（视频
-    # prompt 为空），多镜头 unit 则让 step2 对着空白镜头自行编内容。
-    blank_shots = [index for index, shot in enumerate(shots, start=1) if not _has_description_line(shot.text)]
-    if blank_shots:
+    # 只有台词与画外音的正文没有可生成的画面：整段非空时上面的空正文检查放不住它。
+    if not _has_description_line(text):
         raise DraftViolation(
-            f"{label} 的镜头 {blank_shots} 没有画面描述；"
-            "每个 `镜头N：` 都要写该镜头拍什么，只有台词与画外音的镜头没有可生成的画面",
-            code="blank_shot",
-            label=label,
-        )
-    if len(shots) > MAX_SHOTS_PER_UNIT:
-        raise DraftViolation(
-            f"{label} 有 {len(shots)} 个镜头行，超过单 unit 上限 {MAX_SHOTS_PER_UNIT}；"
-            "请把多出的镜头按叙事顺序拆到新的 unit",
-            code="too_many_shots",
+            f"{label} 没有画面描述；只有台词与画外音的单元没有可生成的画面",
+            code="blank_description",
             label=label,
         )
 
-    # 与编辑器回写共用 ``derive_references_from_text``：严格度分流（此处对 missing 与上限一律拒），
-    # 派生口径不分流——否则同一份正文在两侧派生出不同的 `[图N]` 编号。
+    # 与编辑器预览共用 ``derive_references_from_text``：严格度分流（此处对 missing 与上限一律拒），
+    # 派生口径不分流——否则同一份正文在两侧派生出不同的 `图N` 编号。
     refs, missing = derive_references_from_text(text, project)
     if missing:
         raise DraftViolation(
@@ -328,22 +235,15 @@ def validate_unit_text(
 
     if max_refs is not None and len(refs) > max_refs:
         raise DraftViolation(
-            f"{label} 的 references 数 {len(refs)} 超过模型上限 {max_refs}；请把次要角色融入背景描述（不用 `@` 引用）",
+            f"{label} 的参考图数 {len(refs)} 超过模型上限 {max_refs}；请把次要角色融入背景描述（不用 `@` 引用）",
             code="refs_over_limit",
             label=label,
         )
     canonical_unit_id = unit_id if unit_id is not None else label.removeprefix("unit ").strip()
-    admission = admit_script_unit(
-        "video_units",
-        {
-            "unit_id": canonical_unit_id,
-            "shots": [shot.model_dump() for shot in shots],
-            "references": [reference.model_dump() for reference in refs],
-        },
-    )
+    admission = admit_script_unit("video_units", {"unit_id": canonical_unit_id, "text": text})
     if not admission.allowed:
         raise DraftViolations([_speech_problem_violation(problem) for problem in admission.problems])
-    return shots, refs
+    return refs
 
 
 def _speech_problem_violation(problem: SpeechProblem) -> DraftViolation:
@@ -400,7 +300,7 @@ def validate_dialogue_load(
 def assert_dialogue_preserved(label: str, step1_text: str, step2_text: str) -> None:
     """step2 保结构 diff：发声记号的序列必须与 step1 逐字一致。
 
-    step2 的职责是视觉展开，台词属于 step1 已与用户在 gate 上确认过的内容契约。改词、增删、
+    step2 的职责是视觉展开，台词属于 step1 已由用户完成内容确认的内容契约。改词、增删、
     重排一律响亮失败，不静默接受——台词不配画面时正确的出路是报错回到 step1，而不是让 step2
     自行把台词改成好配的样子。
     """

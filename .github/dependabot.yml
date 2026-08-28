@@ -49,6 +49,7 @@ updates:
       ai-sdks:
         patterns:
           - "claude-agent-sdk"
+          - "mcp"
           - "google-genai"
           - "openai"
           - "volcengine-python-sdk*"
@@ -87,6 +88,8 @@ updates:
       backend-core:
         patterns:
           - "PyYAML"
+          - "jsonpath-rfc9535"
+          - "jsonschema"
           - "packaging"
           - "portalocker"
           - "socksio"
@@ -101,6 +104,7 @@ updates:
           - "pre-commit"
           - "python-docx"
           - "import-linter"
+          - "respx"
         update-types:
           - "minor"
           - "patch"

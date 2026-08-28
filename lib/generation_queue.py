@@ -9,19 +9,31 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
+from lib.async_thread import run_noninterruptible_async
 from lib.db import safe_session_factory
 from lib.db.base import DEFAULT_USER_ID
 from lib.db.repositories.task_repo import TaskRepository
 from lib.generation_admission import generation_admission_lock
+from lib.generation_batch import (
+    GenerationBatchBlockedItem,
+    GenerationBatchCancelResult,
+    GenerationBatchReadModel,
+    GenerationBatchRequestSnapshot,
+    build_generation_batch_read_model,
+    validate_blocked_items,
+)
 from lib.project_migration_guard import assert_project_migration_ok
-from lib.task_terminal_events import emit_task_terminal_events
+from lib.task_terminal_events import TERMINAL_TASK_STATUSES, emit_task_terminal_events
 
 if TYPE_CHECKING:
+    from lib.artifact_activation import ArtifactCurrencyResolver
     from lib.config.resolver import ConfigResolver, ProviderModel, VideoCapability
+    from lib.project_manager import ProjectManager
     from lib.reference_video.request_projection import ReferenceUnitRequestProjection
 
 logger = logging.getLogger(__name__)
@@ -35,6 +47,12 @@ _NARRATION_REQUEST_KEY_BY_TASK_TYPE = {
 }
 
 
+def _text_request_facts(task_type: str, payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not task_type.startswith("text_"):
+        return None
+    return {key: value for key, value in (payload or {}).items() if key != "projects_root"}
+
+
 class ActiveTaskRequestConflict(RuntimeError):
     """An active video task owns the resource with different request facts."""
 
@@ -45,6 +63,32 @@ class ActiveTaskRequestConflict(RuntimeError):
             f"resource '{resource_id}' already has active task '{existing_task_id}' "
             "with a different narration delivery request"
         )
+
+
+class GenerationBatchNotFound(ValueError):
+    pass
+
+
+async def cleanup_fresh_generation_batch(
+    queue: GenerationQueue,
+    *,
+    project_name: str,
+    batch_id: str,
+    user_id: str,
+    failure: BaseException,
+) -> None:
+    """Settle best-effort cleanup without replacing the submission failure."""
+
+    try:
+        await run_noninterruptible_async(
+            queue.delete_fresh_generation_batch(
+                project_name=project_name,
+                batch_id=batch_id,
+                user_id=user_id,
+            )
+        )
+    except BaseException as cleanup_failure:
+        failure.add_note(f"fresh batch cleanup also failed: {cleanup_failure}")
 
 
 def _narration_request_facts(task_type: str, payload: dict[str, Any] | None) -> dict[str, object] | None:
@@ -71,7 +115,7 @@ def reference_video_enqueue_payload(
     *,
     script_file: str | None,
 ) -> dict[str, Any]:
-    """把新入队的参考视频载荷收窄为定位与请求选项。
+    """把新入队的参考生视频载荷收窄为定位与请求选项。
 
     prompt、references、style、duration 等可变请求事实不是任务快照；worker 开始时
     从当前 project/script/unit 重新投影。提交后的执行身份保存在专用 checkpoint，
@@ -110,7 +154,7 @@ async def video_bucket_for_queued_task(
     """视频任务的定桶口径，入队派生与 worker 限流投影共用、与执行侧同步（docs/adr/0054）。
 
     图生视频 / 宫格 → i2v；参考生视频调公共 request projection 按当前实际可用资产分流——
-    无参考图的退化镜头 → i2v，其余 → r2v。剧本 / unit / 能力读不到时回退代表桶 r2v；
+    无参考图的视频单元 → i2v，其余 → r2v。剧本 / unit / 能力读不到时回退代表桶 r2v；
     回退只影响 claim 池过滤与限流槽路由的精度，执行层仍在处理开始时重新投影。
     表外任务类型返回 None（不定桶）。
     """
@@ -178,7 +222,7 @@ async def resolve_video_execution_for_queued_task(
     payload: dict[str, Any] | None,
     resource_id: str | None,
 ) -> tuple[ProviderModel, VideoCapability | None]:
-    """解析队列视频任务的当前身份与能力桶，供入队 advisory 和 worker 限流共用。"""
+    """解析队列视频任务的当前身份与任务类型桶，供入队 advisory 和 worker 限流共用。"""
 
     projection = (
         await reference_projection_for_queued_task(
@@ -219,11 +263,12 @@ async def _derive_execution_model_for_enqueue(
 ) -> tuple[ProviderModel, VideoCapability | None] | None:
     """入队时按 project + payload 派生任务的 advisory provider 与视频桶。
 
-    ``provider_id`` 落 task 行供 claim SQL 池过滤使用；两条视频路线都只保存 advisory provider，
+    ``provider_id`` 落 task 行供 claim SQL 池过滤使用；两种视频生成模式都只保存 advisory provider，
     worker 开始处理时重新投影当前状态。与 worker ``_extract_provider`` 同套解析逻辑，
     但失败时返回 ``None``（不强行回 DEFAULT_PROVIDER）——让任务走 ``provider_id IS NULL``
     兜底分支，由 worker claim 后做二次校验，比硬塞一个可能错误的 provider 安全。
     """
+    is_text = media_type == "text"
     is_video = media_type == "video" or task_type in ("video", "reference_video")
     is_audio = media_type == "audio" or task_type == "tts"
     video_capability: VideoCapability | None = None
@@ -238,7 +283,11 @@ async def _derive_execution_model_for_enqueue(
             project = await asyncio.to_thread(get_project_manager().load_project, project_name)
 
         resolver = ConfigResolver(async_session_factory)
-        if is_video:
+        if is_text:
+            from lib.config.resolver import ProviderModel
+
+            resolved = ProviderModel("text", "")
+        elif is_video:
             resolved, video_capability = await resolve_video_execution_for_queued_task(
                 resolver=resolver,
                 project=project,
@@ -263,7 +312,6 @@ async def _derive_execution_model_for_enqueue(
 
 
 ACTIVE_TASK_STATUSES = ("queued", "running", "cancelling")
-TERMINAL_TASK_STATUSES = ("succeeded", "failed", "cancelled")
 TASK_WORKER_LEASE_TTL_SEC = 10.0
 TASK_WORKER_HEARTBEAT_SEC = 3.0
 TASK_POLL_INTERVAL_SEC = 1.0
@@ -301,8 +349,10 @@ class GenerationQueue:
         self,
         *,
         session_factory=None,
+        project_manager: ProjectManager | None = None,
     ):
         self._session_factory = session_factory or safe_session_factory
+        self._project_manager = project_manager
         # in-process callback to signal a running asyncio.Task to cancel;
         # set by server.app boot via set_worker_cancel_callback before worker.start()
         self._worker_cancel_callback: WorkerCancelCallback | None = None
@@ -311,6 +361,9 @@ class GenerationQueue:
         """Attach in-process worker cancel callback. Must be called before worker.start()
         so cancel API can deliver signals synchronously (ADR 0006 秒级响应)."""
         self._worker_cancel_callback = callback
+
+    async def assert_project_migration_ok(self, project_name: str) -> None:
+        await asyncio.to_thread(assert_project_migration_ok, project_name, self._project_manager)
 
     @asynccontextmanager
     async def _task_repo(self) -> AsyncIterator[TaskRepository]:
@@ -343,11 +396,14 @@ class GenerationQueue:
         dependency_index: int | None = None,
         user_id: str = DEFAULT_USER_ID,
         provider_id: str | None = None,
+        batch_id: str | None = None,
+        batch_unit_id: str | None = None,
+        batch_unit_ids: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         # Every Web, Agent and batch generation entry reaches the queue through this
         # method, so a project whose migration failed is refused here once instead of
         # at each caller. Nothing is created and nothing is billed.
-        await asyncio.to_thread(assert_project_migration_ok, project_name)
+        await self.assert_project_migration_ok(project_name)
 
         if task_type == "reference_video":
             payload = reference_video_enqueue_payload(payload, script_file=script_file)
@@ -369,6 +425,18 @@ class GenerationQueue:
                 # Video provider/model is only an advisory claim projection until the worker materializes the
                 # current request and persists its pre-submit checkpoint. Enqueue payload never freezes identity.
 
+        requested_facts = _narration_request_facts(task_type, payload)
+        text_request_facts = _text_request_facts(task_type, payload)
+
+        def _guard_deduped(existing_payload: dict[str, Any], existing_task_id: str) -> None:
+            if requested_facts is not None and _narration_request_facts(task_type, existing_payload) != requested_facts:
+                raise ActiveTaskRequestConflict(resource_id=resource_id, existing_task_id=existing_task_id)
+            if (
+                text_request_facts is not None
+                and _text_request_facts(task_type, existing_payload) != text_request_facts
+            ):
+                raise ActiveTaskRequestConflict(resource_id=resource_id, existing_task_id=existing_task_id)
+
         async def _enqueue() -> dict[str, Any]:
             async with self._task_repo() as repo:
                 return await repo.enqueue(
@@ -385,6 +453,10 @@ class GenerationQueue:
                     dependency_index=dependency_index,
                     user_id=user_id,
                     provider_id=provider_id,
+                    batch_id=batch_id,
+                    batch_unit_id=batch_unit_id,
+                    batch_unit_ids=batch_unit_ids,
+                    dedupe_guard=_guard_deduped,
                 )
 
         # Audio restoration observes active TTS/video consumers while holding the
@@ -402,23 +474,130 @@ class GenerationQueue:
         # The unique index intentionally protects one active task per resource. A matching
         # video task is reusable only when its durable narration request facts also match;
         # current TTS evidence and other mutable generation intent are re-read by the worker.
-        existing_payload = result.pop("_existing_payload", None)
-        requested_facts = _narration_request_facts(task_type, payload)
-        if result.get("deduped") and requested_facts is not None:
-            existing_facts = _narration_request_facts(
-                task_type,
-                existing_payload if isinstance(existing_payload, dict) else None,
-            )
-            if existing_facts != requested_facts:
-                raise ActiveTaskRequestConflict(
-                    resource_id=resource_id,
-                    existing_task_id=str(result["task_id"]),
-                )
+        result.pop("_existing_payload", None)
         if not result.get("deduped"):
             logger.info("任务入队 task_id=%s type=%s", result["task_id"], task_type)
         else:
             logger.debug("任务去重 task_id=%s", result["task_id"])
         return result
+
+    async def create_generation_batch(
+        self,
+        *,
+        project_name: str,
+        operation: str,
+        requested: GenerationBatchRequestSnapshot,
+        blocked: list[GenerationBatchBlockedItem],
+        source: str,
+        user_id: str = DEFAULT_USER_ID,
+    ) -> str:
+        validate_blocked_items(requested, blocked)
+        batch_id = uuid.uuid4().hex
+        try:
+            async with self._task_repo() as repo:
+                await repo.create_batch(
+                    batch_id=batch_id,
+                    project_name=project_name,
+                    operation=operation,
+                    requested=requested.model_dump(mode="json"),
+                    blocked=[item.model_dump(mode="json") for item in blocked],
+                    source=source,
+                    user_id=user_id,
+                )
+        except BaseException as failure:
+            await cleanup_fresh_generation_batch(
+                self,
+                project_name=project_name,
+                batch_id=batch_id,
+                user_id=user_id,
+                failure=failure,
+            )
+            raise
+        return batch_id
+
+    async def get_generation_batch(
+        self,
+        *,
+        project_name: str,
+        batch_id: str,
+        user_id: str = DEFAULT_USER_ID,
+        resolver: ArtifactCurrencyResolver | None = None,
+    ) -> GenerationBatchReadModel:
+        async with self._task_repo() as repo:
+            batch = await repo.get_batch(project_name=project_name, batch_id=batch_id, user_id=user_id)
+        if batch is None:
+            raise GenerationBatchNotFound(f"batch '{batch_id}' does not belong to project '{project_name}'")
+        return build_generation_batch_read_model(batch, batch["memberships"], batch["queue_depth"], resolver)
+
+    async def delete_fresh_generation_batch(
+        self,
+        *,
+        project_name: str,
+        batch_id: str,
+        user_id: str = DEFAULT_USER_ID,
+    ) -> int:
+        async with self._task_repo() as repo:
+            return await repo.delete_fresh_batch(project_name=project_name, batch_id=batch_id, user_id=user_id)
+
+    async def attach_task_to_generation_batch(
+        self,
+        *,
+        project_name: str,
+        batch_id: str,
+        task_id: str,
+        unit_id: str,
+        deduped: bool,
+        user_id: str = DEFAULT_USER_ID,
+    ) -> None:
+        async with self._task_repo() as repo:
+            await repo.attach_batch_task(
+                project_name=project_name,
+                batch_id=batch_id,
+                task_id=task_id,
+                unit_id=unit_id,
+                deduped=deduped,
+                user_id=user_id,
+            )
+
+    async def cancel_generation_batch(
+        self,
+        *,
+        project_name: str,
+        batch_id: str,
+        user_id: str = DEFAULT_USER_ID,
+    ) -> GenerationBatchCancelResult:
+        async with self._task_repo() as repo:
+            batch = await repo.get_batch(project_name=project_name, batch_id=batch_id, user_id=user_id)
+        if batch is None:
+            raise GenerationBatchNotFound(f"batch '{batch_id}' does not belong to project '{project_name}'")
+
+        initial = {item["task_id"]: item["status"] for item in batch["memberships"]}
+        for task_id, status in initial.items():
+            if status not in TERMINAL_TASK_STATUSES and status != "cancelling":
+                await self.cancel_task(task_id)
+
+        async with self._task_repo() as repo:
+            updated = await repo.get_batch(project_name=project_name, batch_id=batch_id, user_id=user_id)
+        assert updated is not None
+        current = {item["task_id"]: item["status"] for item in updated["memberships"]}
+        cancelled: list[str] = []
+        cancelling: list[str] = []
+        skipped_terminal: list[str] = []
+        for task_id, previous in initial.items():
+            status = current[task_id]
+            if previous in TERMINAL_TASK_STATUSES:
+                skipped_terminal.append(task_id)
+            elif status == "cancelled":
+                cancelled.append(task_id)
+            elif status == "cancelling":
+                cancelling.append(task_id)
+            else:
+                skipped_terminal.append(task_id)
+        return GenerationBatchCancelResult(
+            cancelled=cancelled,
+            cancelling=cancelling,
+            skipped_terminal=skipped_terminal,
+        )
 
     async def get_active_tasks_for_resources(
         self,
@@ -428,6 +607,7 @@ class GenerationQueue:
         resource_ids: list[str],
         script_file: str | None = None,
         resource_type: str | None = None,
+        user_id: str = DEFAULT_USER_ID,
     ) -> list[dict[str, Any]]:
         async with self._task_repo() as repo:
             return await repo.get_active_tasks_for_resources(
@@ -436,6 +616,7 @@ class GenerationQueue:
                 resource_ids=resource_ids,
                 script_file=script_file,
                 resource_type=resource_type,
+                user_id=user_id,
             )
 
     async def claim_next_task(

@@ -1,6 +1,6 @@
-// Endpoint key 改用 string 别名 —— 真相源在后端 ENDPOINT_REGISTRY，
-// 前端通过 GET /api/v1/custom-providers/endpoints 拉运行时 catalog。
-// 放弃编译期窄类型换取「新增 endpoint 不再需要改前端类型」。
+// Endpoint key 使用 string 别名；后端 ENDPOINT_REGISTRY 是真相源，前端通过
+// GET /api/v1/custom-providers/endpoints 读取运行时 catalog，因此 endpoint 扩展
+// 无需同步修改前端联合类型。
 export type EndpointKey = string;
 
 export type MediaType = "text" | "image" | "video" | "audio";
@@ -11,7 +11,11 @@ export interface EndpointDescriptor {
   key: string;
   media_type: MediaType;
   family: string;
+  /** 实现形态：python = backend 代码，declarative = 随版声明式定义。 */
+  kind: "python" | "declarative";
   display_name_key: string;
+  /** 声明式端点的显示名（定义里的 meta.name，专有名词不翻译）；Python 内置为 null，取 display_name_key 的文案。 */
+  display_name: string | null;
   request_method: string;
   request_path_template: string;
   /** image 类 endpoint 填能力数组，其他媒体类型为 null。 */

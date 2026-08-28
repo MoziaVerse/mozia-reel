@@ -8,7 +8,7 @@ from lib.config.resolver import ConfigResolver, VideoBucketCapabilityError, Vide
 
 
 async def require_video_bucket_capability(project: dict, capability: VideoCapability) -> None:
-    """视频生成入口预检：按能力桶解析全局 + 项目配置并过解析闸（``docs/adr/0054``）。
+    """视频生成入口预检：按任务类型桶解析全局 + 项目配置并过解析闸（``docs/adr/0054``）。
 
     解析出的模型缺该桶所需能力、或配置引用已不可用（模型被删 / 能力被改 / 供应商被删）时抛
     ``BadRequestError``（app 级 handler 本地化为 400），让用户在提交入口即看到修复指引，而不是
@@ -30,12 +30,12 @@ async def require_video_bucket_capability(project: dict, capability: VideoCapabi
 async def require_audio_switch_supported(project: dict, capability: VideoCapability) -> None:
     """视频生成入口预检：成片恒有声的模型不接受「关闭音频」的配置。
 
-    这类模型的请求里没有音轨开关可下发（``model_audio_always_on``），关闭意图无法抵达供应商，
+    这类模型在该执行路径上没有音轨开关可下发（音轨形态 ``always_on``），关闭意图无法抵达供应商，
     却会让编排层按无声路径裁掉全部音色约束——用户拿到的是失去音色约束的有声成片。提交入口
     显式拒绝并说明修复路径，比让请求带着不可能实现的意图执行下去更可用。
 
     设置界面已按同一判据禁用开关，此处覆盖存量配置里已存「关闭」的项目。判据取自
-    :func:`server.services.video_caps.resolve_audio_switch_conflict`，与智能体入队路径同源；
+    :func:`server.services.video_caps.resolve_audio_switch_conflict`，与 Agent 入队路径同源；
     解析失败一律放行（与 :func:`require_video_bucket_capability` 同口径），不把配置解析问题
     升级为提交期拒绝。
     """

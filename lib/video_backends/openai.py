@@ -19,9 +19,11 @@ from lib.retry import DOWNLOAD_BACKOFF_SECONDS, DOWNLOAD_MAX_ATTEMPTS, with_retr
 from lib.video_backends.base import (
     IMAGE_MIME_TYPES,
     TERMINAL_PROVIDER_STATUSES,
+    VIDEO_POLL_INTERVAL_SECONDS,
     ProviderJobIdPersistenceMixin,
     ProviderJobStatus,
     ResumeExpiredError,
+    VideoAudioMode,
     VideoCapabilities,
     VideoGenerationRequest,
     VideoGenerationResult,
@@ -29,17 +31,12 @@ from lib.video_backends.base import (
     poll_with_retry,
 )
 
-_POLL_INTERVAL_SECONDS = 5.0
-_MIN_POLL_TIMEOUT_SECONDS = 600.0
-_POLL_TIMEOUT_PER_SECOND = 30.0
-
 # MiniMax H3 的耗时与 Sora 不是一个量级：网关 tasks 表实测 ref2va 15s 档
 # p50 约 12 分钟、p90 89 分钟、max 142 分钟，且长尾与时长无关（5s 也出现过 96 分钟）。
-# 按 Sora 那套 max(600, duration×30) 算，5 秒视频只等 600 秒 —— 必然超时。
+# 全局轮询超时默认 1 小时，对 H3 的 p90 必然超时。
 #
 # 超时的代价不是"失败"这么简单：服务端仍会跑完并计费，用户却拿不到产物。
-# Canvas 踩过同一个坑，那边把任务过期放宽到 3 小时（当时 10% 的任务超 60 分钟且已扣费），
-# 这里取同一口径。
+# 所以这里只抬下限、不改用户设置：把全局值当作起点，H3 至少等满 3 小时。
 _H3_MIN_POLL_TIMEOUT_SECONDS = 3 * 60 * 60.0
 # 动辄十几分钟的任务不值得每 5 秒问一次：那是上千次无谓请求打在网关上。
 _H3_POLL_INTERVAL_SECONDS = 15.0
@@ -195,6 +192,17 @@ def _resolve_size(model: str, resolution: str | None, aspect_ratio: str) -> str:
     return chosen
 
 
+def _resolve_poll_budget(model: str, poll_timeout_seconds: int) -> tuple[float, float]:
+    """该 model 的 ``(max_wait, poll_interval)``，由全局轮询超时设置派生。
+
+    H3 只抬下限、不覆盖用户设置：全局默认 1 小时低于它 89 分钟的 p90，直接采用会让近一成
+    任务被判超时——而超时的代价不是"失败"，服务端仍会跑完并计费，用户却拿不到产物。
+    """
+    if _is_minimax_h3(model):
+        return max(float(poll_timeout_seconds), _H3_MIN_POLL_TIMEOUT_SECONDS), _H3_POLL_INTERVAL_SECONDS
+    return float(poll_timeout_seconds), VIDEO_POLL_INTERVAL_SECONDS
+
+
 class OpenAIVideoBackend(ProviderJobIdPersistenceMixin):
     """OpenAI Sora 视频生成后端。"""
 
@@ -222,10 +230,21 @@ class OpenAIVideoBackend(ProviderJobIdPersistenceMixin):
         （见 mozia-h3-api 的 request_images）。所以这里必须按 model_id 分支，
         不能在 endpoint 上写死一个数 —— 写死会让真 Sora 也声称支持 9 张。
         instance property 委托至此，保持 backend 为单一真相源。
+
+        音轨恒有声：Sora 与 H3 的成片都自带音轨，``generate`` / ``_create_h3_video`` 组装的
+        请求体里都没有音轨开关字段，用户的关闭意图无处可下发。
+
+        H3 不支持纯文生：网关要求请求至少带一项素材，不带图提交会被拒成
+        ``conditions requires at least one entry``。声明出来才能在提交前拦下，
+        否则用户要等一次必然失败的往返。
         """
         if _is_minimax_h3(model):
-            return VideoCapabilities(max_reference_images=9)
-        return VideoCapabilities(max_reference_images=1)
+            return VideoCapabilities(
+                text_to_video=False,
+                max_reference_images=9,
+                audio_track=VideoAudioMode.ALWAYS_ON,
+            )
+        return VideoCapabilities(max_reference_images=1, audio_track=VideoAudioMode.ALWAYS_ON)
 
     @property
     def video_capabilities(self) -> VideoCapabilities:
@@ -267,7 +286,7 @@ class OpenAIVideoBackend(ProviderJobIdPersistenceMixin):
         # submit 成功立即持久化 job_id；持久化失败抛 → finally mark_failed。
         # 非 worker 路径（grid / 直生 / 测试）request.task_id 为 None，统一点内跳过持久化。
         await self._persist_provider_job_id(request, video.id, provider=PROVIDER_OPENAI)
-        final = await self._poll_until_complete(video.id, request.duration_seconds)
+        final = await self._poll_until_complete(video.id, request.poll_timeout_seconds)
 
         # generate 路径下 expired 是「provider 异常 / 输入参数过期」类失败，
         # 抛 RuntimeError 让 worker mark_failed（不带 [resume_expired] 前缀）。
@@ -279,7 +298,7 @@ class OpenAIVideoBackend(ProviderJobIdPersistenceMixin):
     async def resume_video(self, job_id: str, request: VideoGenerationRequest) -> VideoGenerationResult:
         """接续已 submit 的 OpenAI job：仅 poll + 下载，不调 videos.create。"""
         try:
-            final = await self._poll_until_complete(job_id, request.duration_seconds)
+            final = await self._poll_until_complete(job_id, request.poll_timeout_seconds)
         except Exception as exc:
             if _is_openai_not_found(exc):
                 raise ResumeExpiredError(job_id=job_id, provider=PROVIDER_OPENAI) from exc
@@ -370,18 +389,13 @@ class OpenAIVideoBackend(ProviderJobIdPersistenceMixin):
         # 后续轮询/下载复用 Sora 那条路径，只需要一个带 .id 的对象。
         return SimpleNamespace(id=task_id)
 
-    async def _poll_until_complete(self, video_id: str, duration_seconds: int):
+    async def _poll_until_complete(self, video_id: str, poll_timeout_seconds: int):
         """轮询任务直到状态归一到终态。
 
         不复用 SDK 的 client.videos.poll：它仅识别 in_progress/queued/completed/failed，
         对接返回非标状态（如 NOT_START）的 OpenAI 兼容网关时会提前退出，导致下载未就绪任务。
         """
-        if _is_minimax_h3(self._model):
-            max_wait = max(_H3_MIN_POLL_TIMEOUT_SECONDS, float(duration_seconds) * _POLL_TIMEOUT_PER_SECOND)
-            poll_interval = _H3_POLL_INTERVAL_SECONDS
-        else:
-            max_wait = max(_MIN_POLL_TIMEOUT_SECONDS, float(duration_seconds) * _POLL_TIMEOUT_PER_SECOND)
-            poll_interval = _POLL_INTERVAL_SECONDS
+        max_wait, poll_interval = _resolve_poll_budget(self._model, poll_timeout_seconds)
 
         # is_done 是纯谓词：成功 / 失败 / 过期三档都视为「已终态」让 poll 返回。
         # caller (generate / resume_video) 拿到 result 后再分流：

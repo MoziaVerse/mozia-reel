@@ -42,7 +42,7 @@ from lib.narration_delivery import (
     video_request_reuses_current_visual,
 )
 from lib.path_safety import safe_exists, safe_join
-from lib.project_change_hints import emit_project_change_batch, project_change_source
+from lib.project_change_hints import build_change_label, emit_project_change_batch, project_change_source
 from lib.project_manager import get_project_manager, is_reference_video_project
 from lib.reference_video.request_projection import ProjectionResolutionError
 from lib.script_editor import resolve_items
@@ -63,6 +63,7 @@ from server.services.image_edit_tasks import EDITABLE_RESOURCE_TYPES, resolve_us
 from server.services.narration_delivery_tasks import (
     active_narrated_video_resource_ids,
     prepare_current_storyboard_narrated_video_duration,
+    tts_task_in_progress,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,7 +101,7 @@ class GenerateVideoRequest(BaseModel):
     seed: int | None = None
     # 单目标入口保留后期配音默认（docs/adr/0061）：请求由用户在这一段的界面上直接触发，
     # 界面已呈现该段的旁白状态与费用，代价也止于这一段。必填只加在替整批选定准入判据与
-    # 时长基准的批量入口与由模型推断参数的智能体视频工具上。
+    # 时长基准的批量入口与由模型推断参数的 Agent 视频工具上。
     narration_delivery: NarrationDelivery = POST_PRODUCTION
     confirmed_request_duration_seconds: int | None = Field(default=None, gt=0)
 
@@ -251,7 +252,7 @@ async def generate_video(
 
     需要先有分镜图作为起始帧。生成由 GenerationWorker 异步执行。
 
-    仅服务分镜图生视频路线：参考生视频路线没有分镜图这一步，在此拒绝并指引换入口。
+    仅服务分镜图生视频：参考生视频没有分镜图这一步，在此拒绝并指引换入口。
     """
 
     def _sync() -> tuple[dict, Path, dict, dict]:
@@ -259,9 +260,9 @@ async def generate_video(
         project = pm_local.load_project(project_name)
         project_path = pm_local.get_project_path(project_name)
 
-        # 路线闸门前置于分镜图存在性检查：参考路线项目本无分镜图步骤，落到下面会拿到
-        # 「请先生成分镜图」的误导指引；换路线前残留分镜图时更糟——请求按 i2v 执行，
-        # 与按 r2v 归桶的费用估算不同轴。路线以 project.json 为唯一真相源，磁盘产物不投票。
+        # 生成模式检查前置于分镜图存在性检查：参考生视频项目本无分镜图步骤，否则会拿到
+        # 「请先生成分镜图」的误导指引。磁盘中即使存在不适用于当前模式的分镜图也不参与判定；
+        # 生成模式以 project.json 为唯一真相源，确保请求执行与费用估算使用同一轴。
         if is_reference_video_project(project):
             raise ConflictError("video_route_is_reference_video")
 
@@ -305,8 +306,8 @@ async def generate_video(
 
     project, project_path, script, item = await asyncio.to_thread(_sync)
 
-    # 归桶按项目路线求值（docs/adr/0054），与执行层 lane 声明同源、不第二次硬编码 i2v；
-    # 上面的路线闸门已挡掉参考路线，此处对能到达的项目恒为 i2v。解析闸预检让能力缺失 /
+    # 归桶按项目生成模式求值（docs/adr/0054），与执行层 lane 声明同源、不第二次硬编码 i2v；
+    # 上面的生成模式检查已挡掉参考生视频，此处对能到达的项目恒为 i2v。解析闸预检让能力缺失 /
     # 悬空引用在提交入口即返回修复指引，而非任务面板里的异步失败。
     _video_bucket = video_bucket_for_generation_mode(project.get("generation_mode"))
     await require_video_bucket_capability(project, _video_bucket)
@@ -314,6 +315,7 @@ async def generate_video(
 
     delivery_projection: NarratedVideoDurationPreparation | None = None
     delivery_payload: dict[str, object] | None = None
+    queue = get_generation_queue()
     if req.narration_delivery == USE_TTS:
         current_planned_duration = item.get("duration_seconds")
         if (
@@ -337,6 +339,15 @@ async def generate_video(
                 # 当前盘上单元重投影，否则客户端旧快照可能先通过、执行时才要求另一档确认。
                 planned_duration_seconds=current_planned_duration,
                 confirmed_request_duration_seconds=req.confirmed_request_duration_seconds,
+                tts_in_progress=await tts_task_in_progress(
+                    project_name=project_name,
+                    resource_id=segment_id,
+                    script_file=req.script_file,
+                    user_id=user.id,
+                    queue=queue,
+                ),
+                user_id=user.id,
+                queue=queue,
             )
         except ProjectionResolutionError as exc:
             raise BadRequestError(exc.code, **exc.params) from exc
@@ -370,7 +381,6 @@ async def generate_video(
     )
 
     # 入队（provider 由服务层根据配置自动解析，调用方无需传递）
-    queue = get_generation_queue()
     result = await queue.enqueue_task(
         project_name=project_name,
         task_type=spec.task_type,
@@ -479,6 +489,7 @@ async def generate_tts(
         project_name=project_name,
         resource_ids=(segment_id,),
         script_file=req.script_file,
+        user_id=user.id,
     )
     if segment_id in active_narrated_video:
         raise ConflictError("tts_conflicts_with_active_narrated_video", resource_id=segment_id)
@@ -611,7 +622,7 @@ async def generate_character_voice_sample(
     """提交角色 TTS 试听样本生成任务：文本/音色显式传入，不落回全局旁白配置。
 
     生成产物是预览件，仅在 confirm 端点被显式提升为角色 reference_audio；本端点
-    只负责入队，走既有 audio 生成通道（并发/限速/记账与旁白 TTS 完全同一套）。
+    只负责入队，走既有 audio 生成通道（并发/限速/记账与旁白配音完全同一套）。
     """
     text = req.text.strip()
     voice = req.voice.strip()
@@ -729,7 +740,7 @@ async def confirm_character_voice_sample(
                         "entity_type": "character",
                         "action": "updated",
                         "entity_id": char_name,
-                        "label": f"角色「{char_name}」参考音频",
+                        **build_change_label("character_reference_audio", id=char_name),
                         "focus": None,
                         "important": False,
                         "asset_fingerprints": {ref_audio_rel: target_path.stat().st_mtime_ns},
@@ -754,7 +765,7 @@ async def confirm_character_voice_sample(
     }
 
 
-# ==================== 资产设计图生成（character / scene / prop / product 共用） ====================
+# ==================== 资产图生成（character / scene / prop / product 共用） ====================
 
 
 # i18n key 命名差异：scene 用历史前缀 "project_scene_*"
@@ -775,7 +786,7 @@ async def _enqueue_asset_generation(
     user_id: str,
     _t: Translator,
 ) -> dict:
-    """项目级资产（character / scene / prop / product）设计图生成共用入队逻辑。"""
+    """项目级资产（character / scene / prop / product）资产图生成共用入队逻辑。"""
     spec = ASSET_SPECS[asset_type]
     keys = _ASSET_GENERATE_I18N[asset_type]
 
@@ -824,7 +835,7 @@ async def generate_character(
     user: CurrentUser,
     _t: Translator,
 ):
-    """提交角色设计图生成任务到队列，立即返回 task_id。"""
+    """提交角色资产图生成任务到队列，立即返回 task_id。"""
     return await _enqueue_asset_generation(
         asset_type="character",
         project_name=project_name,
@@ -843,7 +854,7 @@ async def generate_scene(
     user: CurrentUser,
     _t: Translator,
 ):
-    """提交场景设计图生成任务到队列，立即返回 task_id。"""
+    """提交场景资产图生成任务到队列，立即返回 task_id。"""
     return await _enqueue_asset_generation(
         asset_type="scene",
         project_name=project_name,
@@ -862,7 +873,7 @@ async def generate_prop(
     user: CurrentUser,
     _t: Translator,
 ):
-    """提交道具设计图生成任务到队列，立即返回 task_id。"""
+    """提交道具资产图生成任务到队列，立即返回 task_id。"""
     return await _enqueue_asset_generation(
         asset_type="prop",
         project_name=project_name,
@@ -881,7 +892,7 @@ async def generate_product(
     user: CurrentUser,
     _t: Translator,
 ):
-    """提交产品标准参考图（product sheet）生成任务到队列，立即返回 task_id。"""
+    """提交商品标准参考图（product sheet）生成任务到队列，立即返回 task_id。"""
     return await _enqueue_asset_generation(
         asset_type="product",
         project_name=project_name,

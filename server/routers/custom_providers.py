@@ -9,9 +9,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import AfterValidator, BaseModel, Field, field_validator
@@ -23,7 +23,6 @@ from lib.custom_provider import make_provider_id
 from lib.custom_provider.capabilities import (
     AUDIO_OVERRIDE_KEYS,
     CAPABILITY_OVERRIDE_FIELDS,
-    audio_capability_pair_is_coherent,
     capability_type_name,
     capability_value_matches,
     filter_valid_overrides,
@@ -31,6 +30,7 @@ from lib.custom_provider.capabilities import (
     strip_incoherent_audio_overrides,
     system_video_capabilities,
 )
+from lib.custom_provider.endpoint_resolution import endpoint_spec_from_row
 from lib.custom_provider.endpoints import (
     ENDPOINT_REGISTRY,
     endpoint_spec_to_dict,
@@ -40,10 +40,11 @@ from lib.custom_provider.endpoints import (
 )
 from lib.db import get_async_session
 from lib.db.base import dt_to_iso
+from lib.db.repositories.custom_endpoint_repo import CustomEndpointRepository
 from lib.db.repositories.custom_provider_repo import CustomProviderRepository
 from lib.i18n import Translator
 from lib.image_backends.base import ImageCapability
-from lib.video_backends.base import ReferenceAudioMode
+from lib.video_backends.base import ReferenceAudioMode, audio_capability_pair_is_coherent
 
 
 def _validate_endpoint(value: str) -> str:
@@ -63,15 +64,25 @@ MaxWorkers = Annotated[int | None, Field(default=None, ge=1)]
 
 # 开放给用户覆盖的能力维度。DB 列与合成函数对 VideoCapabilities 全字段通用，写入侧在此收窄：
 # 未列入的维度即便是合法字段名也不落库，扩容只需往这里加键名，无需 DB 迁移或改合成语义。
+#
+# 音轨形态（audio_track / reference_route_audio_track）刻意不开放（``docs/adr/0054``）：自定义
+# 供应商的音轨按「无信号不收紧」处理，设置界面拿不到自定义模型的逐模型音轨目录，用户设的这一位
+# 没有执行侧对应物——协议 backend 要么下发音轨开关要么不下发，声明改不了它——开放覆盖只会请回
+# 一份「界面宣称、执行期反悔」的手写声明。
 CAPABILITY_OVERRIDE_ALLOWLIST = frozenset({"last_frame", "reference_audio_mode", "max_reference_audio_count"})
 
-# 白名单必须是 VideoCapabilities 字段名的子集：值类型校验直接按字段名取期望类型，键名写错
-# 要在导入期炸掉，而不是等到一次真实写入才 KeyError 成 500。
-if not CAPABILITY_OVERRIDE_ALLOWLIST <= CAPABILITY_OVERRIDE_FIELDS.keys():
-    raise RuntimeError(
-        f"能力覆盖白名单含非 VideoCapabilities 字段: "
-        f"{sorted(CAPABILITY_OVERRIDE_ALLOWLIST - set(CAPABILITY_OVERRIDE_FIELDS))}"
-    )
+#: 音轨形态两维：既不开放覆盖，也不回显系统判定（理由同上）。
+_AUDIO_TRACK_FIELDS = frozenset({"audio_track", "reference_route_audio_track"})
+
+# 两份键集合都必须是 VideoCapabilities 字段名的子集：值类型校验直接按字段名取期望类型，键名写错
+# 要在导入期炸掉，而不是等到一次真实写入才 KeyError 成 500；音轨两维的键名写错则会静默停止过滤，
+# 把 backend 侧声明摆回自定义供应商的设置页——那正是本口径要避免的分裂。
+for _name, _keys in (
+    ("能力覆盖白名单", CAPABILITY_OVERRIDE_ALLOWLIST),
+    ("音轨形态字段", _AUDIO_TRACK_FIELDS),
+):
+    if not _keys <= CAPABILITY_OVERRIDE_FIELDS.keys():
+        raise RuntimeError(f"{_name}含非 VideoCapabilities 字段: {sorted(_keys - set(CAPABILITY_OVERRIDE_FIELDS))}")
 
 
 def _narrow_to_allowlist(overrides: dict[str, object]) -> dict[str, object]:
@@ -202,7 +213,7 @@ class UpdateProviderRequest(BaseModel):
 
 
 class FullUpdateProviderRequest(BaseModel):
-    """PUT 全量更新：provider 元数据 + 模型列表在同一事务中。"""
+    """PUT 全量更新：provider 元数据与模型列表。"""
 
     display_name: str
     base_url: str
@@ -286,7 +297,16 @@ class EndpointDescriptor(BaseModel):
     key: str
     media_type: str
     family: str
+    # 实现形态："python"（backend 代码）| "declarative"（声明式定义）。前端据此决定
+    # 「复制为我的 / 查看定义」是否可见——这两项只对声明式端点成立。
+    kind: str
+    # 端点来源：内置（随版发布，不可编辑删除）或用户自定义（落 custom_endpoint 表）。
+    # 前端据此分组，并只对 custom 开放编辑与删除。
+    source: Literal["builtin", "custom"] = "builtin"
     display_name_key: str
+    # 声明式端点的显示名（定义里的 meta.name，专有名词不翻译）；Python 内置为 None，
+    # 由前端按 display_name_key 取 i18n 文案。两者恰有其一，前端取名时先看本字段。
+    display_name: str | None = None
     request_method: str
     request_path_template: str
     image_capabilities: list[str] | None = None  # image 类填能力字符串列表，其他为 None
@@ -305,15 +325,20 @@ class EndpointCatalogResponse(BaseModel):
 
 
 def _system_capabilities_for(endpoint: str, model_id: str) -> dict[str, object] | None:
-    """读该 model 的系统判定能力（四字段全量）；非 video endpoint 返回 None。
+    """读该 model 的系统判定能力；非 video endpoint 返回 None。
 
     判定失败（endpoint 已下线、注册表声明异常）时降级为 None 而非 500：列表端点要能把
     其余模型正常呈现出来，单行判定不出来只是设置页少一段"判定值"提示。
+
+    音轨形态两维不回显：自定义供应商的音轨按「无信号不收紧」处理、不参与派生（见
+    ``CAPABILITY_OVERRIDE_ALLOWLIST`` 的说明），把 backend 侧的静态声明摆到设置页会让用户
+    以为它对自定义模型生效——那正是本口径要避免的分裂。
     """
     try:
         if endpoint_to_media_type(endpoint) != "video":
             return None
-        return asdict(system_video_capabilities(endpoint=endpoint, model_id=model_id))
+        caps = asdict(system_video_capabilities(endpoint=endpoint, model_id=model_id))
+        return {k: v for k, v in caps.items() if k not in _AUDIO_TRACK_FIELDS}
     except ValueError:
         logger.warning("无法判定系统能力: endpoint=%r model_id=%r", endpoint, model_id)
         return None
@@ -599,22 +624,44 @@ async def list_providers(
 
 # /endpoints 必须先于 /{provider_id} 注册，否则 FastAPI 会把字符串 "endpoints" 当作 provider_id。
 @router.get("/endpoints", response_model=EndpointCatalogResponse)
-async def list_endpoint_catalog() -> EndpointCatalogResponse:
-    """暴露 ENDPOINT_REGISTRY 作为前端单一真相源：渲染下拉、显示路径与分组都派生自此返回值。
+async def list_endpoint_catalog(
+    session: AsyncSession = Depends(get_async_session),
+) -> EndpointCatalogResponse:
+    """暴露两个命名空间的 endpoint 作为前端单一真相源：渲染下拉、显示路径与分组都派生自此返回值。
 
-    Matrix 托管形态下只保留网关实际提供的那几条 —— 厂商原生路径打到中转网关上
-    会返回 HTML 首页而不是 API 响应，露在下拉里只会让人选中后在生成时才失败。
+    内置取自 ENDPOINT_REGISTRY，自定义由 custom_endpoint 表的定义现构造——不做启动时全量装载，
+    定义原地改完、目录下次拉取即是新的。单行定义构造不出 spec（只可能来自手工改库）时跳过并
+    告警，而不是让整份目录失败：一条坏定义不该把端点下拉整个打空。
+
+    Matrix 托管形态下内置的那批只保留网关实际提供的几条 —— 厂商原生路径打到中转网关上
+    会返回 HTML 首页而不是 API 响应，露在下拉里只会让人选中后在生成时才失败。自定义那批
+    不另行过滤：它们本就随租户分库，且托管态下用户没有创建入口。
     """
     from lib.matrix_capabilities import visible_endpoint_keys
 
     visible = set(visible_endpoint_keys(ENDPOINT_REGISTRY.keys()))
+    specs = [spec for key, spec in ENDPOINT_REGISTRY.items() if key in visible]
+    for row in await CustomEndpointRepository(session).list_all():
+        try:
+            specs.append(endpoint_spec_from_row(row))
+        except (KeyError, TypeError, ValueError):
+            logger.warning("自定义调用端点定义无法构造 spec，已跳过: id=%s", row.id, exc_info=True)
     return EndpointCatalogResponse(
-        endpoints=[
-            EndpointDescriptor(**endpoint_spec_to_dict(spec))
-            for key, spec in ENDPOINT_REGISTRY.items()
-            if key in visible
-        ],
+        endpoints=[EndpointDescriptor(**endpoint_spec_to_dict(spec)) for spec in specs],
     )
+
+
+@router.get("/endpoints/{endpoint_key}/definition")
+async def get_endpoint_definition(endpoint_key: str, _t: Translator) -> dict[str, Any]:
+    """取内置声明式端点的定义 JSON，供「复制为我的」原样 POST 成 ce-<id> 副本。
+
+    Python 实现的内置端点没有定义可取，与未知键一并回 404。返回体是定义原样（零封套），
+    与导入导出的文件格式同一份东西。
+    """
+    spec = ENDPOINT_REGISTRY.get(endpoint_key)
+    if spec is None or spec.definition is None:
+        raise HTTPException(status_code=404, detail=_t("endpoint_definition_not_found", endpoint=endpoint_key))
+    return dict(spec.definition)
 
 
 @router.post("", status_code=201)
@@ -669,7 +716,7 @@ async def get_provider_credentials(
     _t: Translator,
     session: AsyncSession = Depends(get_async_session),
 ):
-    """返回明文 base_url + api_key，供智能体配置导入复用。
+    """返回明文 base_url + api_key，供 Agent 配置导入复用。
 
     仅 CurrentUser 鉴权,与现有 PATCH 接口对齐;日志不打印 body。
     多用户场景需重新评估细粒度授权。
@@ -847,7 +894,7 @@ async def discover_anthropic_models_endpoint(
     _t: Translator,
     session: AsyncSession = Depends(get_async_session),
 ):
-    """Anthropic 协议模型发现：智能体配置专用。
+    """Anthropic 协议模型发现：Agent 配置专用。
 
     凭据缺失时 fallback 到 active credential（AgentCredentialRepository）。
     """
@@ -904,13 +951,19 @@ async def test_connection_by_id(provider_id: int, _t: Translator, session: Async
 
 
 async def _run_discover(
-    discovery_format: str, base_url: str | None, api_key: str, _t: Callable[..., str]
+    discovery_format: str,
+    base_url: str | None,
+    api_key: str,
+    _t: Callable[..., str],
+    *,
+    discover_models_fn: Callable[..., Awaitable[list[dict]]] | None = None,
 ) -> DiscoverResponse:
     """共用的模型发现逻辑（明文凭证 / 已存储凭证两条入口共用）。"""
     from lib.custom_provider.discovery import UnsupportedDiscoveryFormatError, discover_models
 
     try:
-        models = await discover_models(
+        discover = discover_models_fn or discover_models
+        models = await discover(
             discovery_format=discovery_format,
             base_url=base_url or None,
             api_key=api_key,
@@ -927,18 +980,24 @@ async def _run_discover(
 
 
 async def _run_connection_test(
-    discovery_format: str, base_url: str, api_key: str, _t: Callable[..., str]
+    discovery_format: str,
+    base_url: str,
+    api_key: str,
+    _t: Callable[..., str],
+    *,
+    openai_probe: Callable[[str, str, Callable[..., str]], ConnectionTestResponse] | None = None,
+    google_probe: Callable[[str, str, Callable[..., str]], ConnectionTestResponse] | None = None,
 ) -> ConnectionTestResponse:
     """共用的连接测试逻辑。"""
     try:
         if discovery_format == "openai":
             result = await asyncio.wait_for(
-                asyncio.to_thread(_test_openai, base_url, api_key, _t),
+                asyncio.to_thread(openai_probe or _test_openai, base_url, api_key, _t),
                 timeout=_CONNECTION_TEST_TIMEOUT,
             )
         elif discovery_format == "google":
             result = await asyncio.wait_for(
-                asyncio.to_thread(_test_google, base_url, api_key, _t),
+                asyncio.to_thread(google_probe or _test_google, base_url, api_key, _t),
                 timeout=_CONNECTION_TEST_TIMEOUT,
             )
         else:
@@ -963,13 +1022,19 @@ async def _run_connection_test(
         )
 
 
-def _test_openai(base_url: str, api_key: str, _t: Callable[..., str]) -> ConnectionTestResponse:
+def _test_openai(
+    base_url: str,
+    api_key: str,
+    _t: Callable[..., str],
+    *,
+    client_factory: Callable[..., Any] | None = None,
+) -> ConnectionTestResponse:
     """通过 models.list() 验证 OpenAI 兼容 API。"""
     from openai import OpenAI
 
     from lib.config.url_utils import ensure_openai_base_url
 
-    client = OpenAI(api_key=api_key, base_url=ensure_openai_base_url(base_url))
+    client = (client_factory or OpenAI)(api_key=api_key, base_url=ensure_openai_base_url(base_url))
     models = client.models.list()
     count = sum(1 for _ in models)
     return ConnectionTestResponse(
@@ -979,7 +1044,13 @@ def _test_openai(base_url: str, api_key: str, _t: Callable[..., str]) -> Connect
     )
 
 
-def _test_google(base_url: str, api_key: str, _t: Callable[..., str]) -> ConnectionTestResponse:
+def _test_google(
+    base_url: str,
+    api_key: str,
+    _t: Callable[..., str],
+    *,
+    client_factory: Callable[..., Any] | None = None,
+) -> ConnectionTestResponse:
     """通过 models.list() 验证 Google genai API。"""
     from google import genai
 
@@ -987,7 +1058,7 @@ def _test_google(base_url: str, api_key: str, _t: Callable[..., str]) -> Connect
 
     effective_url = ensure_google_base_url(base_url)
     http_options = {"base_url": effective_url} if effective_url else None
-    client = genai.Client(api_key=api_key, http_options=http_options)  # type: ignore[arg-type]
+    client = (client_factory or genai.Client)(api_key=api_key, http_options=http_options)  # type: ignore[arg-type]
     pager = client.models.list()
     count = sum(1 for _ in pager)
     return ConnectionTestResponse(

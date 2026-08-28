@@ -6,6 +6,7 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import ColumnElement, func, select, text, update
@@ -15,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.db.base import DEFAULT_USER_ID, dt_to_iso, utc_now
-from lib.db.models.task import Task, WorkerLease
+from lib.db.models.task import BatchTask, GenerationBatch, Task, WorkerLease
 from lib.db.repositories.base import BaseRepository, rowcount
 from lib.task_failure import bound_reason, collapse_cascade_reason, encode_failure
 from lib.task_terminal_events import TERMINAL_TASK_STATUSES
@@ -34,6 +35,7 @@ _MAX_ERROR_MESSAGE_LEN = 2000
 def _active_dedupe_clauses(
     *,
     project_name: str,
+    user_id: str,
     task_type: str,
     script_file: str | None,
     resource_type: str | None,
@@ -46,6 +48,7 @@ def _active_dedupe_clauses(
     """
     return [
         Task.project_name == project_name,
+        Task.user_id == user_id,
         Task.task_type == task_type,
         func.coalesce(Task.script_file, "") == (script_file or ""),
         func.coalesce(Task.resource_type, "") == (resource_type or ""),
@@ -92,6 +95,7 @@ def _json_loads(value: str | None, default: Any) -> Any:
 def _task_to_dict(row: Task) -> dict[str, Any]:
     return {
         "task_id": row.task_id,
+        "batch_id": row.batch_id,
         "project_name": row.project_name,
         "task_type": row.task_type,
         "media_type": row.media_type,
@@ -147,6 +151,36 @@ class TaskRepository(BaseRepository):
                 }
             )
 
+    async def _require_batch_units(
+        self,
+        *,
+        project_name: str,
+        batch_id: str,
+        unit_ids: tuple[str, ...],
+        user_id: str,
+    ) -> None:
+        result = await self.session.execute(
+            select(GenerationBatch).where(
+                GenerationBatch.batch_id == batch_id,
+                GenerationBatch.project_name == project_name,
+                GenerationBatch.user_id == user_id,
+            )
+        )
+        batch = result.scalar_one_or_none()
+        requested = _json_loads(batch.requested_json, {}) if batch is not None else {}
+        requested_ids = {item.get("unit_id") for item in requested.get("requested", []) if isinstance(item, dict)}
+        blocked_ids = {
+            item["item"].get("unit_id")
+            for item in (_json_loads(batch.blocked_json, []) if batch is not None else [])
+            if isinstance(item, dict) and isinstance(item.get("item"), dict)
+        }
+        invalid = next(
+            (unit_id for unit_id in unit_ids if unit_id not in requested_ids or unit_id in blocked_ids), None
+        )
+        if batch is None or invalid is not None:
+            unit_id = invalid or unit_ids[0]
+            raise ValueError(f"batch '{batch_id}' does not own unit '{unit_id}' in project '{project_name}'")
+
     async def enqueue(
         self,
         *,
@@ -163,12 +197,29 @@ class TaskRepository(BaseRepository):
         dependency_index: int | None = None,
         user_id: str = DEFAULT_USER_ID,
         provider_id: str | None = None,
+        batch_id: str | None = None,
+        batch_unit_id: str | None = None,
+        batch_unit_ids: tuple[str, ...] = (),
+        dedupe_guard: Callable[[dict[str, Any], str], None] | None = None,
     ) -> dict[str, Any]:
+        unit_ids = tuple(dict.fromkeys((*(batch_unit_ids or ()), *((batch_unit_id,) if batch_unit_id else ()))))
+        if unit_ids and batch_id is None:
+            raise ValueError("batch_id and at least one batch unit id must be provided together")
+        if batch_id is not None:
+            if not unit_ids:
+                raise ValueError("batch_id and at least one batch unit id must be provided together")
+            await self._require_batch_units(
+                project_name=project_name,
+                batch_id=batch_id,
+                unit_ids=unit_ids,
+                user_id=user_id,
+            )
         now = utc_now()
 
         task_id = uuid.uuid4().hex
         task = Task(
             task_id=task_id,
+            batch_id=batch_id,
             project_name=project_name,
             task_type=task_type,
             media_type=media_type,
@@ -187,6 +238,9 @@ class TaskRepository(BaseRepository):
             user_id=user_id,
         )
         self.session.add(task)
+        deduped = False
+        existing_task_id: str | None = None
+        existing_payload: dict[str, Any] | None = None
         try:
             await self.session.flush()
         except IntegrityError:
@@ -197,6 +251,7 @@ class TaskRepository(BaseRepository):
                 .where(
                     *_active_dedupe_clauses(
                         project_name=project_name,
+                        user_id=user_id,
                         task_type=task_type,
                         script_file=script_file,
                         resource_type=resource_type,
@@ -208,26 +263,163 @@ class TaskRepository(BaseRepository):
             )
             existing = result.scalar_one_or_none()
             if existing:
-                # Queue-layer semantic dedupe needs the active request payload from the row that
-                # won the unique-index race. The wrapper consumes this private field before
-                # returning its public enqueue result.
-                return {
-                    "task_id": existing.task_id,
-                    "status": existing.status,
-                    "deduped": True,
-                    "existing_task_id": existing.task_id,
-                    "_existing_payload": _json_loads(existing.payload_json, {}),
-                }
-            raise
+                task_id = existing.task_id
+                deduped = True
+                existing_task_id = existing.task_id
+                loaded_payload: dict[str, Any] = _json_loads(existing.payload_json, {})
+                existing_payload = loaded_payload
+                if dedupe_guard is not None:
+                    dedupe_guard(loaded_payload, existing.task_id)
+                status = existing.status
+            else:
+                raise
+        else:
+            status = "queued"
+
+        if batch_id is not None:
+            self.session.add_all(
+                BatchTask(batch_id=batch_id, task_id=task_id, unit_id=unit_id, deduped=deduped) for unit_id in unit_ids
+            )
+            await self.session.flush()
 
         await self.session.commit()
 
         return {
             "task_id": task_id,
-            "status": "queued",
-            "deduped": False,
-            "existing_task_id": None,
+            "status": status,
+            "deduped": deduped,
+            "existing_task_id": existing_task_id,
+            "_existing_payload": existing_payload,
         }
+
+    async def create_batch(
+        self,
+        *,
+        batch_id: str,
+        project_name: str,
+        operation: str,
+        requested: dict[str, Any],
+        blocked: list[dict[str, Any]],
+        source: str,
+        user_id: str,
+    ) -> None:
+        self.session.add(
+            GenerationBatch(
+                batch_id=batch_id,
+                project_name=project_name,
+                operation=operation,
+                requested_json=_json_dumps(requested),
+                blocked_json=_json_dumps(blocked),
+                source=source,
+                user_id=user_id,
+                created_at=utc_now(),
+            )
+        )
+        await self.session.commit()
+
+    async def attach_batch_task(
+        self,
+        *,
+        project_name: str,
+        batch_id: str,
+        task_id: str,
+        unit_id: str,
+        deduped: bool,
+        user_id: str,
+    ) -> None:
+        await self._require_batch_units(
+            project_name=project_name,
+            batch_id=batch_id,
+            unit_ids=(unit_id,),
+            user_id=user_id,
+        )
+        task_result = await self.session.execute(
+            select(Task).where(
+                Task.task_id == task_id,
+                Task.project_name == project_name,
+                Task.user_id == user_id,
+            )
+        )
+        task = task_result.scalar_one_or_none()
+        if task is None:
+            raise ValueError(f"batch '{batch_id}' does not own unit '{unit_id}' in project '{project_name}'")
+        self.session.add(BatchTask(batch_id=batch_id, task_id=task_id, unit_id=unit_id, deduped=deduped))
+        await self.session.commit()
+
+    async def get_batch(
+        self, *, project_name: str, batch_id: str, user_id: str = DEFAULT_USER_ID
+    ) -> dict[str, Any] | None:
+        result = await self.session.execute(
+            select(GenerationBatch).where(
+                GenerationBatch.batch_id == batch_id,
+                GenerationBatch.project_name == project_name,
+                GenerationBatch.user_id == user_id,
+            )
+        )
+        batch = result.scalar_one_or_none()
+        if batch is None:
+            return None
+
+        rows = await self.session.execute(
+            select(BatchTask, Task)
+            .join(Task, Task.task_id == BatchTask.task_id)
+            .where(
+                BatchTask.batch_id == batch_id,
+                Task.project_name == batch.project_name,
+                Task.user_id == batch.user_id,
+            )
+        )
+        memberships = []
+        for membership, task in rows.all():
+            item = _task_to_dict(task)
+            item.update(unit_id=membership.unit_id, deduped=membership.deduped)
+            memberships.append(item)
+
+        task_types = {item["task_type"] for item in memberships}
+        depth: dict[str, int] = {}
+        if task_types:
+            depth_rows = await self.session.execute(
+                select(Task.task_type, func.count())
+                .where(
+                    Task.project_name == batch.project_name,
+                    Task.user_id == batch.user_id,
+                    Task.task_type.in_(task_types),
+                    Task.status == "queued",
+                )
+                .group_by(Task.task_type)
+            )
+            depth = {str(task_type): int(count) for task_type, count in depth_rows.all()}
+        return {
+            "batch_id": batch.batch_id,
+            "project_name": batch.project_name,
+            "operation": batch.operation,
+            "requested": json.loads(batch.requested_json),
+            "blocked": json.loads(batch.blocked_json),
+            "source": batch.source,
+            "user_id": batch.user_id,
+            "created_at": dt_to_iso(batch.created_at),
+            "memberships": memberships,
+            "queue_depth": depth,
+        }
+
+    async def delete_fresh_batch(self, *, project_name: str, batch_id: str, user_id: str) -> int:
+        scope = (
+            GenerationBatch.batch_id == batch_id,
+            GenerationBatch.project_name == project_name,
+            GenerationBatch.user_id == user_id,
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            # Serialize with membership FK checks before the fresh-snapshot delete.
+            await self.session.execute(select(GenerationBatch.batch_id).where(*scope).with_for_update())
+        result = await self.session.execute(
+            sa_delete(GenerationBatch).where(
+                *scope,
+                ~select(Task.task_id).where(Task.batch_id == GenerationBatch.batch_id).exists(),
+                ~select(BatchTask.task_id).where(BatchTask.batch_id == GenerationBatch.batch_id).exists(),
+            )
+        )
+        await self.session.commit()
+        return rowcount(result)
 
     async def get_active_tasks_for_resources(
         self,
@@ -237,6 +429,7 @@ class TaskRepository(BaseRepository):
         resource_ids: list[str],
         script_file: str | None = None,
         resource_type: str | None = None,
+        user_id: str = DEFAULT_USER_ID,
     ) -> list[dict[str, Any]]:
         """查询命中 ``idx_tasks_dedupe_active`` 去重键、当前处于活动态的任务。
 
@@ -252,6 +445,7 @@ class TaskRepository(BaseRepository):
             .where(
                 *_active_dedupe_clauses(
                     project_name=project_name,
+                    user_id=user_id,
                     task_type=task_type,
                     script_file=script_file,
                     resource_type=resource_type,

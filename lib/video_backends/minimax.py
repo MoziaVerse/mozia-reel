@@ -29,7 +29,6 @@ import httpx
 from lib.config.registry import model_info_for
 from lib.logging_utils import format_kwargs_for_log
 from lib.minimax_shared import (
-    MINIMAX_VIDEO_POLL_INTERVAL_SECONDS,
     extract_minimax_download_url,
     extract_minimax_file_id,
     extract_minimax_v2_download_url,
@@ -56,6 +55,7 @@ from lib.retry import (
 from lib.video_backends.base import (
     ProviderJobIdPersistenceMixin,
     ReferenceAudioMode,
+    VideoAudioMode,
     VideoCapabilities,
     VideoCapabilityError,
     VideoGenerationRequest,
@@ -85,8 +85,6 @@ _SUBMIT_ENDPOINT = "/video_generation"
 _QUERY_ENDPOINT = "/query/video_generation"
 _RETRIEVE_ENDPOINT = "/files/retrieve"
 
-_MIN_POLL_TIMEOUT_SECONDS = 900.0
-_POLL_TIMEOUT_PER_SECOND = 60.0
 
 # 无首帧的文生视频不是各档通用：2.3-Fast 仅图生视频；S2V-01 由 subject_reference 驱动
 # （参考图路径经 VideoCapabilities.max_reference_images 表达），两者都不接受纯文本请求。
@@ -181,7 +179,6 @@ class MiniMaxVideoBackend(ProviderJobIdPersistenceMixin):
         self._is_v2 = _is_h3_model(self._model)
         self._base_url = minimax_video_v2_base_url(base_url) if self._is_v2 else minimax_video_base_url(base_url)
         self._http_timeout = http_timeout
-        self._supports_text_to_video = _supports_text_to_video(self._model)
 
     @property
     def name(self) -> str:
@@ -201,9 +198,18 @@ class MiniMaxVideoBackend(ProviderJobIdPersistenceMixin):
         H3 的 content[] 数组按 role 同时承载首帧、尾帧、参考图与参考音频，各维度上限取官方
         《创建视频生成任务 (V2)》声明值。首帧任务只接受 ratio=adaptive（官方 ratio 枚举含
         adaptive，图生视频示例即用它），故声明 first_frame_ratio_adaptive_only。
+
+        音轨形态按走哪条端点分：H3 走 v2 多模态端点，原生立体声、请求体没有音轨开关，故恒有声；
+        其余型号走 v1 端点，请求与响应都不涉及音轨，成片恒无声。两条端点都没有可下发的开关，
+        故这里不存在开关可控的型号。
         """
         if model == _S2V:
-            return VideoCapabilities(first_frame=False, max_reference_images=1)
+            return VideoCapabilities(
+                text_to_video=False,
+                first_frame=False,
+                max_reference_images=1,
+                audio_track=VideoAudioMode.ALWAYS_OFF,
+            )
         if _is_h3_model(model):
             return VideoCapabilities(
                 first_frame=True,
@@ -215,8 +221,13 @@ class MiniMaxVideoBackend(ProviderJobIdPersistenceMixin):
                 max_reference_audio_total_seconds=_H3_MAX_REFERENCE_AUDIO_TOTAL_SECONDS,
                 max_prompt_chars=_H3_MAX_PROMPT_CHARS,
                 first_frame_ratio_adaptive_only=True,
+                audio_track=VideoAudioMode.ALWAYS_ON,
             )
-        return VideoCapabilities(first_frame=True)
+        return VideoCapabilities(
+            text_to_video=_supports_text_to_video(model),
+            first_frame=True,
+            audio_track=VideoAudioMode.ALWAYS_OFF,
+        )
 
     @property
     def video_capabilities(self) -> VideoCapabilities:
@@ -256,7 +267,7 @@ class MiniMaxVideoBackend(ProviderJobIdPersistenceMixin):
         has_start_image = isinstance(request.start_image, (str, Path)) and str(request.start_image)
 
         # 无首帧 = 文生视频意图；模型不支持 t2v（如 Fast）即拒绝。
-        if not has_start_image and not self._supports_text_to_video:
+        if not has_start_image and not self.video_capabilities.text_to_video:
             raise VideoCapabilityError("video_capability_missing_t2v", provider=self.name, model=self._model)
 
         allowed_durations = _RESOLUTION_DURATIONS.get(resolution, set())
@@ -414,7 +425,7 @@ class MiniMaxVideoBackend(ProviderJobIdPersistenceMixin):
         """图片 → data URI；缺失或不可读返回 None，由调用方按所属槽位抛对应的 unreadable 码。
 
         错误码留在调用方而非集中到本函数：槽位与码一一对应，字面量码才能被
-        `tests/test_task_failure_capability.py` 的漂移守卫静态扫到。
+        `tests/integration/lib/test_task_failure_capability.py` 的漂移守卫静态扫到。
         """
         if not path.is_file():
             return None
@@ -481,8 +492,7 @@ class MiniMaxVideoBackend(ProviderJobIdPersistenceMixin):
             poll_fn=lambda: self._poll_query(client, task_id),
             is_done=is_minimax_v2_video_terminal if is_v2 else is_minimax_video_terminal,
             is_failed=minimax_v2_video_failure_reason if is_v2 else minimax_video_failure_reason,
-            poll_interval=MINIMAX_VIDEO_POLL_INTERVAL_SECONDS,
-            max_wait=self._max_wait(request.duration_seconds),
+            max_wait=request.poll_timeout_seconds,
             retry_if=should_retry_poll,
             label="MiniMax",
             on_progress=lambda v, elapsed: logger.info(
@@ -519,7 +529,3 @@ class MiniMaxVideoBackend(ProviderJobIdPersistenceMixin):
     )
     async def _download_with_retry(download_url: str, output_path: Path) -> None:
         await download_video(download_url, output_path)
-
-    @staticmethod
-    def _max_wait(duration_seconds: int) -> float:
-        return max(_MIN_POLL_TIMEOUT_SECONDS, duration_seconds * _POLL_TIMEOUT_PER_SECOND)

@@ -6,9 +6,10 @@ import { useAppStore } from "@/stores/app-store";
 import { useTasksStore } from "@/stores/tasks-store";
 import { makeTask } from "@/test/factories";
 
-vi.mock("@/components/canvas/timeline/VersionTimeMachine", () => ({
-  VersionTimeMachine: () => <div data-testid="version-time-machine">versions</div>,
-}));
+vi.mock("@/components/canvas/timeline/VersionTimeMachine", async () => {
+  const { versionTimeMachineMock } = await import("@/__mocks__/VersionTimeMachine");
+  return versionTimeMachineMock();
+});
 
 
 describe("CharacterCard", () => {
@@ -77,7 +78,7 @@ describe("CharacterCard", () => {
     );
 
     const fileInput = screen.getByLabelText("上传角色参考图");
-    expect(fileInput).not.toBeNull();
+    expect(fileInput).toBeInTheDocument();
 
     const file = new File(["ref"], "hero.png", { type: "image/png" });
     fireEvent.change(fileInput as HTMLInputElement, { target: { files: [file] } });
@@ -126,7 +127,7 @@ describe("CharacterCard", () => {
       />,
     );
 
-    const sheetInput = screen.getByLabelText("上传设计图", { selector: "input" });
+    const sheetInput = screen.getByLabelText("上传资产图", { selector: "input" });
     // 面板打开（点击上传按钮）之后、选完文件之前，该角色被别处入队占用。
     useTasksStore.setState({
       tasks: [
@@ -144,7 +145,7 @@ describe("CharacterCard", () => {
     fireEvent.change(sheetInput as HTMLInputElement, { target: { files: [file] } });
 
     await waitFor(() => {
-      expect(pushToast).toHaveBeenCalledWith("生成或编辑进行中，暂无法上传设计图", "info");
+      expect(pushToast).toHaveBeenCalledWith("生成或编辑进行中，暂无法上传资产图", "info");
     });
     expect(uploadFile).not.toHaveBeenCalled();
   });
@@ -325,8 +326,8 @@ describe("CharacterCard", () => {
     // 内容照旧展示，只是每一个写入口都不在了
     expect(screen.getByText("Hero")).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/角色描述/)).toHaveAttribute("readonly");
-    expect(screen.queryByTestId("version-time-machine")).toBeNull();
-    expect(screen.queryByRole("button", { name: /生成|上传|入库|保存/ })).toBeNull();
+    expect(screen.queryByTestId("version-time-machine")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /生成|上传|入库|保存/ })).not.toBeInTheDocument();
     for (const field of screen.getAllByRole("textbox")) {
       expect(field).toHaveAttribute("readonly");
     }

@@ -40,6 +40,6 @@ describe("GlassPopover", () => {
     render(<Harness />);
     const panel = screen.getByTestId("panel-content").parentElement!;
     expect(panel.className).toContain("arc-glass-panel");
-    expect(panel.style.backgroundColor).toBe("");
+    expect(panel).not.toHaveStyle({ backgroundColor: "transparent" });
   });
 });

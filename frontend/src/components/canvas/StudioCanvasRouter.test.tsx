@@ -286,37 +286,6 @@ vi.mock("./lorebook/ProductsPage", () => ({
   ),
 }));
 
-vi.mock("./lorebook/AddCharacterForm", () => ({
-  AddCharacterForm: ({
-    onSubmit,
-    onCancel,
-  }: {
-    onSubmit: (
-      name: string,
-      description: string,
-      voice: string,
-      referenceFile?: File | null,
-    ) => Promise<void>;
-    onCancel: () => void;
-  }) => (
-    <div data-testid="add-character-form">
-      <button
-        onClick={() =>
-          void onSubmit(
-            "NewHero",
-            "desc",
-            "voice",
-            new File(["ref"], "new-hero.png", { type: "image/png" }),
-          )
-        }
-      >
-        submit-add-character
-      </button>
-      <button onClick={onCancel}>cancel-add-character</button>
-    </div>
-  ),
-}));
-
 function makeProjectData(overrides: Partial<ProjectData> = {}): ProjectData {
   return {
     title: "Demo",
@@ -580,8 +549,8 @@ describe("StudioCanvasRouter", () => {
               supported_durations: [5, 10],
               duration_resolution_constraints: {},
               resolutions: [],
-              has_audio_track: false,
-              audio_switch_controllable: true,
+              audio_track: "controllable",
+              reference_route_audio_track: "controllable",
               voice_consistency: "none",
             },
           },
@@ -622,9 +591,8 @@ describe("StudioCanvasRouter", () => {
     expect(providersSpy).not.toHaveBeenCalled();
   });
 
-  // 逐镜头时长候选须按项目分辨率与生效 generation_mode 收窄——用户在设置里选了 1080p 却仍能把
-  // 单个镜头改成 4 秒，入队时才被 backend 拒。反向用例守住「未受约束的分辨率下与改动前一致」：
-  // 全集原样呈现，不因为接了收窄管线而误缩。
+  // 逐个分镜的时长候选须按项目分辨率与生效 generation_mode 收窄：受约束的分辨率只呈现匹配档位，
+  // 没有匹配约束的分辨率保留完整时长集合。
   it.each([
     ["1080p", "8"],
     ["720p", "4,6,8"],
@@ -651,8 +619,8 @@ describe("StudioCanvasRouter", () => {
               duration_resolution_constraints: { "1080p": [8] },
               reference_image_durations: [8],
               resolutions: ["720p", "1080p"],
-              has_audio_track: true,
-              audio_switch_controllable: true,
+              audio_track: "controllable",
+              reference_route_audio_track: "controllable",
               voice_consistency: "soft",
             },
           },
@@ -676,7 +644,9 @@ describe("StudioCanvasRouter", () => {
     renderAtProjectRoute("real-project", "/episodes/1");
     await waitFor(() => {
       // 精确比对而非包含：全集 "4,6,8" 也含子串 "8"
-      expect(screen.getByTestId("timeline-duration-options").textContent).toBe(expected);
+      expect(screen.getByTestId("timeline-duration-options")).toHaveTextContent(
+        new RegExp(`^${expected}$`),
+      );
     });
   });
 
@@ -817,7 +787,6 @@ describe("StudioCanvasRouter", () => {
     vi.spyOn(API, "updateCharacter").mockResolvedValue({ success: true });
     vi.spyOn(API, "uploadFile").mockResolvedValue({ success: true, path: "x", url: "y" });
     vi.spyOn(API, "generateCharacter").mockResolvedValue({ success: true, task_id: "t-1", deduped: false, message: "已提交" });
-    vi.spyOn(API, "addCharacter").mockResolvedValue({ success: true });
 
     renderAt("/characters");
 
@@ -851,10 +820,6 @@ describe("StudioCanvasRouter", () => {
       const { tasks, optimisticActive } = useTasksStore.getState();
       expect(selectActiveResourceIds(tasks, "character", "demo", optimisticActive).has("Hero")).toBe(true);
     });
-
-    // Test add character flow: click "add" button is not directly accessible in CharacterCard mock;
-    // instead, we test the AddCharacterForm path by navigating with the form already showing.
-    // The add-character button is on CharactersPage which is not directly exposed; we test the form submit instead.
   });
 
   it("refreshes the project even when the audio upload step fails partway through save", async () => {
@@ -1031,7 +996,7 @@ describe("StudioCanvasRouter", () => {
     fireEvent.click(screen.getByText("generate-product"));
     await waitFor(() => {
       expect(generateSpy).toHaveBeenCalledWith("demo", "Phone", "sleek phone");
-      expect(useAppStore.getState().toast?.text).toContain("设计图生成任务已提交");
+      expect(useAppStore.getState().toast?.text).toContain("资产图生成任务已提交");
       expect(useAppStore.getState().toast?.tone).toBe("success");
       const { tasks, optimisticActive } = useTasksStore.getState();
       expect(selectActiveResourceIds(tasks, "product", "demo", optimisticActive).has("Phone")).toBe(true);
@@ -1216,7 +1181,7 @@ describe("StudioCanvasRouter", () => {
 
     fireEvent.click(screen.getByText("generate-video"));
     await waitFor(() => {
-      // duration 取镜头自身 duration_seconds(5),不回退默认值 4
+      // duration 取分镜自身 duration_seconds(5),不回退默认值 4
       expect(API.generateVideo).toHaveBeenCalledWith(
         "demo",
         "SEG-1",
@@ -1340,7 +1305,7 @@ describe("StudioCanvasRouter", () => {
     });
 
     // 重排接口成功，但项目刷新失败：本地 segments 仍是旧顺序，
-    // 必须报告失败，否则调用方会推进 selectedIndex 切到错误镜头
+    // 必须报告失败，否则调用方会推进 selectedIndex 切到错误分镜
     vi.spyOn(API, "getProject").mockRejectedValue(new Error("network down"));
     vi.spyOn(API, "reorderShots").mockResolvedValue({ success: true });
 
@@ -1479,8 +1444,8 @@ describe("StudioCanvasRouter", () => {
   });
 
   it("withholds the panel's regenerate entry on the reference route instead of wiring a dead button", async () => {
-    // 参考路线的剧本是 video_units，本组件的逐单元入队回调解不出提示词。给出回调
-    // 只会长出一个按下去毫无反应的按钮，该路线的重生入口在单元卡上。
+    // 参考生视频的剧本是 video_units，本组件的逐单元入队回调解不出提示词。给出回调
+    // 只会长出一个按下去毫无反应的按钮，该生成模式的重生入口在单元卡上。
     const projectData = makeProjectData({ generation_mode: "reference_video" });
     useProjectsStore.setState({
       currentProjectName: "demo",
@@ -1664,7 +1629,7 @@ describe("StudioCanvasRouter", () => {
     fireEvent.click(screen.getByText("generate-narration"));
     await waitFor(() => {
       expect(API.generateNarrationAudio).toHaveBeenCalledWith("demo", "SEG-1", "episode_1.json");
-      expect(useAppStore.getState().toast?.text).toContain("旁白");
+      expect(useAppStore.getState().toast?.text).toContain("旁白配音");
       expect(useAppStore.getState().toast?.tone).toBe("success");
     });
   });
@@ -1686,7 +1651,7 @@ describe("StudioCanvasRouter", () => {
 
     fireEvent.click(screen.getByText("generate-narration"));
     await waitFor(() => {
-      expect(useAppStore.getState().toast?.text).toContain("生成旁白失败");
+      expect(useAppStore.getState().toast?.text).toContain("生成旁白配音失败");
       expect(useAppStore.getState().toast?.tone).toBe("error");
     });
   });
@@ -1714,7 +1679,7 @@ describe("StudioCanvasRouter", () => {
     fireEvent.click(screen.getByText("generate-episode-narration"));
     await waitFor(() => {
       expect(API.generateEpisodeNarrationAudio).toHaveBeenCalledWith("demo", "episode_1.json");
-      expect(useAppStore.getState().toast?.text).toContain("2");
+      expect(useAppStore.getState().toast?.text).toContain("已提交 2 个旁白配音生成任务");
       expect(useAppStore.getState().toast?.tone).toBe("success");
     });
   });
@@ -1741,7 +1706,7 @@ describe("StudioCanvasRouter", () => {
 
     fireEvent.click(screen.getByText("generate-episode-narration"));
     await waitFor(() => {
-      expect(useAppStore.getState().toast?.text).toContain("所有分镜均已生成旁白");
+      expect(useAppStore.getState().toast?.text).toContain("所有分镜均已生成旁白配音");
       expect(useAppStore.getState().toast?.tone).toBe("success");
     });
   });

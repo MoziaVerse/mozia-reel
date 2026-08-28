@@ -1,13 +1,13 @@
 /**
  * LayeredModelFields —— 「默认模型 + 按用途指定模型」的同源交互形态（docs/adr/0054）。
  *
- * 文本档位、图片能力桶、视频能力桶三处共用：一个常驻的默认主下拉，下方一个默认收起的
+ * 文本档位、图片任务类型桶、视频任务类型桶三处共用：一个常驻的默认主下拉，下方一个默认收起的
  * 折叠区收纳细分项。全局设置、项目设置两层复用同一组件，创建向导不传 subFields 即只剩默认层。
  *
  * 细分项留空时触发按钮显示穿透演算后的最终生效模型，用户不展开也能看到会真正执行的模型；
  * 演算结果由调用方按各层键位算好传入，本组件不持有层级知识。
  *
- * 界面文案统一用「按用途指定模型」，不出现「能力」「桶」字样（见 CONTEXT.md 能力桶词条）。
+ * 界面文案统一用「按用途指定模型」，不出现「能力」「桶」字样（见 CONTEXT.md 任务类型桶词条）。
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -51,7 +51,7 @@ export function executingImageModel(
   return effectiveModel(value.imageBackendT2I, value.imageBackendDefault, globals.imageT2I, globals.image) ?? "";
 }
 
-/** 能力桶的界面标签与覆盖说明，图片 / 视频两处调用点共用一份文案。 */
+/** 任务类型桶的界面标签与覆盖说明，图片 / 视频两处调用点共用一份文案。 */
 export function useCapabilityBucketLabels(): Record<CapabilityBucket, { label: string; caption: string }> {
   const { t } = useTranslation("templates");
   return useMemo(
@@ -105,7 +105,12 @@ export interface LayeredModelFieldsProps {
   /** 默认层留空时的生效模型（项目层 = 全局默认层）；全局层是基准、不传。 */
   defaultEffective?: string;
   providerNames: Record<string, string>;
-  renderOptionMeta?: (fullValue: string) => React.ReactNode;
+  /**
+   * 下拉选项行的补充信息。第二个参数是发起该下拉的细分项 `key`；默认层不传——它跨全部用途，
+   * 没有单一生成路径。同屏的默认层与各细分项共用一个渲染器，路径相关的取值必须按此参数分流，
+   * 否则一个下拉的路径会被当成全部下拉的路径。
+   */
+  renderOptionMeta?: (fullValue: string, subFieldKey?: string) => React.ReactNode;
   /** 默认层下拉与折叠区之间的附加内容（模型规格条、分辨率、时长等）。 */
   children?: React.ReactNode;
   /** 细分项；省略或空数组即不渲染折叠区（创建向导只暴露默认层）。 */
@@ -122,7 +127,7 @@ export interface LayeredModelFieldsProps {
     /** 重试在途；置位时按钮灰化，避免慢响应下点击毫无反馈。 */
     retrying?: boolean;
   };
-  /** 折叠区之后常驻的补充说明（如文本档位的智能体边界）。 */
+  /** 折叠区之后常驻的补充说明（如文本档位的 Agent 边界）。 */
   footnote?: React.ReactNode;
 }
 
@@ -226,7 +231,9 @@ export function LayeredModelFields({
                   fallbackValue={field.effective}
                   fallbackLabel={t("follow_model_default")}
                   aria-label={field.label}
-                  renderOptionMeta={renderOptionMeta}
+                  renderOptionMeta={
+                    renderOptionMeta && ((fullValue: string) => renderOptionMeta(fullValue, field.key))
+                  }
                 />
                 <p className="mt-1.5 text-[11px] leading-[1.5] text-text-4">{field.caption}</p>
               </div>

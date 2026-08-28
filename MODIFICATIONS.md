@@ -13,7 +13,7 @@ upstream ArcReel, pursuant to GNU AGPL v3.0 §5(a) and §7(c).
 | 项 | 值 |
 |---|---|
 | 上游项目 / Upstream | ArcReel — https://github.com/ArcReel/ArcReel |
-| 上游基线 / Baseline | `v0.26.0-91-ge505735c` |
+| 上游基线 / Baseline | `v0.27.0-62-g6117f437` |
 | 本发行版名称 / Distribution | MoziaReel |
 | 许可证 / License | GNU AGPL v3.0（与上游一致，未变更） |
 
@@ -191,11 +191,44 @@ complete corresponding source code of this modified version.
 - 修改 `Dockerfile` — 新增 `APT_MIRROR` / `PIP_INDEX` / `NPM_REGISTRY`
   可选 build-arg，默认空值不启用，出网慢的构建机可显式传入提速
 
+### 8. 同步上游 v0.27 时的取舍
+
+- 删除 `README.md` 的赞助位 —— 上游那段的注册链接带 `?s=arc` 推荐码。第三方发行版
+  转载它会把本发行版的用户导到上游的返佣下，与"独立分发"的定位不符。上游其余
+  README 内容照旧沿用
+- `server/matrix_gate.py` 新增 `_MANAGED_DISABLED_PREFIXES`，托管态下 `/mcp` 返回
+  404 —— 上游的远程 MCP 端点自带 ArcReel 原生 API Key 鉴权，与 matrix 会话不是一套
+  身份，且它挂在 `/mcp` 而非 `/api/` 下，会命中门禁"静态资源放行"的兜底分支被放行、
+  租户上下文恒为空。与托管态撤掉外部 Agent 链路的口径一致
+- 上游把 `/skill.md` 改名为 `/agent-installation-guide.md`，本发行版的品牌替换与
+  托管态 404 随之迁到新端点；`public/agent-installation-guide.md` 中的产品名参数化为
+  `{{BRAND}}`，但 `ArcReel/skills`、`setup-arcreel-skills` 这类指向上游实际仓库与包
+  的标识符保持原样
+- 不采纳上游 `test_list_voices_returns_full_catalog_for_custom_openai_tts_endpoint`
+  与 `test_list_voices_legacy_narrowing_only_applies_to_official_openai` —— 它们断言
+  自定义 endpoint 保持全量音色目录，而本发行版的网关自建 TTS 对任何 preset voice 都
+  返回 400（见第 5 节）
+- 调整上游 `test_endpoint_declaring_int_cap_rebuilds_capabilities` —— 本发行版把
+  `openai-video` 改为按 model 读 backend caps（该 endpoint 上同时挂着 Sora 与 H3，
+  参考图上限不同），endpoint 维度不再声明硬上限
+- 调整上游 `test_alembic_tasks_index_preservation` 的全链走查 —— 本发行版的迁移链上
+  有一个合并节点（`0a4b49210d55`，把上游链与 matrix 链并起来），走查改为按
+  `alembic_version` 的实际状态推进。用合并节点而非把本分支重接到上游 head：已部署的库
+  停在本分支 head，重接后上游那一支会落在"当前版本之下"被静默跳过
+- 新增 `lib/matrix_base.py` —— 零依赖地存放 `GATEWAY_PROVIDER_DISPLAY_NAME` 与
+  `session_signing_secret()`。此前低层模块只为这两样就 import 整个 `lib.matrix_session`，
+  把 `lib.custom_provider` 拖进 `lib.video_backends`，撞上游的 import 分层契约
+
 ### 测试
 
-上述改动附带的测试：`tests/test_tenant_isolation.py`、
-`tests/test_matrix_session_gate.py`、`tests/test_h3_video_via_gateway.py`、
-`tests/test_voice_library.py`、`tests/test_skill_md.py`、`tests/test_matrix_usage.py`、`tests/test_matrix_model_catalog.py`、`tests/test_matrix_blocklist.py`，
-以及 `tests/conftest.py`、`tests/test_app_module.py`、
-`tests/test_auth_coverage.py`、`tests/test_custom_provider_endpoints.py`
+上述改动附带的测试位于 `tests/unit|integration/` 的源码镜像目录下（上游 v0.27 起
+`tests/` 根目录不再允许平铺测试，档位 marker 由目录注入）：
+`test_tenant_isolation.py`、`test_matrix_session_gate.py`、`test_h3_video_via_gateway.py`、
+`test_voice_library.py`、`test_agent_installation_guide.py`、`test_matrix_usage.py`、
+`test_matrix_model_catalog.py`、`test_matrix_blocklist.py`、`test_matrix_account.py`、
+`test_matrix_capabilities.py`、`test_matrix_default_backends.py`、
+`test_narration_voice_backend.py`、`test_public_media_router.py`、
+`test_qwen_image_routing.py`、`test_signed_media_url.py`、
+`test_alembic_custom_provider_owner_sso_sub.py`，以及 `tests/conftest.py`、
+`test_app_module.py`、`test_auth_coverage.py`、`test_custom_provider_endpoints.py`
 的相应调整。

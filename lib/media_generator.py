@@ -7,9 +7,9 @@ MediaGenerator 中间层
 覆盖的资源类型：
 - storyboards: 分镜图 (scene_E1S01.png)
 - videos: 视频 (scene_E1S01.mp4)
-- characters: 角色设计图 (姜月茴.png)
-- scenes: 场景设计图 (庙宇.png)
-- props: 道具设计图 (玉佩.png)
+- characters: 角色资产图 (姜月茴.png)
+- scenes: 场景资产图 (庙宇.png)
+- props: 道具资产图 (玉佩.png)
 - grids: 宫格图 (grid_xxx.png)
 """
 
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
 from lib.async_thread import run_noninterruptible_sync
 from lib.audio_utils import probe_reference_audio_total_seconds
+from lib.config.service import DEFAULT_VIDEO_POLL_TIMEOUT_SECONDS
 from lib.db.base import DEFAULT_USER_ID
 from lib.gemini_shared import RateLimiter
 from lib.ledger import Ledger
@@ -189,7 +190,7 @@ class MediaGenerator:
                 依据，也是该 lane 记账 provider 的单一真相源。须为 registry id（如 "gemini-aistudio"），
                 非 backend.name；与 image_backend 成对提供，缺一即抛
             video_provider_id: 视频 registry provider_id（同上，I2V/R2V 与视频记账用）
-            audio_provider_id: 音频 registry provider_id（旁白 TTS 记账用），与 audio_backend 成对
+            audio_provider_id: 音频 registry provider_id（旁白配音记账用），与 audio_backend 成对
         """
         require_provider_pair("image", image_backend, image_provider_id)
         require_provider_pair("video", video_backend, video_provider_id)
@@ -789,6 +790,7 @@ class MediaGenerator:
         aspect_ratio: str = "9:16",
         duration_seconds: str | int = "8",
         resolution: str | None = None,
+        poll_timeout_seconds: int = DEFAULT_VIDEO_POLL_TIMEOUT_SECONDS,
         **version_metadata,
     ) -> tuple[Path, int, Any, str | None]:
         """
@@ -826,6 +828,7 @@ class MediaGenerator:
                 aspect_ratio=aspect_ratio,
                 duration_seconds=duration_seconds,
                 resolution=resolution,
+                poll_timeout_seconds=poll_timeout_seconds,
                 **version_metadata,
             )
         )
@@ -843,6 +846,7 @@ class MediaGenerator:
         aspect_ratio: str = "9:16",
         duration_seconds: str | int = "8",
         resolution: str | None = None,
+        poll_timeout_seconds: int = DEFAULT_VIDEO_POLL_TIMEOUT_SECONDS,
         task_id: str | None = None,
         before_submit: Callable[[int], Awaitable[Mapping[str, object] | None]] | None = None,
         formal_output: bool = False,
@@ -905,7 +909,7 @@ class MediaGenerator:
 
         # 空串 end_image 归一为 None：遗留/直接 Python 调用者可能以 "" 表示无尾帧
         # （kling _build_payload 的真值判断锁定了这个兼容语义，见
-        # tests/test_kling_video_backend.py::test_image2video_empty_end_frame_is_omitted）。
+        # tests/integration/lib/video_backends/test_kling_video_backend.py::test_image2video_empty_end_frame_is_omitted）。
         # 下方 gating 用 is not None 判空，"" 若不归一会被误判成真尾帧。
         if not end_image:
             end_image = None
@@ -939,20 +943,21 @@ class MediaGenerator:
             and video_caps.max_reference_audio_total_seconds is not None
             else None
         )
+        slot_plan = plan_frame_slots(
+            start_image=start_image,
+            end_image=end_image,
+            reference_images=reference_images,
+        )
         gate_video_request(
             caps=video_caps,
             provider=self._video_backend.name,
             model=model_name,
             prompt=prompt,
+            has_image=bool(slot_plan.specs),
             end_image=end_image,
             reference_images=reference_images,
             reference_audio_files=reference_audio_files,
             reference_audio_total_seconds=reference_audio_total_seconds,
-        )
-        slot_plan = plan_frame_slots(
-            start_image=start_image,
-            end_image=end_image,
-            reference_images=reference_images,
         )
         # 仅声明 first_frame_ratio_adaptive_only 的后端受影响；下发值与调用方持有的原始
         # aspect_ratio（记账、分镜图生成沿用）分离，不回写覆盖上游变量。
@@ -1050,6 +1055,7 @@ class MediaGenerator:
                         # reference_images 下标算出的 targets 对压缩后的 ref_arg 同样有效。
                         reference_audio_targets=reference_audio_targets,
                         generate_audio=effective_generate_audio,
+                        poll_timeout_seconds=poll_timeout_seconds,
                         project_name=self.project_name,
                         task_id=task_id,
                         on_provider_resubmit_unsafe=_mark_provider_resubmit_unsafe,
@@ -1117,6 +1123,7 @@ class MediaGenerator:
         task_id: str | None = None,
         api_call_id: int | None = None,
         submitted_base_url: str | None = None,
+        poll_timeout_seconds: int = DEFAULT_VIDEO_POLL_TIMEOUT_SECONDS,
         formal_output: bool = False,
         before_formal_commit: Callable[[Path, int, Mapping[str, Any]], Awaitable[None]] | None = None,
         commit_formal_output: Callable[[Path, Path, int, Mapping[str, Any]], PaidVersionCommit] | None = None,
@@ -1176,6 +1183,7 @@ class MediaGenerator:
             duration_seconds=duration_int,
             resolution=resolution,
             generate_audio=effective_generate_audio,
+            poll_timeout_seconds=poll_timeout_seconds,
             project_name=self.project_name,
             task_id=task_id,
             service_tier=version_metadata.get("service_tier", "default"),

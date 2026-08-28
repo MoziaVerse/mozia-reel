@@ -7,10 +7,12 @@ import contextlib
 import logging
 import os
 from collections.abc import AsyncGenerator
+from typing import cast
 
 from sqlalchemy import event
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
@@ -40,7 +42,7 @@ def is_sqlite_backend() -> bool:
     return get_database_url().startswith("sqlite")
 
 
-def _create_engine():
+def _create_engine() -> AsyncEngine:
     url = get_database_url()
     _is_sqlite = url.startswith("sqlite")
 
@@ -79,7 +81,7 @@ def _create_engine():
 # 选后者：它们的用法只有"调用"（`async_session_factory()`）和"取属性"
 # （`async_engine.sync_engine`），代理能完整覆盖，改动收敛在本文件内。
 
-_engines: dict[str | None, object] = {}
+_engines: dict[str | None, AsyncEngine] = {}
 _factories: dict[str | None, async_sessionmaker] = {}
 
 
@@ -97,7 +99,7 @@ def _tenant_key() -> str | None:
     return current_tenant()
 
 
-def get_engine():
+def get_engine() -> AsyncEngine:
     """当前租户的 engine（按租户缓存）。"""
     key = _tenant_key()
     engine = _engines.get(key)
@@ -117,7 +119,7 @@ def get_session_factory() -> async_sessionmaker:
     return factory
 
 
-def all_engines() -> list:
+def all_engines() -> list[AsyncEngine]:
     """已建立的全部 engine，供 dispose 一类的全局操作遍历。"""
     return list(_engines.values())
 
@@ -147,7 +149,15 @@ class _TenantSessionFactoryProxy:
 
 
 async_engine = _TenantEngineProxy()
-async_session_factory = _TenantSessionFactoryProxy()
+
+# 标注成 async_sessionmaker：全仓所有消费方都只做 `async_session_factory()`，这一点由
+# 「proxy 只实现 __call__、没有 __getattr__ 兜底」保证——真有人去取 .begin() / .configure()
+# 会当场 AttributeError，而不是被这条标注掩盖成静默的错。
+# 不这么标的话，二十多个接 async_sessionmaker 的调用点全部报 reportArgumentType，
+# 而它们要的恰恰就是「调用一下拿到 AsyncSession」这一件事。
+async_session_factory: async_sessionmaker[AsyncSession] = cast(
+    "async_sessionmaker[AsyncSession]", _TenantSessionFactoryProxy()
+)
 
 
 class _SafeSessionFactory:

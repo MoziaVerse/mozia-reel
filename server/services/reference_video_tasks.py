@@ -20,6 +20,7 @@ from lib.config.resolver import (
     constrain_durations,
     get_provider_fallback,
 )
+from lib.config.service import DEFAULT_VIDEO_POLL_TIMEOUT_SECONDS
 from lib.db import async_session_factory
 from lib.db.base import DEFAULT_USER_ID
 from lib.generation_queue import (
@@ -30,7 +31,6 @@ from lib.generation_queue import (
 from lib.narration_delivery import USE_TTS
 from lib.path_safety import safe_join
 from lib.reference_video.artifact_selection import CurrentReferenceAssets
-from lib.reference_video.errors import MissingReferenceError
 from lib.reference_video.execution_checkpoint import (
     NarrationExecutionFacts,
     ProviderMediaInput,
@@ -52,12 +52,12 @@ from lib.reference_video.request_projection import (
     ReferenceRequestOptions,
     ReferenceUnitRequestProjector,
     ResolvedReferenceAsset,
-    canonicalize_references,
     clamp_reference_assets,
     hydrate_reference_assets,
     reference_audio_model_facts,
     resolve_reference_assets,
     strict_reference_durations,
+    unit_reference_declarations,
 )
 from lib.reference_video.units import reference_video_bucket
 from lib.reference_video.voice_settings import VoiceRenderSettings
@@ -90,17 +90,6 @@ from server.services.video_caps import project_video_caps
 logger = logging.getLogger(__name__)
 
 
-def _dedupe_typed_references(references: list[dict]) -> list[dict]:
-    """按 (type, 归一名) 去重 reference 字典，保留首次出现顺序。
-
-    PATCH 接口只校验每条 reference 已登记，不校验数组内互相去重：同一资产可能以 NFC/NFD
-    两条等价记录同时留在 unit.references 里。参考图解析（``_resolve_unit_references``）与
-    prompt 渲染前的裁剪必须共用同一份去重结果——否则图片列表与逻辑引用列表长度不一致，
-    ``@图片N`` 的编号会与实际图片错位、按图号绑定的参考音频也会挂到错的图上。
-    """
-    return [reference.model_dump() for reference in canonicalize_references(references)]
-
-
 ResolvedReferenceImage = ResolvedReferenceAsset
 
 
@@ -112,46 +101,6 @@ async def _stage_provider_media_for_task(
     """Bind the shared cancellation-safe staging operation to this module's patchable sync seam."""
 
     return await stage_provider_media_for_task(project_path, task_id, inputs, stage=stage_provider_media)
-
-
-def _resolve_unit_reference_entries(
-    project: dict,
-    project_path: Path,
-    references: list[dict],
-) -> list[ResolvedReferenceImage]:
-    """把逻辑引用展开成请求图片条目；产品使用 sheet + 原图保真注入规则。
-
-    逻辑引用先按 product → character → scene → prop 稳定排序并按类型+归一名去重。产品
-    sheet 与原图均不可用、或其它资产缺少可用 sheet 时统一 fail loud：``video_units`` 的
-    references 是自包含的显式执行契约，不应静默把有参考的单元降成纯文本生成。
-    """
-    unit = {"references": references}
-    declared = canonicalize_references(references)
-    candidates = resolve_reference_assets(project, project_path, unit)
-    availability = CurrentReferenceAssets(project_path, project)
-    entries = [entry for entry in candidates if availability.is_available(entry)]
-    available_keys = {(entry.reference.type, entry.reference.name) for entry in entries}
-    missing: list[tuple[str, str | None]] = [
-        (reference.type, reference.name)
-        for reference in declared
-        if (reference.type, reference.name) not in available_keys
-    ]
-    if missing:
-        raise MissingReferenceError(missing=missing)
-    return entries
-
-
-def _resolve_unit_references(
-    project: dict,
-    project_path: Path,
-    references: list[dict],
-) -> list[Path]:
-    """兼容路径列表调用方；产品逻辑引用会展开成 sheet + 原图。
-
-    Raises:
-        MissingReferenceError: 任一 reference 没有可用参考图片。
-    """
-    return [entry.path for entry in _resolve_unit_reference_entries(project, project_path, references)]
 
 
 def _render_unit_prompt(
@@ -171,13 +120,8 @@ def _render_unit_prompt(
     提示词源是*可变*的 script 文件且执行期从新读取（队列 dedup 不看 payload，无法靠入队
     快照兜底）：若提示词在入队后被改空、或在途遗留任务漏过守卫，这道检查避免空提示词被
     机器生成的第一/三段撑成非空文本绕过 backend 的空值保护、白白消耗付费配额。检查落在
-    *书写层文本*而非渲染结果上——三段论渲染恒产出非空第三段，渲染后已无从判别。
+    *引用语法文本*而非渲染结果上——三段论渲染恒产出非空第三段，渲染后已无从判别。
 
-    空检查用 ``assemble_shots_text``（不注入 header，空 shots 拼接结果仍为空）；渲染用
-    ``assemble_shots_text_for_render``（按数组位置重新注入规范 header），因为
-    ``parse_prompt`` 只认文本里的 header 切分镜头，而经解析预览面板编辑回写的 unit，
-    其 ``shots[*].text`` 普遍已不带 header——两个以上镜头裸拼接后会被重新解析成一个镜头，
-    丢失第二段的分镜结构。
     """
     return render_video_unit_prompt(
         unit,
@@ -188,7 +132,7 @@ def _render_unit_prompt(
 
 
 def _reference_limit_warning(*, provider: str, model: str | None, count: int, max_refs: int) -> dict[str, Any]:
-    """参考图片超限 warning；通用路径与产品优先裁剪共用。"""
+    """参考图片超限 warning；通用路径与商品优先裁剪共用。"""
     if provider.lower() == "openai" and (model or "").lower().startswith("sora") and max_refs == 1:
         return {"key": "ref_sora_single_ref", "params": {}}
     return {
@@ -204,9 +148,9 @@ def _clamp_resolved_reference_images(
     provider: str,
     model: str | None,
 ) -> tuple[list[ResolvedReferenceImage], list[dict[str, Any]]]:
-    """按请求上限裁图片，并让所有产品 sheet 优先于产品原图及其它资产。
+    """按请求上限裁图片，并让所有商品资产图优先于商品原图及其它资产。
 
-    未超限时保留原始稳定顺序；只有必须裁剪时才重排，避免在容量足够时无谓改变同一产品
+    未超限时保留原始稳定顺序；只有必须裁剪时才重排，避免在容量足够时无谓改变同一商品
     sheet 与原图的邻接顺序。``max_refs == 0`` 表示模型不支持参考图，返回空集。
     """
     clamped = list(clamp_reference_assets(entries, max_refs))
@@ -229,13 +173,13 @@ def effective_reference_durations(
     *,
     with_reference_images: bool,
 ) -> list[int]:
-    """参考视频路径实际可申请的时长档位：全集与该请求条件的约束求交。
+    """参考生视频路径实际可申请的时长档位：全集与该请求条件的约束求交。
 
     型号可能对「带参考图」与「按某分辨率下发」各自声明更窄的时长档位。按全集取档会选中
     执行期必然被拒的秒数（如 Veo 3.1 带参考图只接受 8 秒，5 秒剧本按全集取档得 6 秒），
     取档预览也会向用户展示这个申请不到的秒数，因此要先收窄再取档。
 
-    ``with_reference_images`` 为 false 时不施加参考图约束：单元可以声明空 references，
+    ``with_reference_images`` 为 false 时不施加参考图约束：单元正文可以不提及任何资产，
     backend 同样只在 ``reference_images`` 非空时施加该约束——无图单元
     套用它会把 720p 下本可申请的 4 秒错误抬到 8 秒。
 
@@ -270,8 +214,8 @@ async def resolve_project_duration_context(
 ) -> ProjectDurationContext:
     """一次性解析视频能力（档位全集 + 单次生成时长上限 + 分辨率 + provider/model 身份）。
 
-    ``capability`` 未给定时按项目路线定桶；给定时按指定桶解析——参考路线内按镜头分流的
-    调用方（费用估算、逐 unit 预检）以此对无参考图退化镜头按 i2v 桶模型取档。
+    ``capability`` 未给定时按项目生成模式定桶；给定时按指定桶解析——参考生视频内按视频单元分流的
+    调用方（费用估算、逐 unit 预检）以此对无参考图的视频单元按 i2v 桶模型取档。
 
     解析失败时返回空档位，仅让新建 unit 选用兼容默认值；不代表生成可执行。
     分辨率仅在档位非空时才解析，空档位下分辨率约束无意义。``max_duration`` 与
@@ -370,10 +314,15 @@ async def execute_reference_video_task(
     user_id: str = DEFAULT_USER_ID,
     task_id: str | None = None,
     claimed_provider_id: str | None = None,
+    poll_timeout_seconds: int = DEFAULT_VIDEO_POLL_TIMEOUT_SECONDS,
+    stage_media_for_task: Callable[
+        [Path, str, tuple[ProviderMediaInput, ...]], Awaitable[tuple[StagedProviderMedia, ...]]
+    ]
+    | None = None,
 ) -> dict[str, Any]:
     """处理一个 reference_video unit 的生成。
 
-    resource_id 即 unit_id（E{集}U{序号}）；所有内容模式都从自包含 ``video_units`` 读取。
+    resource_id 即 unit_id（E{集}U{序号}）；所有创作类型都从自包含 ``video_units`` 读取。
     """
     # Queue rows own the frozen locator. Payload remains a compatibility fallback for direct/internal callers,
     # but production dispatch passes Task.script_file explicitly so mutable payload cannot redirect execution.
@@ -405,7 +354,7 @@ async def execute_reference_video_task(
 
     project, project_path, script, unit, script_input = await asyncio.to_thread(_load)
 
-    declared_references = canonicalize_references(unit.get("references"))
+    declared_references = unit_reference_declarations(project, unit)
     resolved_assets = resolve_reference_assets(project, project_path, unit)
     asset_availability = CurrentReferenceAssets(project_path, project)
     hydration = hydrate_reference_assets(declared_references, resolved_assets, asset_availability)
@@ -414,7 +363,7 @@ async def execute_reference_video_task(
     #    查能力上限与 resolution。provider 身份解析收口于 GenerationContext
     #    （docs/adr/0049）——executor 不再触碰 MediaGenerator 私有属性、不再手工重建
     #    registry provider_id。桶按本 unit 解析后的实际参考图分流（docs/adr/0054）：
-    #    有参考图 → r2v；无参考图的退化镜头降级 → i2v，不送入拒空参考的 r2v 桶模型。
+    #    有参考图 → r2v；无参考图的视频单元降级 → i2v，不送入拒空参考的 r2v 桶模型。
     #    判据取解析结果而非声明，与 backend 的实际请求同源。
     execution_capability = reference_video_bucket(with_references=bool(hydration.available))
     execution_payload = without_reference_video_execution_identity(payload)
@@ -443,11 +392,11 @@ async def execute_reference_video_task(
     #    的能力，不再出现"按旧模型裁剪、按新模型生成"的错位，原 caps.model 一致性防御分支
     #    随之消解。查询失败时 lane 会把能力降级为空值/None，公共投影把空时长集转换为
     #    结构化 blocker，避免制造无约束申请。
-    # 参考视频是唯一需要非空 resolution 档位的调用方：lane 已按 registry provider_id
+    # 参考生视频是唯一需要非空 resolution 档位的调用方：lane 已按 registry provider_id
     # 兜底（resolution 命中空档位时取 provider fallback），executor 直接取非空档位。
     resolution = video.resolution_or_fallback
 
-    # 当前执行 lane 适配成公共投影候选；引用展开、实际文件存在、产品优先裁剪、时长取档与
+    # 当前执行 lane 适配成公共投影候选；引用展开、实际文件存在、商品优先裁剪、时长取档与
     # 音频冲突都由同一 projector 给出。payload 未声明请求选项时按直接入队兼容语义视为
     # 已确认；显式选项保存在 reference_request_options 中。
     class _ExecutionCapabilities:
@@ -457,6 +406,7 @@ async def execute_reference_video_task(
                 video.provider_model.provider_id,
                 video.backend_model,
                 voice_consistency=video.voice_consistency,
+                capability=capability,
             )
             return ProviderProjectionCandidate(
                 capability=capability,
@@ -478,6 +428,7 @@ async def execute_reference_video_task(
                 voice_consistency=video.voice_consistency,
                 max_reference_audio_count=video.max_reference_audio_count,
                 reference_audio_per_image=video.reference_audio_per_image,
+                text_to_video=video.text_to_video,
             )
 
     tts_in_progress = (
@@ -485,6 +436,7 @@ async def execute_reference_video_task(
             project_name=project_name,
             resource_id=resource_id,
             script_file=str(script_file),
+            user_id=user_id,
         )
         if request_options.narration_delivery == USE_TTS
         else False
@@ -581,11 +533,11 @@ async def execute_reference_video_task(
         if reused is not None:
             return reused
 
-    # 4. 所有内容模式共用三段论渲染。解析条目同时携带请求路径与逻辑主体；产品的一条逻辑
+    # 4. 所有创作类型共用三段论渲染。解析条目同时携带请求路径与逻辑主体；商品的一条逻辑
     #    引用可展开成多张图片，裁剪后直接按条目传给渲染，保证 `图片N` 的 1-based 索引与
-    #    backend 实际收到的 reference_images 一一对应。产品高保真尾注也只点名仍实际发图的产品。
+    #    调用通道实际收到的 reference_images 一一对应。商品高保真尾注也只点名仍实际发图的商品。
     #    prompt 始终从执行期新读取的剧本重组（脚本可变 + 队列 dedup 不看 payload，
-    #    用入队快照会丢失入队后对镜头文本的编辑）；prompt 只在入队边界用于结构校验，
+    #    用入队快照会丢失入队后对视频单元正文的编辑）；prompt 只在入队边界用于结构校验，
     #    不写进任务 payload。
     #    参考音频路径先解析再渲染：渲染层按「确实可用」判定绑定，`@音频N` 的编号与随请求
     #    发出的段数因此严格等长（字段指向已删文件时不会留下指向不存在段的编号）。
@@ -667,7 +619,8 @@ async def execute_reference_video_task(
             ),
         )
         audio_targets_tuple = tuple(reference_audio_targets) if reference_audio_targets is not None else None
-        staged_media = await _stage_provider_media_for_task(project_path, task_id, image_inputs + audio_inputs)
+        stage = stage_media_for_task or _stage_provider_media_for_task
+        staged_media = await stage(project_path, task_id, image_inputs + audio_inputs)
         try:
             staged_reference_digests = {
                 media.source_locator: media.sha256 for media in staged_media if media.role == "reference_image"
@@ -824,10 +777,11 @@ async def execute_reference_video_task(
             commit_formal_output=artifact_committer,
             visual_basis_digest=visual_basis_digest,
             generate_audio=video.requested_generate_audio,
+            poll_timeout_seconds=poll_timeout_seconds,
         )
 
         async def _finalize() -> dict[str, Any]:
-            return await _finalize_reference_video_unit(
+            return await finalize_reference_video_unit(
                 project_name=project_name,
                 script_file=script_file,
                 project_path=project_path,
@@ -866,7 +820,7 @@ def apply_unit_video_assets(
 ) -> str | None:
     """在剧本 dict 上写回 unit.generated_assets（video_clip / video_uri / video_thumbnail / status）。
 
-    生成 finalize 与版本还原共用，保证两条路径写出的字段口径一致。所有内容模式的 unit
+    生成 finalize 与版本还原共用，保证两条路径写出的字段口径一致。所有创作类型的 unit
     都位于 ``video_units``。新结果不含 video_uri / 缩略图时清空旧值，避免指向过期 URI /
     已删除文件。写回失败必须让调用方可见、finalize 不能在剧本未更新时静默成功，
     且两种失败要可区分：unit 不存在抛 KeyError（还原侧跨集同步把它当正常跳过），
@@ -901,7 +855,7 @@ def apply_unit_video_assets(
     raise KeyError(resource_id)
 
 
-async def _finalize_reference_video_unit(
+async def finalize_reference_video_unit(
     *,
     project_name: str,
     script_file: str,

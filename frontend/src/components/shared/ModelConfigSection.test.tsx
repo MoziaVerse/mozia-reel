@@ -24,8 +24,8 @@ const PROVIDERS: ProviderInfo[] = [
         supported_durations: [4, 6, 8],
         duration_resolution_constraints: {},
         resolutions: [],
-        has_audio_track: true,
-        audio_switch_controllable: true,
+        audio_track: "controllable",
+        reference_route_audio_track: "controllable",
         voice_consistency: "soft",
       },
     },
@@ -48,8 +48,8 @@ const PROVIDERS: ProviderInfo[] = [
         supported_durations: [5, 8, 10],
         duration_resolution_constraints: {},
         resolutions: [],
-        has_audio_track: true,
-        audio_switch_controllable: true,
+        audio_track: "controllable",
+        reference_route_audio_track: "controllable",
         voice_consistency: "soft",
       },
     },
@@ -247,7 +247,7 @@ describe("ModelConfigSection", () => {
         expect(screen.getByRole("combobox", { name })).toBeInTheDocument();
       }
       // 界面文案不出现内部术语
-      expect(container.textContent).not.toMatch(/能力桶|capability bucket/i);
+      expect(container).not.toHaveTextContent(/能力桶|任务类型桶|capability bucket/i);
     });
 
     it("feeds each sub-field from its own filtered candidate list while the default layer stays unfiltered", async () => {
@@ -602,8 +602,8 @@ describe("ModelConfigSection", () => {
             supported_durations: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
             duration_resolution_constraints: {},
             resolutions: [],
-            has_audio_track: true,
-            audio_switch_controllable: true,
+            audio_track: "controllable",
+            reference_route_audio_track: "controllable",
             voice_consistency: "soft",
           },
         },
@@ -647,7 +647,7 @@ describe("ModelConfigSection", () => {
         globalDefaults={EMPTY_GLOBALS}
       />,
     );
-    expect(screen.getByRole("radio", { name: "auto" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "auto" })).toBeChecked();
   });
 
   it("marks the selected duration radio as checked", () => {
@@ -660,8 +660,8 @@ describe("ModelConfigSection", () => {
         globalDefaults={EMPTY_GLOBALS}
       />,
     );
-    expect(screen.getByRole("radio", { name: "6 秒" })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByRole("radio", { name: "4 秒" })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("radio", { name: "6 秒" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "4 秒" })).not.toBeChecked();
   });
 
   it("calls onChange with updated defaultDuration when duration button clicked", async () => {
@@ -694,9 +694,9 @@ describe("ModelConfigSection", () => {
     expect(screen.getByText(/10/)).toBeInTheDocument();
     expect(screen.getByText(/不再受当前模型支持/)).toBeInTheDocument();
     // 无任何时长钮处于激活态：auto 与所有数字钮 aria-checked 均为 false
-    expect(screen.getByRole("radio", { name: "auto" })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("radio", { name: "auto" })).not.toBeChecked();
     for (const sec of ["4 秒", "6 秒", "8 秒"]) {
-      expect(screen.getByRole("radio", { name: sec })).toHaveAttribute("aria-checked", "false");
+      expect(screen.getByRole("radio", { name: sec })).not.toBeChecked();
     }
     // 越界态下 auto 兜底为可聚焦入口，键盘仍能 Tab 进 radiogroup 重选（无元素 tabIndex=0 会成键盘陷阱）
     expect(screen.getByRole("radio", { name: "auto" })).toHaveAttribute("tabindex", "0");
@@ -752,8 +752,8 @@ describe("ModelConfigSection", () => {
             supported_durations: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
             duration_resolution_constraints: {},
             resolutions: [],
-            has_audio_track: true,
-            audio_switch_controllable: true,
+            audio_track: "controllable",
+            reference_route_audio_track: "controllable",
             voice_consistency: "soft",
           },
         },
@@ -776,7 +776,7 @@ describe("ModelConfigSection", () => {
     expect(screen.getByText(/不再受当前模型支持/)).toBeInTheDocument();
     // 越界值的读数/aria-valuetext 忠实显示原值，而非误报为 auto——与未激活的 auto 钮及
     // 点名秒数的越界提示一致
-    expect(slider.getAttribute("aria-valuetext")).toMatch(/20/);
+    expect(slider).toHaveAttribute("aria-valuetext", expect.stringMatching(/20/));
     expect(slider.getAttribute("aria-valuetext")).not.toBe("auto");
     await user.click(screen.getByRole("button", { name: "回退到 auto" }));
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ defaultDuration: null }));
@@ -804,8 +804,8 @@ describe("ModelConfigSection", () => {
           duration_resolution_constraints: { "1080p": [8], "4k": [8] },
           reference_image_durations: [8],
           resolutions: ["720p", "1080p", "4k"],
-          has_audio_track: true,
-          audio_switch_controllable: true,
+          audio_track: "controllable",
+          reference_route_audio_track: "controllable",
           voice_consistency: "soft",
         },
       },
@@ -868,18 +868,18 @@ describe("ModelConfigSection", () => {
   // 警告文案按越界成因分开：模型本身仍支持 4 秒，指向「模型不支持」会把用户引去换模型。
   it.each([
     ["1080p 分辨率", { videoResolution: "1080p" }, /当前分辨率下不可用/],
-    ["参考生视频模式", { videoResolution: "720p", usesReferenceImages: true }, /参考生视频模式下不可用/],
+    ["参考生视频", { videoResolution: "720p", usesReferenceImages: true }, /参考生视频下不可用/],
   ])("warns about a saved 4s duration under %s", (_label, overrides, expected) => {
     renderVeo({ ...overrides, defaultDuration: 4 });
     expect(screen.getByRole("alert")).toHaveTextContent(expected);
     expect(screen.getByRole("alert")).not.toHaveTextContent(/不再受当前模型支持/);
-    expect(screen.getByRole("radio", { name: "8 秒" })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("radio", { name: "8 秒" })).not.toBeChecked();
   });
 
   it("keeps a saved 4s duration valid when neither constraint applies", () => {
     renderVeo({ videoResolution: "720p", defaultDuration: 4 });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "4 秒" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "4 秒" })).toBeChecked();
   });
 });
 
@@ -898,13 +898,38 @@ describe("音频开关的模型可控性", () => {
         seedance: {
           display_name: "seedance",
           media_type: "video",
-          capabilities: ["generate_audio"],
+          capabilities: [],
           default: false,
           supported_durations: [5],
           duration_resolution_constraints: {},
           resolutions: [],
-          has_audio_track: true,
-          audio_switch_controllable: true,
+          audio_track: "controllable",
+          reference_route_audio_track: "controllable",
+          voice_consistency: "soft",
+        },
+      },
+    },
+    {
+      // 可灵 v3-omni 的形状：图生子路径带音轨开关，参考生子路径的原生 schema 不含该字段。
+      id: "kling",
+      display_name: "Kling",
+      description: "",
+      status: "ready",
+      media_types: ["video"],
+      capabilities: [],
+      configured_keys: [],
+      missing_keys: [],
+      models: {
+        "v3-omni": {
+          display_name: "v3-omni",
+          media_type: "video",
+          capabilities: [],
+          default: false,
+          supported_durations: [5],
+          duration_resolution_constraints: {},
+          resolutions: [],
+          audio_track: "controllable",
+          reference_route_audio_track: "always_off",
           voice_consistency: "soft",
         },
       },
@@ -927,8 +952,8 @@ describe("音频开关的模型可控性", () => {
           supported_durations: [5],
           duration_resolution_constraints: {},
           resolutions: [],
-          has_audio_track: true,
-          audio_switch_controllable: false,
+          audio_track: "always_on",
+          reference_route_audio_track: "always_on",
           voice_consistency: "soft",
         },
       },
@@ -951,8 +976,8 @@ describe("音频开关的模型可控性", () => {
           supported_durations: [6],
           duration_resolution_constraints: {},
           resolutions: [],
-          has_audio_track: false,
-          audio_switch_controllable: false,
+          audio_track: "always_off",
+          reference_route_audio_track: "always_off",
           voice_consistency: "none",
         },
       },
@@ -964,6 +989,7 @@ describe("音频开关的模型可控性", () => {
     videoGenerateAudio: boolean | null,
     onVideoGenerateAudioChange = vi.fn(),
     globalVideoGenerateAudio = true,
+    usesReferenceImages = false,
   ) {
     render(
       <ModelConfigSection
@@ -971,8 +997,9 @@ describe("音频开关的模型可控性", () => {
         value={{ ...EMPTY_VALUE, videoBackend }}
         onChange={() => {}}
         providers={AUDIO_PROVIDERS}
+        usesReferenceImages={usesReferenceImages}
         options={{
-          videoBackends: ["ark/seedance", "dashscope/wan", "minimax/hailuo-02"],
+          videoBackends: ["ark/seedance", "dashscope/wan", "minimax/hailuo-02", "kling/v3-omni"],
           imageBackends: [],
           textBackends: [],
           providerNames: {},
@@ -1034,5 +1061,99 @@ describe("音频开关的模型可控性", () => {
   it("stays quiet when the project follows a global on setting", () => {
     renderAudio("dashscope/wan", null, vi.fn(), true);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  // 音轨形态按执行路径分叉：同一模型在图生路线可控、在参考生视频没有开关可下发。按模型（而非
+  // 按路径）取值会让参考生视频的用户开着音频却拿到无声成片，且全程无提示。
+  it("keeps the switch interactive for a route-split model on the first-frame route", () => {
+    renderAudio("kling/v3-omni", null);
+    expect(screen.getByRole("radio", { name: "关闭" })).toBeEnabled();
+    expect(screen.queryByText(/没有声音/)).not.toBeInTheDocument();
+  });
+
+  it("locks the switch for the same model on the reference route and shows the film is silent", () => {
+    renderAudio("kling/v3-omni", null, vi.fn(), true, true);
+    expect(screen.getByRole("radio", { name: "开启" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "关闭" })).toBeChecked();
+    expect(screen.getByText(/没有声音/)).toBeInTheDocument();
+  });
+
+  // 同屏三个视频下拉分属三条不同路径：默认层跟着项目实际执行的那条，两个细分项各按自己的桶。
+  // 音轨格与下方开关必须给出同一个答案——一屏之内两句话互相矛盾，用户按下拉预览选型就会选错。
+  describe("候选下拉的音轨能力线", () => {
+    const OMNI_CANDIDATES = {
+      image: {
+        default: ["kling/v3-omni"],
+        buckets: { t2i: ["kling/v3-omni"], i2i: ["kling/v3-omni"] },
+      },
+      video: {
+        default: ["kling/v3-omni"],
+        buckets: { i2v: ["kling/v3-omni"], r2v: ["kling/v3-omni"] },
+      },
+      provider_names: {},
+    };
+
+    function renderDropdowns(usesReferenceImages: boolean) {
+      render(
+        <ModelConfigSection
+          value={EMPTY_VALUE}
+          onChange={() => {}}
+          providers={AUDIO_PROVIDERS}
+          usesReferenceImages={usesReferenceImages}
+          options={{
+            videoBackends: ["kling/v3-omni"],
+            // 图片下拉刻意放同一个模型：音轨格若被错接到图片侧，这里会显形。
+            imageBackends: ["kling/v3-omni"],
+            textBackends: [],
+            providerNames: { kling: "Kling" },
+          }}
+          candidates={OMNI_CANDIDATES}
+          globalDefaults={EMPTY_GLOBALS}
+          enable={{ text: false }}
+        />,
+      );
+    }
+
+    /** 打开指定下拉，读出 v3-omni 那一行的能力线，再关掉——同时只开一个下拉。 */
+    async function omniRowIn(user: ReturnType<typeof userEvent.setup>, comboboxName: string) {
+      await user.click(screen.getByRole("combobox", { name: comboboxName }));
+      const text = screen.getByRole("option", { name: /v3-omni/ }).textContent ?? "";
+      await user.keyboard("{Escape}");
+      return text;
+    }
+
+    it("参考生视频项目：默认层与参考生桶标无声，图生桶不受牵连仍标有声", async () => {
+      const user = userEvent.setup();
+      renderDropdowns(true);
+      // 默认层留空时执行的是 r2v 桶，能力线跟着走
+      expect(await omniRowIn(user, "默认视频模型")).toContain("无声");
+
+      await user.click(screen.getAllByText("按用途指定模型")[0]);
+      expect(await omniRowIn(user, "参考生视频")).toContain("无声");
+      // 项目走参考生路线不代表「图生视频」这一格也该按参考生标注——它就是图生路径本身
+      expect(await omniRowIn(user, "图生视频")).toContain("有声");
+    });
+
+    it("图生视频项目：默认层与图生桶标有声，参考生桶仍标无声", async () => {
+      const user = userEvent.setup();
+      renderDropdowns(false);
+      expect(await omniRowIn(user, "默认视频模型")).toContain("有声");
+
+      await user.click(screen.getAllByText("按用途指定模型")[0]);
+      expect(await omniRowIn(user, "图生视频")).toContain("有声");
+      // 项目当前不走参考生路线，但这一格描述的是参考生路径的能力，与项目设置无关
+      expect(await omniRowIn(user, "参考生视频")).toContain("无声");
+    });
+
+    it("图片侧的默认层与细分项下拉都不带音轨格——音轨是视频概念，图片桶不消费执行路径", async () => {
+      const user = userEvent.setup();
+      renderDropdowns(true);
+      expect(await omniRowIn(user, "默认图片模型")).not.toMatch(/有声|无声/);
+
+      // 图片折叠区排在视频之后
+      await user.click(screen.getAllByText("按用途指定模型")[1]);
+      expect(await omniRowIn(user, "文生图")).not.toMatch(/有声|无声/);
+      expect(await omniRowIn(user, "图生图")).not.toMatch(/有声|无声/);
+    });
   });
 });

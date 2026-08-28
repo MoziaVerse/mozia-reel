@@ -131,7 +131,6 @@ class OpenAIAudioBackend:
             output_path=request.output_path,
         )
 
-
     async def _post_speech_raw(self, payload: dict) -> bytes:
         """绕开 SDK 直发 /audio/speech。
 

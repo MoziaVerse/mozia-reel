@@ -44,6 +44,7 @@ from lib.artifact_manifest import (
     MANIFEST_FILENAME,
     ArtifactBasis,
     ArtifactBasisDescriptor,
+    ArtifactEntryRekeyReceipt,
     ArtifactKey,
     ArtifactKind,
     ArtifactManifestAdapter,
@@ -53,7 +54,7 @@ from lib.artifact_manifest import (
     ProjectArtifactManifestAdapter,
 )
 from lib.artifact_planner import (
-    TARGET_SCHEMA_VERSION,
+    ARTIFACT_MANIFEST_SCHEMA_VERSION,
     ArtifactTargetStatePlan,
     TargetStatePlanner,
     episode_scope_for_key,
@@ -90,22 +91,31 @@ _EPISODE_RESOURCE_KINDS = frozenset(
 )
 
 
-def activate_artifact_target_state(project_dir: Path, *, bump_schema: bool) -> bool:
-    """Commit one complete target state, optionally advancing schema last."""
+def activate_artifact_target_state(
+    project_dir: Path,
+    *,
+    bump_schema: bool,
+    backup_file: Callable[[Path, int], None] | None = None,
+    commit_schema: Callable[[Path, Mapping[str, Any]], None] | None = None,
+) -> bool:
+    """Commit one complete target state, optionally advancing schema last.
+
+    ``backup_file`` 与 ``commit_schema`` 是临界区内两个落盘步骤的注入点，缺省即生产实现。
+    """
 
     plan = plan_artifact_target_state(project_dir)
     current_schema = plan.project.get("schema_version")
-    if bump_schema and current_schema != TARGET_SCHEMA_VERSION - 1:
-        raise ValueError("schema bump requires a v7 project")
-    if not bump_schema and current_schema != TARGET_SCHEMA_VERSION:
-        raise ValueError("schema-preserving activation requires a v8 project")
+    if bump_schema and current_schema != ARTIFACT_MANIFEST_SCHEMA_VERSION - 1:
+        raise ValueError(f"schema bump requires a v{ARTIFACT_MANIFEST_SCHEMA_VERSION - 1} project")
+    if not bump_schema and not project_schema_is_current(plan.project):
+        raise ValueError("schema-preserving activation requires a current-schema project")
 
     _assert_preflight_unchanged(project_dir, plan)
     adapter = ProjectArtifactManifestAdapter(project_dir)
     if bump_schema:
         with project_metadata_lock(project_dir):
             _assert_preflight_unchanged(project_dir, plan)
-            _backup_activation_inputs(project_dir, plan)
+            _backup_activation_inputs(project_dir, plan, backup_file=backup_file)
             previous_entries = adapter.snapshot_entries()
             changed = adapter.replace_entries_atomically(plan.entries)
             try:
@@ -127,7 +137,7 @@ def activate_artifact_target_state(project_dir: Path, *, bump_schema: bool) -> b
                             "artifact activation dependency drifted and Manifest rollback was incomplete"
                         ) from rollback_error
                 raise
-            _commit_schema_version(project_dir, plan.project)
+            (commit_schema or _commit_schema_version)(project_dir, plan.project)
             return True
     changed = adapter.replace_entries_atomically(plan.entries)
     return changed
@@ -153,7 +163,7 @@ def ensure_imported_artifact_target_state(
     except (UnicodeDecodeError, ValueError) as exc:
         raise ValueError("project.json is not valid UTF-8 JSON") from exc
     if not isinstance(project, Mapping) or not project_schema_is_current(project):
-        raise ValueError("archive activation requires a schema-v8 project")
+        raise ValueError("archive activation requires a current-schema project")
     if preserved_manifest is not None:
         preserved_entries = dict(preserved_manifest.entries)
         preserved_content_digests = dict(preserved_manifest.content_digests)
@@ -319,21 +329,27 @@ def prepare_episode_script_manifest_commit(
     artifact_path: str,
     resource_ids: Sequence[str],
     removed_resource_ids: Sequence[str] = (),
+    replaced_resource_ids: Sequence[str] = (),
     basis: ArtifactBasis | ArtifactBasisDescriptor | None = None,
     adapter: ArtifactManifestAdapter | None = None,
+    cancellation_receipts: list[ArtifactEntryRekeyReceipt] | None = None,
 ) -> Callable[[], None] | None:
     """Preflight one script replacement and return its atomic claim commit.
 
-    The script claim and every claim orphaned by removal of a script item share
-    one Manifest compare-and-swap.  Callers invoke the returned closure inside
-    the same formal-write transaction that selects the script bytes.
+    The script claim and every claim orphaned by removal or identity replacement
+    share one Manifest compare-and-swap. Callers invoke the returned closure
+    inside the same formal-write transaction that selects the script bytes.
     """
 
     if type(episode) is not int or episode < 1:
         raise ValueError("episode must be a positive integer")
     remaining_ids = frozenset(resource_ids)
     removed_ids = frozenset(removed_resource_ids)
-    if any(not isinstance(resource_id, str) or not resource_id for resource_id in (*remaining_ids, *removed_ids)):
+    replaced_ids = frozenset(replaced_resource_ids)
+    if any(
+        not isinstance(resource_id, str) or not resource_id
+        for resource_id in (*remaining_ids, *removed_ids, *replaced_ids)
+    ):
         raise ValueError("script resource identities must be non-empty strings")
 
     storage = adapter or ProjectArtifactManifestAdapter(project_dir)
@@ -352,6 +368,11 @@ def prepare_episode_script_manifest_commit(
     orphaned_keys.extend(
         key
         for resource_id in sorted(removed_ids - remaining_ids)
+        for key in ArtifactKey.episode_resource_artifacts(episode, resource_id)
+    )
+    orphaned_keys.extend(
+        key
+        for resource_id in sorted(replaced_ids)
         for key in ArtifactKey.episode_resource_artifacts(episode, resource_id)
     )
     orphaned_keys = list(dict.fromkeys(orphaned_keys))
@@ -379,6 +400,7 @@ def prepare_episode_script_manifest_commit(
             replacements,
             expected_entries=expected,
             adapter=storage,
+            cancellation_receipts=cancellation_receipts,
         )
 
     return commit
@@ -411,14 +433,22 @@ def _assert_project_unchanged(project_dir: Path, expected: bytes) -> None:
         raise RuntimeError("project.json changed after artifact activation preflight")
 
 
-def _backup_activation_inputs(project_dir: Path, plan: ArtifactTargetStatePlan) -> None:
+def _backup_activation_inputs(
+    project_dir: Path,
+    plan: ArtifactTargetStatePlan,
+    *,
+    backup_file: Callable[[Path, int], None] | None = None,
+) -> None:
     candidates = [project_dir / "project.json", *plan.script_paths]
     manifest = project_dir / MANIFEST_FILENAME
     if manifest.exists():
         candidates.append(manifest)
     stamp = time.time_ns()
     for source in candidates:
-        _ensure_activation_backup(source, stamp=stamp)
+        if backup_file is None:
+            _ensure_activation_backup(source, stamp=stamp)
+        else:
+            backup_file(source, stamp)
 
 
 def _ensure_activation_backup(source: Path, *, stamp: int) -> None:
@@ -442,7 +472,7 @@ def _ensure_activation_backup(source: Path, *, stamp: int) -> None:
 
 def _commit_schema_version(project_dir: Path, project: Mapping[str, Any]) -> None:
     updated = dict(project)
-    updated["schema_version"] = TARGET_SCHEMA_VERSION
+    updated["schema_version"] = ARTIFACT_MANIFEST_SCHEMA_VERSION
     atomic_write_json(project_dir / "project.json", updated)
 
 
@@ -452,7 +482,7 @@ __all__ = [
     "ArtifactRegistrationReceipt",
     "ArtifactTargetStatePlan",
     "EpisodeScriptInput",
-    "TARGET_SCHEMA_VERSION",
+    "ARTIFACT_MANIFEST_SCHEMA_VERSION",
     "activate_artifact_target_state",
     "active_artifact_currency_resolver",
     "artifact_input_is_usable",

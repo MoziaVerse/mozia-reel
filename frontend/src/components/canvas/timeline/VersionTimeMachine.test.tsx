@@ -182,7 +182,7 @@ describe("VersionTimeMachine", () => {
     fireEvent.click(screen.getByRole("button", { name: /版本/ }));
     fireEvent.click(await screen.findByRole("button", { name: "v1" }));
 
-    expect(await screen.findByLabelText("旁白音频版本 v1")).toHaveAttribute(
+    expect(await screen.findByLabelText("旁白配音版本 v1")).toHaveAttribute(
       "src",
       "/api/v1/files/demo/versions/audio/E1S01_v1.wav",
     );
@@ -231,7 +231,7 @@ describe("VersionTimeMachine", () => {
     fireEvent.click(screen.getByRole("button", { name: /版本/ }));
     fireEvent.click(await screen.findByRole("button", { name: "v1" }));
 
-    expect(await screen.findByLabelText("旁白音频版本 v1")).toBeInTheDocument();
+    expect(await screen.findByLabelText("旁白配音版本 v1")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /切换到此版本/ })).not.toBeInTheDocument();
     expect(restore).not.toHaveBeenCalled();
   });
@@ -451,7 +451,7 @@ describe("VersionTimeMachine", () => {
     fireEvent.click(screen.getByRole("button", { name: "v1" }));
 
     const restoreButton = await screen.findByRole("button", { name: /切换到此版本/ });
-    expect(restoreButton).not.toBeDisabled();
+    expect(restoreButton).toBeEnabled();
 
     fireEvent.click(restoreButton);
 

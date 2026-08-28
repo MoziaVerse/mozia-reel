@@ -23,7 +23,7 @@ from lib.asset_types import (
     normalize_asset_name,
     rekey_equivalent_entries,
 )
-from lib.reference_video.shot_parser import rewrite_mentions
+from lib.reference_video.text_parser import rewrite_mentions
 
 
 class AssetRenameNotFoundError(KeyError):
@@ -76,7 +76,7 @@ class AssetRenameReport:
 
 
 #: 各资产类型在剧本/草稿骨架里的「名称列表」引用字段。列表内只有 str 元素才是名称引用——
-#: drama 顶层 ``scenes`` 是场景 dict 列表，与 narration 分段里的场景名列表同 key 不同形，
+#: drama 顶层 ``scenes`` 是分镜 dict 列表，与 narration 分镜里的场景名列表同 key 不同形，
 #: 按元素类型即可区分，无需骨架特例。
 _LIST_FIELDS_BY_TYPE: dict[str, frozenset[str]] = {
     asset_type: frozenset(spec.reference_list_fields) for asset_type, spec in ASSET_SPECS.items()
@@ -86,12 +86,11 @@ _LIST_FIELDS_BY_TYPE: dict[str, frozenset[str]] = {
 def rewrite_payload_references(payload: dict, asset_type: str, old_name: str, new_name: str) -> int:
     """就地把剧本/草稿 payload 中指向 *old_name* 的名称引用改写为 *new_name*，返回改写数。
 
-    覆盖面（与 :mod:`lib.data_validator` 的引用扫描 + 书写层派生口径对齐）：
+    覆盖面（与 :mod:`lib.data_validator` 的引用扫描 + 引用语法派生口径对齐）：
 
     - 各骨架的引用数组（``_LIST_FIELDS_BY_TYPE``，仅 str 元素）；
-    - ``references`` 列表内 ``{type, name}`` 引用（type 须匹配本资产类型）；
     - drama ``utterances[].speaker`` 与 ad ``video_prompt.dialogue[].speaker``（仅 character）；
-    - ``shots[].text`` 自由文本内的 ``@[旧名]`` mention（经 :func:`rewrite_mentions`）；
+    - 单元正文与 ad 分镜文本内的 ``@[旧名]`` mention（经 :func:`rewrite_mentions`）；
     - 旧式剧本内嵌的顶层 ``characters`` 镜像 dict（仅 character：re-key + 路径字段同步）。
 
     只识别骨架结构、不校验语义：结构校验由写盘统一入口的「不更坏」守卫兜底。
@@ -115,20 +114,14 @@ def rewrite_payload_references(payload: dict, asset_type: str, old_name: str, ne
                         else:
                             _walk(item)
                     continue
-                if key == "references" and isinstance(value, list):
-                    for item in value:
-                        if isinstance(item, dict) and item.get("type") == asset_type and _matches(item.get("name")):
-                            item["name"] = new_name
-                            count += 1
-                    continue
                 if key == "speaker" and asset_type == "character" and _matches(value):
                     node[key] = new_name
                     count += 1
                     continue
-                if key in ("shots", "units") and isinstance(value, list):
-                    # 参考路线 shot 只有 text（改写 mention）；ad shot 还带引用数组与
-                    # video_prompt.dialogue，继续下钻由通用规则处理。unit 一并认：隔离草稿装的是
-                    # 扁平书写层产物，mention 直接落在 units[].text 上，结构字段尚未派生出 shots。
+                if key in ("shots", "units", "video_units") and isinstance(value, list):
+                    # 参考生视频的 mention 落在 unit 正文（``video_units[].text``，草稿里是
+                    # ``units[].text``）；ad 分镜的 shot 还带引用数组与 video_prompt.dialogue，
+                    # 继续下钻由通用规则处理。
                     for item in value:
                         if isinstance(item, dict) and isinstance(item.get("text"), str):
                             new_text, n = rewrite_mentions(item["text"], old_name, new_name)
@@ -237,7 +230,7 @@ def plan_asset_file_renames(
 ) -> list[tuple[Path, Path]]:
     """扫描该资产类型的落盘目录，规划 stem 命中旧名的文件迁移，返回 ``(src, dst)`` 列表。
 
-    覆盖设计图目录本级与其上传子目录（``refs`` / ``refs_audio``），版本快照另由
+    覆盖资产图目录本级与其上传子目录（``refs`` / ``refs_audio``），版本快照另由
     VersionManager 迁移。按目录扫描而非只信 entry 路径字段：生成中间产物可能已按旧名
     落盘而字段未写，旧名文件不应残留。
 
@@ -247,7 +240,7 @@ def plan_asset_file_renames(
 
     ``旧名_{序号}`` 形态只在多图序列资产（entry 带 ``reference_images``）的 ``refs``
     子目录放行——那里的文件名由上传侧按序号机械生成，不会是别的资产的名字；其余目录
-    一律精确同名，否则兄弟资产「旧名_2」的设计图会被一并卷走。
+    一律精确同名，否则兄弟资产「旧名_2」的资产图会被一并卷走。
 
     目标已被占用时抛 :class:`AssetRenameFileCollisionError`：规划早于任何写入，因此整体
     拒绝、不落盘。占用有两种来源，都要拦：磁盘上已有的孤儿文件，以及同批两个源文件（如

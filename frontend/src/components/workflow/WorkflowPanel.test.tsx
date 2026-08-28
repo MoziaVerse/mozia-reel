@@ -190,7 +190,7 @@ describe("WorkflowPanel 结构化问题与阻断", () => {
     );
     const alert = screen.getByRole("alert");
     expect(within(alert).getByText("scripts/episode_1.json")).toBeInTheDocument();
-    expect(within(alert).getByText(/请智能体修复损坏的项目文件/)).toBeInTheDocument();
+    expect(within(alert).getByText(/请 Agent 修复损坏的项目文件/)).toBeInTheDocument();
     expect(within(alert).getByText("JSONDecodeError line 3")).toBeInTheDocument();
     expect(within(alert).getByText("技术细节")).toBeInTheDocument();
   });
@@ -272,7 +272,7 @@ describe("WorkflowPanel 旁白交付", () => {
   });
 
   it("TTS 未配置这条问题落在视频步骤上时同样引导后期配音", async () => {
-    // 这条问题由视频批量准入求解得出（选了 TTS 才跑那一轮），后端把它挂在计划的问题
+    // 这条问题由视频整批准入判定求解得出（选了 TTS 才跑那一轮），后端把它挂在计划的问题
     // 清单与视频步骤上，而不是旁白交付步骤。只翻交付步骤的 problems 会漏掉它。
     const problem = {
       code: "tts_not_configured",
@@ -295,7 +295,7 @@ describe("WorkflowPanel 旁白交付", () => {
   });
 });
 
-describe("WorkflowPanel 批量准入", () => {
+describe("WorkflowPanel 整批准入判定", () => {
   it("准入受阻时一次列出全部问题并说明零任务", async () => {
     await renderExpanded(
       makePlan({
@@ -512,7 +512,7 @@ describe("WorkflowPanel 产品语言", () => {
     expect(screen.getByText(/多宫格分镜/)).toBeInTheDocument();
   });
 
-  it("动作短语中使用智能体而非助手", async () => {
+  it("动作短语中使用 Agent 而非助手", async () => {
     await renderExpanded(
       makePlan({
         steps: [
@@ -529,7 +529,7 @@ describe("WorkflowPanel 产品语言", () => {
         ],
       }),
     );
-    expect(screen.getByText(/请智能体修复/)).toBeInTheDocument();
+    expect(screen.getByText(/请 Agent 修复/)).toBeInTheDocument();
     expect(screen.queryByText(/请助手修复/)).not.toBeInTheDocument();
   });
 });

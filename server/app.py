@@ -16,8 +16,10 @@ import platform
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,14 +46,15 @@ from server.auth import ensure_auth_password, get_current_user
 from server.dependencies import require_project_migration_ok
 from server.error_handlers import register_error_handlers
 from server.matrix_gate import MatrixSessionGate
+from server.remote_mcp import remote_mcp_host
 from server.routers import (
-    agent_chat,
     agent_config,
     api_keys,
     assets,
     assistant,
     characters,
     cost_estimation,
+    custom_endpoints,
     custom_providers,
     end_frames,
     files,
@@ -158,7 +161,12 @@ def _diagnose_bwrap_failure() -> str:
     return "\n".join(parts)
 
 
-def check_sandbox_available() -> bool:
+def check_sandbox_available(
+    *,
+    platform_system: Callable[[], str] | None = None,
+    executable_which: Callable[[str], str | None] | None = None,
+    subprocess_run: Callable[..., subprocess.CompletedProcess[bytes]] | None = None,
+) -> bool:
     """启动期检测 sandbox 工具可用性。
 
     返回 ``True`` 表示沙箱可用且必须启用；返回 ``False`` 表示 SDK 不支持
@@ -168,9 +176,11 @@ def check_sandbox_available() -> bool:
     ``AgentAccessPolicy.WINDOWS_BASH_PREFIX_WHITELIST`` 代码白名单。
     macOS / Linux 工具缺失仍硬失败（受支持平台禁止降级）。
     """
-    system = platform.system()
+    system = (platform_system or platform.system)()
+    which = executable_which or shutil.which
+    run = subprocess_run or subprocess.run
     if system == "Darwin":
-        if shutil.which("sandbox-exec") is None:
+        if which("sandbox-exec") is None:
             raise RuntimeError(
                 "SANDBOX_UNAVAILABLE on macOS\n"
                 "  sandbox-exec: not found in PATH (should be system-installed)\n"
@@ -180,7 +190,7 @@ def check_sandbox_available() -> bool:
     if system == "Linux":
         # Linux 依赖见 https://code.claude.com/docs/en/sandboxing#set-up-linux-and-wsl2：需同时安装
         # （bwrap 做进程/文件隔离，socat 做网络代理转发）。
-        missing = [name for name in ("bwrap", "socat") if shutil.which(name) is None]
+        missing = [name for name in ("bwrap", "socat") if which(name) is None]
         if missing:
             raise RuntimeError(
                 "SANDBOX_UNAVAILABLE on linux\n"
@@ -196,7 +206,7 @@ def check_sandbox_available() -> bool:
         # 2) 新 net namespace 内 loopback 配置被拒：容器缺 CAP_NET_ADMIN
         #    → "loopback: Failed RTM_NEWADDR: Operation not permitted"
         # 用与 SDK 实际调用接近的 unshare 参数试跑，启动期就拦下来，
-        # 避免 agent 第一次调 Bash 才神秘失败。
+        # 避免 Agent 第一次调 Bash 才神秘失败。
         probe_cmd = [
             "bwrap",
             "--unshare-user",
@@ -208,7 +218,7 @@ def check_sandbox_available() -> bool:
             "/bin/true",
         ]
         try:
-            probe = subprocess.run(probe_cmd, capture_output=True, timeout=5, check=False)
+            probe = run(probe_cmd, capture_output=True, timeout=5, check=False)
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise RuntimeError(
                 "SANDBOX_BWRAP_BROKEN on Linux\n"
@@ -236,15 +246,21 @@ _DOCKERENV_PATH = Path("/.dockerenv")
 _CGROUP_PATH = Path("/proc/1/cgroup")
 
 
-def detect_docker_environment() -> bool:
+def detect_docker_environment(
+    *,
+    dockerenv_path: Path | None = None,
+    cgroup_path: Path | None = None,
+) -> bool:
     """启动期一次性检测当前是否在 Docker / Podman 容器内。
 
     用于决定是否启用 ``SandboxSettings.enableWeakerNestedSandbox``。
     """
-    if _DOCKERENV_PATH.exists():
+    docker_marker = dockerenv_path or _DOCKERENV_PATH
+    cgroup = cgroup_path or _CGROUP_PATH
+    if docker_marker.exists():
         return True
     try:
-        content = _CGROUP_PATH.read_text(encoding="utf-8", errors="ignore")
+        content = cgroup.read_text(encoding="utf-8", errors="ignore")
     except OSError:
         return False
     return "docker" in content or "podman" in content
@@ -263,20 +279,25 @@ def _log_profile_sync_outcome(stats: dict, *, log: logging.Logger = logger) -> N
     """根据 ``sync_all_agent_profiles`` 返回的 stats 决定打 info 还是 warning。
 
     ``stats["aborted"]`` 是 bool；而 bool 是 int 的子类——简单的
-    ``isinstance(v, int) and v > 0`` 会把 ``aborted=True`` 当成"同步完成"的正向
+    ``isinstance(v, int) and v > 0`` 会把 ``aborted=True`` 当成"物化完成"的正向
     信号，与实际状态相反。先单独处理 abort 信号，再用 ``type(v) is int``（严格
     类型相等）仅统计真正的整数计数。
     """
     if stats.get("aborted"):
-        log.warning("agent_runtime profile 同步已中止: %s", stats)
+        log.warning("agent_runtime profile 物化已中止: %s", stats)
         return
     if any(type(v) is int and v > 0 for v in stats.values()):
-        log.info("agent_runtime profile 同步完成: %s", stats)
+        log.info("agent_runtime profile 物化完成: %s", stats)
 
 
-async def _migrate_source_encoding_on_startup(projects_root: Path) -> dict[str, dict]:
+async def _migrate_source_encoding_on_startup(
+    projects_root: Path,
+    *,
+    migrate_source_encoding: Callable[[Path], Any] | None = None,
+) -> dict[str, dict]:
     """对每个项目执行幂等编码迁移。失败被捕获并写日志，不阻塞启动。"""
     summary: dict[str, dict] = {}
+    migrate = migrate_source_encoding or migrate_project_source_encoding
     if not projects_root.exists():
         return summary
 
@@ -286,7 +307,7 @@ async def _migrate_source_encoding_on_startup(projects_root: Path) -> dict[str, 
         if marker.exists():
             return {"skipped": True}
         try:
-            result = migrate_project_source_encoding(project_dir)
+            result = migrate(project_dir)
             marker_dir.mkdir(exist_ok=True)
             marker.touch()
             if result.failed:
@@ -407,7 +428,7 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("text tier settings migration failed (non-fatal): %s", exc)
 
-    # 把 agent_runtime_profile 同步到存量项目（manifest 物化，同步文件 I/O → worker 线程）
+    # 把 agent_runtime_profile 物化到存量项目（文件 I/O → worker 线程）
     from lib.project_manager import get_project_manager
 
     _pm = get_project_manager()
@@ -480,7 +501,8 @@ async def lifespan(app: FastAPI):
     await project_event_service.start()
     logger.info("ProjectEventService 已启动")
 
-    yield
+    async with remote_mcp_host.run():
+        yield
 
     # Shutdown
     project_event_service = getattr(app.state, "project_event_service", None)
@@ -622,19 +644,19 @@ app.include_router(
     script_review.router,
     prefix="/api/v1",
     dependencies=[Depends(get_current_user), Depends(require_project_migration_ok)],
-    tags=["剧本审核 gate"],
+    tags=["内容确认"],
 )
 app.include_router(
     shot_uploads.router,
     prefix="/api/v1",
     dependencies=[Depends(get_current_user), Depends(require_project_migration_ok)],
-    tags=["镜头上传"],
+    tags=["分镜上传"],
 )
 app.include_router(
     end_frames.router,
     prefix="/api/v1",
     dependencies=[Depends(get_current_user), Depends(require_project_migration_ok)],
-    tags=["镜头尾帧"],
+    tags=["分镜尾帧"],
 )
 app.include_router(versions.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["版本管理"])
 app.include_router(usage.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["费用统计"])
@@ -643,17 +665,19 @@ app.include_router(
     assistant.router,
     prefix="/api/v1/projects/{project_name}/assistant",
     dependencies=[Depends(get_current_user)],
-    tags=["智能体会话"],
+    tags=["Agent 会话"],
 )
 app.include_router(tasks.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["任务队列"])
 app.include_router(providers.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["供应商管理"])
 app.include_router(system_config.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["系统配置"])
 app.include_router(system.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["系统"])
 app.include_router(api_keys.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["API Key 管理"])
-app.include_router(agent_chat.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["Agent 对话"])
 app.include_router(agent_config.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["Agent 配置"])
 app.include_router(
     custom_providers.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["自定义供应商"]
+)
+app.include_router(
+    custom_endpoints.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["自定义调用端点"]
 )
 app.include_router(
     cost_estimation.router, prefix="/api/v1", dependencies=[Depends(get_current_user)], tags=["费用估算"]
@@ -696,10 +720,11 @@ app.include_router(matrix_session_router.page_router, include_in_schema=False)
 app.include_router(
     assistant.self_auth_router,
     prefix="/api/v1/projects/{project_name}/assistant",
-    tags=["智能体会话"],
+    tags=["Agent 会话"],
 )
 app.include_router(project_events.self_auth_router, prefix="/api/v1", tags=["项目变更流"])
 app.include_router(projects.self_auth_router, prefix="/api/v1", tags=["项目管理"])
+app.mount("/mcp", remote_mcp_host)
 
 
 def create_generation_worker() -> GenerationWorker:
@@ -712,9 +737,9 @@ async def health_check():
     return {"status": "ok", "message": "视频项目管理 WebUI 运行正常"}
 
 
-@app.get("/skill.md", include_in_schema=False)
-async def serve_skill_md(request: Request) -> Response:
-    """动态渲染 skill.md 模板，将 {{BASE_URL}} 替换为实际服务地址（无需认证）。
+@app.get("/agent-installation-guide.md", include_in_schema=False)
+async def serve_agent_installation_guide(request: Request) -> Response:
+    """动态渲染 Agent 安装指引，将 {{BASE_URL}} 替换为实际服务地址（无需认证）。
 
     托管态不提供：这份文档只服务"外部 Agent 凭 API 令牌驱动本站"那条链路，
     而托管态下该链路整个撤掉了（入口与令牌管理都不再提供）。继续对外发一份
@@ -727,7 +752,7 @@ async def serve_skill_md(request: Request) -> Response:
     if matrix_mode_enabled():
         return PlainTextResponse("Not Found", status_code=404)
 
-    template_path = PROJECT_ROOT / "public" / "skill.md.template"
+    template_path = PROJECT_ROOT / "public" / "agent-installation-guide.md"
 
     def _read() -> tuple[bool, str]:
         if not template_path.exists():
@@ -736,7 +761,7 @@ async def serve_skill_md(request: Request) -> Response:
 
     exists, template = await asyncio.to_thread(_read)
     if not exists:
-        return PlainTextResponse("skill.md 模板不存在", status_code=404)
+        return PlainTextResponse("Agent 安装指引不存在", status_code=404)
 
     # 从请求推断 base URL；仅信任 x-forwarded-proto（反向代理标准头），
     # host 使用连接实际目标地址，不接受可被用户伪造的 x-forwarded-host。

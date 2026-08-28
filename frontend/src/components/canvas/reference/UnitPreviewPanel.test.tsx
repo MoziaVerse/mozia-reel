@@ -33,8 +33,7 @@ function versionMachineBusy(): boolean {
 function mkUnit(overrides: Partial<ReferenceVideoUnit> = {}): ReferenceVideoUnit {
   return {
     unit_id: "E1U1",
-    shots: [{ text: "x" }],
-    references: [],
+    text: "x",
     duration_seconds: 3,
     transition_to_next: "cut",
     note: null,
@@ -124,7 +123,7 @@ describe("UnitPreviewPanel", () => {
     );
 
     expect(container.querySelector('audio[src*="audio/segment_E1U1.wav"]')).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Regenerate narration|重新生成旁白/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Regenerate narration audio|重新生成旁白配音/ })).toBeDisabled();
   });
 
   // 版本恢复与生成回写同一个成片文件：占用期间恢复旧版本会显示成功、随后被在跑的

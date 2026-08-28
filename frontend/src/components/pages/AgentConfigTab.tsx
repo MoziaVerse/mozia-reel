@@ -17,6 +17,7 @@ import type { GetSystemConfigResponse, SystemConfigPatch } from "@/types";
 import { errMsg, voidCall } from "@/utils/async";
 
 import { TabSaveFooter } from "./TabSaveFooter";
+import { ExternalAgentModal } from "./ExternalAgentModal";
 
 interface AgentDraft {
   cleanupDelaySeconds: string;
@@ -67,6 +68,7 @@ export function AgentConfigTab({ visible, matrixOverview }: AgentConfigTabProps)
   });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [showExternalGuide, setShowExternalGuide] = useState(false);
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -168,7 +170,12 @@ export function AgentConfigTab({ visible, matrixOverview }: AgentConfigTabProps)
   return (
     <div className={visible ? undefined : "hidden"}>
       <div className="space-y-7 pb-0 pt-1">
-        <AgentPageIntro showCompatHint={!matrixOverview?.enabled} />
+        {/* 托管态不传 onOpenExternalGuide：外部 Agent 那条链路整个撤掉了，
+            接入指引入口一并不出现。 */}
+        <AgentPageIntro
+          showCompatHint={!matrixOverview?.enabled}
+          onOpenExternalGuide={matrixOverview?.enabled ? undefined : () => setShowExternalGuide(true)}
+        />
         {/* 托管态没有凭证可管：地址与密钥由平台握手时下发，"选供应商"那一排选了也没用
             （网关只有一个）。只留真正可调的模型路由。 */}
         {matrixOverview?.enabled ? (
@@ -226,6 +233,9 @@ export function AgentConfigTab({ visible, matrixOverview }: AgentConfigTabProps)
         onSave={() => void handleSave()}
         onReset={handleReset}
       />
+      {showExternalGuide && (
+        <ExternalAgentModal onClose={() => setShowExternalGuide(false)} />
+      )}
     </div>
   );
 }

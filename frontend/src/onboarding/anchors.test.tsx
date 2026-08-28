@@ -40,10 +40,15 @@ vi.mock("@/components/pages/CreateProjectModal", () => ({
 vi.mock("@/components/task-hud/TaskHud", () => ({ TaskHud: () => <div data-testid="task-hud" /> }));
 vi.mock("@/components/layout/UsageDrawer", () => ({ UsageDrawer: () => null }));
 vi.mock("@/components/layout/WorkspaceNotificationsDrawer", () => ({ WorkspaceNotificationsDrawer: () => null }));
-vi.mock("@/components/layout/ExportScopeDialog", () => ({ ExportScopeDialog: () => null }));
-vi.mock("@/components/canvas/timeline/ScriptReviewGate", () => ({ ScriptReviewGate: () => null }));
+vi.mock("@/components/canvas/timeline/ScriptReviewGate", async () => {
+  const { scriptReviewGateMock } = await import("@/__mocks__/ScriptReviewGate");
+  return scriptReviewGateMock();
+});
 vi.mock("@/components/canvas/timeline/ShotSplitView", () => ({ ShotSplitView: () => null }));
-vi.mock("@/components/canvas/timeline/EpisodeHeader", () => ({ EpisodeHeader: () => null }));
+vi.mock("@/components/canvas/timeline/EpisodeHeader", async () => {
+  const { episodeHeaderMock } = await import("@/__mocks__/EpisodeHeader");
+  return episodeHeaderMock();
+});
 
 function renderLobby() {
   const { hook } = memoryLocation({ path: "/app/projects" });
@@ -90,7 +95,7 @@ const RENDERERS: Record<OnboardingAnchor, () => void> = {
   [ONBOARDING_ANCHORS.workbenchOverview]: () => {
     render(<OverviewCanvas projectName={DEMO_PROJECT_NAME} projectData={buildDemoProjectData(demoT)} readOnly />);
   },
-  // 锚点挂在演示态专用的助手面板上（真实面板演示态不挂载，见 anchors.ts）
+  // 锚点挂在演示态专用的 Agent 面板上（真实面板演示态不挂载，见 anchors.ts）
   [ONBOARDING_ANCHORS.workbenchAgent]: () => {
     render(<DemoAssistantPanel />);
   },

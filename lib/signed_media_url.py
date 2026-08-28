@@ -61,7 +61,7 @@ def public_base_url() -> str | None:
 
 
 def _signing_key() -> bytes:
-    from lib.matrix_session import session_signing_secret
+    from lib.matrix_base import session_signing_secret
 
     return hmac.new(session_signing_secret(), _KEY_INFO, hashlib.sha256).digest()
 

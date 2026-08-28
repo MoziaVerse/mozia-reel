@@ -12,7 +12,12 @@ export interface ConfigIssue {
   label: string;
 }
 
-async function getConfigStatus(): Promise<{ issues: ConfigIssue[]; availableMediaTypes: string[]; managed: boolean }> {
+async function getConfigStatus(): Promise<{
+  issues: ConfigIssue[];
+  availableMediaTypes: string[];
+  isEmbeddedAgentConfigured: boolean;
+  managed: boolean;
+}> {
   const issues: ConfigIssue[] = [];
 
   const [{ providers }, { providers: customProviders }, configRes, matrix] = await Promise.all([
@@ -27,18 +32,7 @@ async function getConfigStatus(): Promise<{ issues: ConfigIssue[]; availableMedi
   // 不是用户漏配了什么。
   const managed = matrix.enabled === true;
 
-  const settings = configRes.settings;
-
-  // 1. Check anthropic key
-  if (!managed && !settings.anthropic_api_key?.is_set) {
-    issues.push({
-      key: "anthropic",
-      tab: "agent",
-      label: "agent_api_key_not_configured",
-    });
-  }
-
-  // 2. Check any provider supports each media type
+  // Check any provider supports each required media type.
   const readyProviders = providers.filter((p) => p.status === "ready");
 
   // 自定义 provider 的 endpoint→mediaType 映射要从 catalog 派生：仅在有自定义 provider 时
@@ -81,11 +75,16 @@ async function getConfigStatus(): Promise<{ issues: ConfigIssue[]; availableMedi
     });
   }
 
-  // audio 是可选能力（仅说书旁白用），缺失不进 issues 红点；
+  // audio 是可选能力（仅旁白/解说用），缺失不进 issues 红点；
   // 可用性经 availableMediaTypes 暴露给生成入口做"请先配置 audio 供应商"前置提示。
   const availableMediaTypes = ["image", "video", "text", "audio"].filter(hasMediaType);
 
-  return { issues, availableMediaTypes, managed };
+  return {
+    issues,
+    availableMediaTypes,
+    isEmbeddedAgentConfigured: configRes.settings.anthropic_api_key?.is_set ?? false,
+    managed,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +93,7 @@ async function getConfigStatus(): Promise<{ issues: ConfigIssue[]; availableMedi
 
 interface ConfigStatusState {
   issues: ConfigIssue[];
+  isEmbeddedAgentConfigured: boolean;
   /** 当前已就绪供应商（含自定义）覆盖到的媒体类型集合。 */
   availableMediaTypes: string[];
   /** 托管态（接入 Matrix）。本 store 本来就要拉一次总览，顺路暴露出来，
@@ -120,12 +120,19 @@ export const useConfigStatusStore = create<ConfigStatusState>((set, get) => {
     for (;;) {
       set({ loading: true, pendingRefresh: false });
       try {
-        const { issues, availableMediaTypes, managed } = await getConfigStatus();
-        set({ issues, availableMediaTypes, managed, isComplete: issues.length === 0, initialized: true });
+        const { issues, availableMediaTypes, isEmbeddedAgentConfigured, managed } = await getConfigStatus();
+        set({
+          issues,
+          availableMediaTypes,
+          isEmbeddedAgentConfigured,
+          managed,
+          isComplete: issues.length === 0,
+          initialized: true,
+        });
       } catch {
         // 失败回退未初始化并清空能力集：避免任何消费方（含未来不检查 initialized 的调用方）
         // 把上一次成功的过期数据当作可信，同时让下次 fetch() 仍可重试。
-        set({ initialized: false, availableMediaTypes: [] });
+        set({ initialized: false, availableMediaTypes: [], isEmbeddedAgentConfigured: false });
       }
       // loading 仅在整条链终止时才置 false:补跑间隙保持 true,避免 true→false→true 闪烁。
       if (!get().pendingRefresh) {
@@ -137,6 +144,7 @@ export const useConfigStatusStore = create<ConfigStatusState>((set, get) => {
 
   return {
     issues: [],
+    isEmbeddedAgentConfigured: false,
     availableMediaTypes: [],
     managed: false,
     isComplete: true,

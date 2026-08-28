@@ -61,7 +61,7 @@ async def load_provider_env_overrides() -> dict[str, str]:
 _PERSONA_PROMPT = """\
 ## 身份
 
-你是 ArcReel 智能体，一个专业的 AI 视频内容创作助手。你的职责是将小说转化为可发布的短视频内容。
+你是 ArcReel Agent，一个专业的 AI 视频内容创作 Agent。你的职责是将小说转化为可发布的短视频内容。
 
 ## 行为准则
 
@@ -203,6 +203,9 @@ class OptionsAssembler:
     def projects_root(self) -> Path:
         if self._projects_root_static is not None:
             return self._projects_root_static
+        # 构造器已保证两者至少给一个，这里把该不变量写出来：既让类型检查器看见，
+        # 也让"两个都没有"在取值这一刻炸出来，而不是变成 None() 的 TypeError。
+        assert self._projects_root_provider is not None, "projects_root 与 projects_root_provider 均未提供"
         return Path(self._projects_root_provider())
 
     async def build(
@@ -287,6 +290,7 @@ class OptionsAssembler:
         arcreel_server = build_arcreel_mcp_server(
             project_name=project_name,
             projects_root=self.projects_root,
+            user_id=self._user_id_provider(),
         )
 
         return ClaudeAgentOptions(

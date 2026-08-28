@@ -169,8 +169,8 @@ class ImageLaneRequest:
 class VideoLaneRequest:
     """声明当前任务需要 video lane。
 
-    ``capability`` 决定 i2v / r2v 能力桶（``docs/adr/0054``）：图生视频 / 宫格 → i2v；
-    参考生视频按镜头解析后的实际参考图分流——有参考图 → r2v，无参考图的退化镜头降级
+    ``capability`` 决定 i2v / r2v 任务类型桶（``docs/adr/0054``）：图生视频 / 宫格 → i2v；
+    参考生视频按视频单元解析后的实际参考图分流——有参考图 → r2v，无参考图的视频单元降级
     → i2v（由 executor 判定后声明，见 ``lib.reference_video.units``）。None = 不定桶，
     走旧三级解析且不过能力闸——供 resume 等按 payload 排空、不承诺能力的路径使用。
     """
@@ -180,7 +180,7 @@ class VideoLaneRequest:
 
 @dataclass(frozen=True)
 class AudioLaneRequest:
-    """声明当前任务需要 audio lane（旁白 TTS）。"""
+    """声明当前任务需要 audio lane（旁白配音）。"""
 
 
 @dataclass(frozen=True)
@@ -203,10 +203,11 @@ class ImageLaneResult:
 class VideoLaneResult:
     """video lane 解析产物。
 
-    能力字段（``supported_durations`` / ``max_duration`` / ``max_reference_images``）在能力
+    能力字段（``supported_durations`` / ``max_duration`` / ``max_reference_images`` /
+    ``text_to_video``）在能力
     查询失败时降级为空值（空元组 / None）放行：能力是已选定 provider/model 的元数据，缺失
     不代表不可调用，守卫遇空值不施加限制、把决策推给 backend。``resolution_or_fallback``
-    供需要非空档位的调用方（参考视频路径），其余语义同 :class:`ImageLaneResult`。
+    供需要非空档位的调用方（参考生视频路径），其余语义同 :class:`ImageLaneResult`。
     """
 
     provider_model: ProviderModel
@@ -217,6 +218,7 @@ class VideoLaneResult:
     supported_durations: tuple[int, ...]
     max_duration: int | None
     max_reference_images: int | None
+    text_to_video: bool = True
     # 费用与实际 provider 出账口径的有声档位，直接来自 video capabilities。
     # 它与下方的 requested_generate_audio（用户开关意图）不等价。
     generate_audio: bool = False
@@ -247,7 +249,7 @@ class VideoLaneResult:
 
         声音特征描述随该判据一并不注入：它虽是提示词文本而非音频负载，但描述的是听得到的
         音色，无声成片里注入只会让模型把配额花在用不上的约束上。台词不看这一位——无声视频
-        里台词文本照常下发，供应商可用作口型参考。参考路线的同名判据见
+        里台词文本照常下发，供应商可用作口型参考。参考生视频的同名判据见
         ``lib.reference_video.voice_settings.VoiceRenderSettings.is_silent``。
         """
         return self.voice_consistency == "none" or not self.requested_generate_audio
@@ -325,9 +327,9 @@ async def resolve_generation_context(
     查询失败降级空值放行。``project`` 是调用方已加载的项目快照；``project_path`` 可由已经
     持有项目路径的事务传入，避免同步事务解析当前配置时嵌套占用默认线程池。本函数不读项目。
 
-    video lane 的定桶随 ``VideoLaneRequest.capability``：None 时按项目生成路线解析（见
-    ``lib.config.resolver.caps_generation_mode``）——路线创建即定、整个项目按同一条路径生成，
-    声音一致性等二维派生值因此不需要集号；显式给定时按指定桶解析（参考路线内按镜头分流的
+    video lane 的定桶随 ``VideoLaneRequest.capability``：None 时按项目生成模式解析（见
+    ``lib.config.resolver.caps_generation_mode``）——生成模式创建即定、整个项目按同一种模式生成，
+    声音一致性等二维派生值因此不需要集号；显式给定时按指定桶解析（参考生视频内按视频单元分流的
     调用方自带判定结果）。
     """
     from lib.db import async_session_factory
@@ -375,6 +377,7 @@ async def resolve_generation_context(
             supported_durations: tuple[int, ...] = ()
             max_duration: int | None = None
             max_reference_images: int | None = None
+            text_to_video = True
             generate_audio = False
             voice_consistency: VoiceConsistency = "soft"
             max_reference_audio_count = 0
@@ -383,10 +386,15 @@ async def resolve_generation_context(
             # 能力接口，能力解析失败不得连带把它冲回默认值 True（会静默重新允许参考音频上传）。
             requested_generate_audio = await r.video_generate_audio_for_project(project)
             try:
-                caps = await r.video_capabilities_for_model(resolved.provider_id, actual_model, project)
+                # 带上该任务落的桶：音轨形态等逐路径能力位按执行子路径分叉，不传会按项目
+                # 路线定桶，参考生视频内降级到 i2v 的镜头就会拿到 r2v 的口径。
+                caps = await r.video_capabilities_for_model(
+                    resolved.provider_id, actual_model, project, capability=video.capability
+                )
                 supported_durations = tuple(int(d) for d in caps.get("supported_durations") or [])
                 max_duration = caps.get("max_duration")
                 max_reference_images = caps.get("max_reference_images")
+                text_to_video = bool(caps.get("text_to_video", True))
                 generate_audio = bool(caps.get("generate_audio"))
                 voice_consistency = caps.get("voice_consistency") or "soft"
                 max_reference_audio_count = int(caps.get("max_reference_audio_count") or 0)
@@ -407,6 +415,7 @@ async def resolve_generation_context(
                 supported_durations=supported_durations,
                 max_duration=max_duration,
                 max_reference_images=max_reference_images,
+                text_to_video=text_to_video,
                 generate_audio=generate_audio,
                 voice_consistency=voice_consistency,
                 requested_generate_audio=requested_generate_audio,

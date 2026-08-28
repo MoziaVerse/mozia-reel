@@ -11,12 +11,14 @@ from __future__ import annotations
 import logging
 import math
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, TypedDict
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel
@@ -31,7 +33,7 @@ from lib.capability_buckets import (
 from lib.config.registry import PROVIDER_REGISTRY
 from lib.config.repository import mask_secret
 from lib.config.resolver import ConfigResolver
-from lib.config.service import ConfigService
+from lib.config.service import DEFAULT_VIDEO_POLL_TIMEOUT_SECONDS, ConfigService
 from lib.db import get_async_session
 from lib.httpx_shared import get_http_client
 from lib.i18n import Translator
@@ -73,15 +75,25 @@ _MEDIA_TO_OPTION_LIST = {
 }
 
 
-@lru_cache(maxsize=1)
-def _read_app_version() -> str:
-    with _PYPROJECT_PATH.open("rb") as f:
+def _load_app_version(pyproject_path: Path) -> str:
+    """从给定 pyproject 读版本号；不缓存，缓存由 :func:`_read_app_version` 负责。"""
+    with pyproject_path.open("rb") as f:
         data = tomllib.load(f)
 
     version = str(data["project"]["version"]).strip()
     if not version:
         raise RuntimeError("project.version is empty")
     return version
+
+
+@lru_cache(maxsize=1)
+def _read_app_version() -> str:
+    return _load_app_version(_PYPROJECT_PATH)
+
+
+def get_app_version_reader() -> Callable[[], str]:
+    """版本读取器的路由依赖；读失败的处置归路由，故注入可调用对象而非版本值。"""
+    return _read_app_version
 
 
 def _parse_version(raw: str) -> Version | None:
@@ -106,7 +118,11 @@ def _build_latest_release_payload(data: dict[str, Any]) -> dict[str, str]:
     }
 
 
-async def _get_latest_release() -> tuple[dict[str, str], datetime]:
+async def _get_latest_release(
+    *,
+    http_client: httpx.AsyncClient | None = None,
+    now: datetime | None = None,
+) -> tuple[dict[str, str], datetime]:
     """Fetch latest GitHub release with a 5-minute cache.
 
     Returns (payload, fetched_at) where fetched_at is the timestamp of the
@@ -114,7 +130,7 @@ async def _get_latest_release() -> tuple[dict[str, str], datetime]:
     the value safe to surface as `checked_at` to clients without misleading
     them about cache freshness.
     """
-    now = datetime.now(UTC)
+    now = now or datetime.now(UTC)
     expires_at = _latest_release_cache.get("expires_at")
     payload = _latest_release_cache.get("payload")
     fetched_at = _latest_release_cache.get("fetched_at")
@@ -126,7 +142,8 @@ async def _get_latest_release() -> tuple[dict[str, str], datetime]:
     ):
         return payload, fetched_at
 
-    response = await get_http_client().get(
+    client = http_client or get_http_client()
+    response = await client.get(
         _GITHUB_RELEASE_LATEST_URL,
         headers={"Accept": "application/vnd.github+json", "User-Agent": _GITHUB_USER_AGENT},
         timeout=5.0,
@@ -142,7 +159,7 @@ async def _get_latest_release() -> tuple[dict[str, str], datetime]:
 
 @dataclass(frozen=True)
 class _ModelCandidate:
-    """一个可选模型及其能力桶归属，供不过滤的默认层与按桶过滤的细分层共用。"""
+    """一个可选模型及其任务类型桶归属，供不过滤的默认层与按桶过滤的细分层共用。"""
 
     option: str  # "provider_id/model_id"
     media_type: str
@@ -152,10 +169,10 @@ class _ModelCandidate:
 async def _enumerate_candidates(
     svc: ConfigService, session: AsyncSession
 ) -> tuple[list[_ModelCandidate], dict[str, str]]:
-    """列出所有可选模型（内置 ready 供应商 + 已启用的自定义模型），并附能力桶归属。
+    """列出所有可选模型（内置 ready 供应商 + 已启用的自定义模型），并附任务类型桶归属。
 
     hidden 模型在这里统一剔除：registry 声明 hidden 的语义就是「从 UI 下拉剔除、条目仍保留
-    供算价」，默认层与能力桶层同受此约束（能力过滤只加在桶层）。
+    供算价」，默认层与任务类型桶层同受此约束（能力过滤只加在桶层）。
     """
     statuses = await svc.get_all_providers_status()
     ready_providers = {s.name for s in statuses if s.status == "ready"}
@@ -237,7 +254,7 @@ async def _build_options(svc: ConfigService, session: AsyncSession) -> _OptionsD
 
 
 class MediaCandidates(BaseModel):
-    """单一 media_type 的候选：默认层全量 + 各能力桶过滤后的子集。"""
+    """单一 media_type 的候选：默认层全量 + 各任务类型桶过滤后的子集。"""
 
     default: list[str]
     buckets: dict[CapabilityBucket, list[str]]
@@ -252,7 +269,7 @@ class ModelCandidatesResponse(BaseModel):
 
 class SystemConfigPatchRequest(BaseModel):
     default_video_backend: str | None = None
-    # 视频能力桶（docs/adr/0054）：i2v = 图生视频 / 宫格，r2v = 参考生视频；空值 = 回退默认层
+    # 视频任务类型桶（docs/adr/0054）：i2v = 图生视频 / 宫格，r2v = 参考生视频；空值 = 回退默认层
     default_video_backend_i2v: str | None = None
     default_video_backend_r2v: str | None = None
     default_image_backend: str | None = None
@@ -263,6 +280,7 @@ class SystemConfigPatchRequest(BaseModel):
     narration_voice: str | None = None
     narration_speed: float | None = None
     video_generate_audio: bool | None = None
+    video_poll_timeout_seconds: int | None = None
     anthropic_api_key: str | None = None
     anthropic_base_url: str | None = None
     anthropic_model: str | None = None
@@ -337,6 +355,9 @@ async def get_system_config(
         "narration_voice": all_s.get("narration_voice", ""),
         "narration_speed": narration_speed,
         "video_generate_audio": video_generate_audio,
+        "video_poll_timeout_seconds": ConfigService.parse_video_poll_timeout_seconds(
+            all_s.get("video_poll_timeout_seconds") or str(DEFAULT_VIDEO_POLL_TIMEOUT_SECONDS)
+        ),
         "anthropic_api_key": {
             "is_set": bool(anthropic_key),
             "masked": mask_secret(anthropic_key) if anthropic_key else None,
@@ -363,7 +384,7 @@ async def get_model_candidates(
     svc: Annotated[ConfigService, Depends(get_config_service)],
     session: AsyncSession = Depends(get_async_session),
 ) -> ModelCandidatesResponse:
-    """能力桶下拉的候选数据源：默认层全量 + 每个能力桶按能力过滤后的模型列表。
+    """任务类型桶下拉的候选数据源：默认层全量 + 每个任务类型桶按能力过滤后的模型列表。
 
     默认层不过滤 —— 默认层不承诺能力，能力不满足由解析闸报错兜底；只有桶层承诺「配进去的
     组合执行得了」，故按桶过滤。
@@ -388,9 +409,10 @@ async def get_model_candidates(
 @router.get("/system/version")
 async def get_system_version(
     _t: Translator,
+    read_app_version: Annotated[Callable[[], str], Depends(get_app_version_reader)],
 ) -> dict[str, Any]:
     try:
-        current_version = _read_app_version()
+        current_version = read_app_version()
     except Exception as exc:
         logger.exception("Failed to read app version")
         raise HTTPException(status_code=500, detail=_t("about_version_read_failed")) from exc
@@ -471,6 +493,12 @@ async def patch_system_config(
     # Boolean settings
     if "video_generate_audio" in patch and patch["video_generate_audio"] is not None:
         await svc.set_setting("video_generate_audio", "true" if patch["video_generate_audio"] else "false")
+
+    if "video_poll_timeout_seconds" in patch and patch["video_poll_timeout_seconds"] is not None:
+        try:
+            await svc.set_video_poll_timeout_seconds(patch["video_poll_timeout_seconds"])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=_t("video_poll_timeout_minimum")) from exc
 
     # Anthropic API key (secret)
     if "anthropic_api_key" in patch:

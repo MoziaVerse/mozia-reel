@@ -32,7 +32,6 @@ from lib.narration_delivery import (
 )
 from lib.pricing.strategies import PricingParams
 from lib.project_manager import grid_storyboard_enabled, is_reference_video_project
-from lib.reference_video import assemble_shots_text
 from lib.reference_video.request_projection import (
     ConfigReferenceCapabilityProjection,
     FilesystemReferenceAssets,
@@ -40,8 +39,8 @@ from lib.reference_video.request_projection import (
     ReferenceRequestOptions,
     ReferenceUnitRequestProjector,
     ResolvedReferenceAsset,
-    canonicalize_references,
     resolve_reference_assets,
+    unit_reference_declarations,
 )
 from lib.script_editor import ScriptEditError
 from lib.script_models import get_generated_assets
@@ -61,9 +60,9 @@ ActualBySegment = dict[str, dict[str, CostBreakdown]]
 ACTUAL_COST_TYPES = ("image", "video", "audio")
 
 
-#: 读侧定桶要枚举的全部视频能力桶。分镜路线整项目走 i2v 桶；参考路线由公共
+#: 读侧定桶要枚举的全部视频任务类型桶。分镜图生视频项目整体走 i2v 桶；参考生视频由公共
 #: request projection 按每个 unit 当前实际可用资产分桶。两个桶都在这里预解析，省去按
-#: 路线与镜头分支判断该解析哪个桶的复杂度——桶只有两个，代价有界。
+#: 生成模式与分镜分支判断该解析哪个桶的复杂度——桶只有两个，代价有界。
 _VIDEO_BUCKETS: tuple[VideoCapability, ...] = ("i2v", "r2v")
 
 #: 普通分镜图取不到分辨率档时的计价档。执行侧此路径把 ``None`` 原样下发给 backend、由其自行定档
@@ -75,7 +74,7 @@ _IMAGE_PRICING_FALLBACK_RESOLUTION = "1K"
 
 @dataclass(frozen=True)
 class _VideoPricing:
-    """一个能力桶下的视频计价参数——解析出的模型身份、分辨率、有效 generate_audio 与自定义单价。
+    """一个任务类型桶下的视频计价参数——解析出的模型身份、分辨率、有效 generate_audio 与自定义单价。
 
     五项总是结伴传给三条估算路径，且必须同源于一次解析：分辨率与 generate_audio 都按模型身份
     求值，混用不同桶的分项会算出任何一个模型都不会产生的价。
@@ -209,7 +208,7 @@ def _split_cost_across(cost: CostBreakdown, parts: int) -> list[CostBreakdown]:
     """把一笔按整体计费的费用均摊成 ``parts`` 份，除不尽的余数补给最后一份。
 
     补余数是为了让分摊结果的合计与原值分文不差：调用方按分摊后的份额累加集/项目合计，
-    若每份都独立 round，误差会随镜头数放大到用户可见的总价上。
+    若每份都独立 round，误差会随分镜数放大到用户可见的总价上。
     """
     if parts <= 0:
         return []
@@ -228,9 +227,9 @@ def _estimate_unit_video_cost(
     duration_seconds: int,
     video: _VideoPricing,
 ) -> CostBreakdown:
-    """一个参考视频 unit 取档后秒数的视频估值。计价失败返回空 breakdown（该 unit 不计费）。
+    """一个视频单元取档后秒数的视频估值。计价失败返回空 breakdown（该 unit 不计费）。
 
-    两条参考视频估算路径（ad 摊回镜头、narration/drama 按 unit 展示）的展示颗粒度不同，
+    两条参考生视频估算路径（ad 按分镜摊回、narration/drama 按视频单元展示）的展示颗粒度不同，
     但「按取档后秒数向 provider 询价」这一步与颗粒度无关，共用同一实现避免两处漂移。
     """
     est_video: CostBreakdown = {}
@@ -351,7 +350,7 @@ class CostEstimationService:
             image_resolution = await resolve_image_resolution(r, project_data)
             grid_allow_large = large_grid_allowed(image_resolution)
 
-            # 视频按能力桶解析（``docs/adr/0054``），与执行扣费同一个模型：图生视频 / 宫格算
+            # 视频按任务类型桶解析（``docs/adr/0054``），与执行扣费同一个模型：图生视频 / 宫格算
             # i2v 桶的价；参考生视频逐 unit 水合当前资产后分桶。两个桶都在这里
             # 解析出来（见 ``_VIDEO_BUCKETS``），分辨率与
             # generate_audio 随各自的模型身份求值。
@@ -369,7 +368,7 @@ class CostEstimationService:
                         bucket_provider, bucket_model = resolved_video.provider_id, resolved_video.model_id
                     except Exception:
                         bucket_provider, bucket_model = "unknown", "unknown"
-                    # 分镜路线保持既有宽容报价；参考路线逐 unit 的严格能力校验由 request projector
+                    # 分镜图生视频保持既有宽容报价；参考生视频逐 unit 的严格能力校验由 request projector
                     # 完成，能力元数据异常时不会产生 unit 报价。
                     bucket_audio = await r.video_pricing_generate_audio(bucket_provider, bucket_model, project_data)
                     try:
@@ -425,7 +424,7 @@ class CostEstimationService:
             ) in video_identity.items()
         }
         # 项目层展示的视频模型按项目 generation_mode 定桶：``models`` 回答的是「当前项目配置」
-        # 的路线主桶；参考路线内退化镜头的逐 unit 降级计价在集级估算路径内完成，不改变项目层
+        # 的生成模式主桶；参考生视频内无参考图视频单元的逐 unit 降级计价在集级估算路径内完成，不改变项目层
         # 展示身份。
         project_video = video_pricing[video_bucket_for_generation_mode(project_data.get("generation_mode"))]
 
@@ -498,10 +497,10 @@ class CostEstimationService:
                 proj_est[cost_type] = _merge_breakdowns(proj_est.get(cost_type, {}), ep_est.get(cost_type, {}))
                 proj_act[cost_type] = _merge_breakdowns(proj_act.get(cost_type, {}), ep_act.get(cost_type, {}))
 
-        # 参考生视频路径跳过分镜步骤，所有内容模式都按自包含 reference_unit 计费与展示。
+        # 参考生视频路径跳过分镜步骤，所有创作类型都按自包含 reference_unit 计费与展示。
         #
-        # 生成路径以项目路线为唯一真相源，整个项目同一条路线、逐集不变（剧本不携带路线信息）；
-        # 参考路线内的定桶再由 request projection 按当前资产逐 unit 分流。
+        # 生成路径以项目生成模式为唯一真相源，整个项目同一种生成模式、逐集不变（剧本不携带生成模式信息）；
+        # 参考生视频内的定桶再由 request projection 按当前资产逐 unit 分流。
         for ep_meta in episodes_meta:
             script_file = ep_meta.get("script_file", "")
             script = scripts.get(script_file)
@@ -540,7 +539,7 @@ class CostEstimationService:
                 logger.warning("费用估算跳过脏脚本 %s: %s", script_file, exc)
                 raw_segments, id_key = [], "segment_id"
 
-            # Grid 模式：预计算每个 segment 的图片分摊费用。份额以条目在 ``raw_segments`` 中的
+            # 宫格装配：预计算每个 segment 的图片分摊费用。份额以条目在 ``raw_segments`` 中的
             # 位置为身份，与下方实付均摊同口径（理由见该处）；分组由
             # ``group_scenes_by_segment_break`` 按顺序切出、连续且不重不漏，故位置即组内序号
             # 加上前序各组的长度。
@@ -616,7 +615,7 @@ class CostEstimationService:
                 except Exception:
                     logger.debug("无法计算 video 预估 for %s", seg_id, exc_info=True)
 
-                # 旁白配音按 novel_text 字符数估价（仅说书模式 segment 携带原文）
+                # 旁白配音按 novel_text 字符数估价（仅旁白/解说 segment 携带原文）
                 novel_text = seg.get("novel_text")
                 narration_chars = len(novel_text.strip()) if isinstance(novel_text, str) else 0
                 if narration_chars:
@@ -706,7 +705,7 @@ class CostEstimationService:
         meta_order = {ep_meta.get("episode"): i for i, ep_meta in enumerate(episodes_meta)}
         episodes_result.sort(key=lambda ep: meta_order.get(ep["episode"], len(meta_order)))
 
-        # Project-level actual costs (characters/scenes/props/products 资产图 —— segment_id is null)
+        # Project-level actual costs (characters/scenes/props/products 资产图—— segment_id is null)
         async with self._session_factory() as session:
             project_image_by_type = await UsageRepository(session).get_project_image_costs_by_asset_type(project_name)
         for asset_type in ("characters", "scenes", "props", "products"):
@@ -753,7 +752,7 @@ class CostEstimationService:
     ) -> tuple[list[dict[str, Any]], dict[str, CostBreakdown], dict[str, CostBreakdown]]:
         """reference_video 集的估值：unit 本身就是展示与计费颗粒度。
 
-        ``video_units[*].shots`` 没有独立 ID，unit 本身就是最小可寻址单位，
+        unit 本身就是最小可寻址单位，
         前端画布与费用面板均按 ``unit_id`` 索引（见 ``ReferenceVideoCanvas`` 读
         ``cost-store`` 的 ``_segmentIndex.get(unit.unit_id)``），故此处不需要
         ``_split_cost_across`` 这一步。
@@ -763,16 +762,15 @@ class CostEstimationService:
         请求时长基准通常是 ``unit.duration_seconds``；选择 ``use_tts`` 时还会纳入上游提供的
         实际旁白时长下限。按该基准取档后用同桶模型计费，与执行请求的秒数对齐。
 
-        无图片/音频估值维度：该模式跳过分镜步骤（无分镜图），``Shot`` 没有独立的旁白/口播
-        文案字段可供独立音频计价。实付按 ``actual_by_segment[unit_id]`` 三个维度原样透传——``lib/media_generator.py``
+        无图片/音频估值维度：该模式跳过分镜步骤（无分镜图），unit 正文是一整段、没有可供
+        独立音频计价的旁白/口播文案字段。实付按 ``actual_by_segment[unit_id]`` 三个维度原样透传——``lib/media_generator.py``
         对 ``resource_type == "reference_videos"`` 的记账以 unit_id 写入 usage 的 segment_id，
         与本函数的输出 identity 一致。切换模式前按分镜 ID（``E1S1`` 等）记的历史支出不在此
         呈现：unit 与分镜之间没有映射关系，无处归属。
 
-        没有 shots、拼接文本为空或命中 ``video_unit_replan_problems`` 的 unit 不产生预估：这些 unit
-        会被 ``enqueue_videos.py::_reference_unit_spec`` 拒绝，估值给出非零金额会展示一笔查无实据的
-        费用；判据与入队侧共用 ``assemble_shots_text`` 和重规划问题模型，不能自行另起一套处理否则
-        两处会漂移。但该 unit 仍要整条保留、纳入汇总——不可入队只影响能否产生新预估，不影响该
+        正文为空或命中 ``video_unit_replan_problems`` 的 unit 不产生预估：这些 unit 会被
+        ``enqueue_videos.py::_reference_unit_spec`` 拒绝，估值给出非零金额会展示一笔查无实据的
+        费用；判据与入队侧共用同一个正文与重规划问题模型，不能自行另起一套处理否则两处会漂移。但该 unit 仍要整条保留、纳入汇总——不可入队只影响能否产生新预估，不影响该
         unit 是否曾经成功生成过（``actual_by_segment[unit_id]`` 记的是历史实付，与 unit 当前编辑状态
         无关）：unit 曾成功生成、随后剧本被编辑成不可入队状态，其历史支出不能因此从段级/集级/项目级
         合计里消失。
@@ -798,16 +796,9 @@ class CostEstimationService:
                 continue
             unit_id = raw_unit_id
 
-            # shots 非 list（如裸写 "shots": true/1）会让 assemble_shots_text 的遍历抛
-            # TypeError；先做类型检查再拼接，与下方 duration 解析同样不能让单条脏数据中断
-            # 整次估算。
-            shots = unit.get("shots")
-            enqueueable = (
-                isinstance(shots, list)
-                and bool(shots)
-                and bool(assemble_shots_text(shots).strip())
-                and not video_unit_replan_problems(unit)
-            )
+            # text 非字符串（如裸写 "text": true/1）同样不能让单条脏数据中断整次估算。
+            text = unit.get("text")
+            enqueueable = isinstance(text, str) and bool(text.strip()) and not video_unit_replan_problems(unit)
 
             est_video: CostBreakdown = {}
             request_quote: VideoRequestQuote | None = None
@@ -816,7 +807,7 @@ class CostEstimationService:
             projection = None
             options = (request_options or {}).get(unit_id, ReferenceRequestOptions())
             if enqueueable:
-                # agent/外部编辑过的剧本可能写入非数值 duration_seconds（如 "bad"/列表/字典）；
+                # Agent/外部编辑过的剧本可能写入非数值 duration_seconds（如 "bad"/列表/字典）；
                 # 单个 unit 的无效内容不应让整个项目估算失败，因此资产解析与 request projection
                 # 的 ValueError/TypeError 只跳过该 unit。能力解析错误由 projector 转为结构化 blocker，
                 # 正常保留在该 unit 的报价结果中。
@@ -827,7 +818,7 @@ class CostEstimationService:
                                 path=Path(f"{reference.type}/{reference.name}.png"),
                                 reference=reference,
                             )
-                            for reference in canonicalize_references(unit.get("references"))
+                            for reference in unit_reference_declarations(project, unit)
                         ]
                     else:
                         resolved_assets = resolve_reference_assets(project, self._project_path, unit)

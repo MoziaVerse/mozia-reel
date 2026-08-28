@@ -3,6 +3,13 @@ Background worker that consumes generation tasks from SQLite queue.
 
 Per-provider × media_type 调度，拆成两件独立的东西：CapacityTable（上限，来自
 ConfigService 的用户配置）+ SlotTable（运行时占用台账）。
+
+受支持的部署只启动一个 uvicorn 进程；server lifespan 在该进程内创建唯一的
+GenerationWorker，二者生命周期一致。因此 cancel 信号走进程内的
+``dict[task_id, asyncio.Task]``，孤儿任务只来自进程重启。lease 能在进程短暂重叠时防止
+重复认领，并为跨进程接管提供防御，但不让多 uvicorn worker 成为受支持部署：请求若落到
+非任务 owner 的进程，进程内 cancel 无法转发。若支持多进程，须同时重审取消通道与孤儿判定
+（见 ``docs/adr/0006`` 与 ``docs/adr/0007``）。
 """
 
 from __future__ import annotations
@@ -16,7 +23,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from lib.config.registry import ProviderMeta
+
+    ProviderProjection = Callable[[dict[str, Any]], Awaitable[str]]
+    TaskExecutor = Callable[..., Awaitable[dict[str, Any]]]
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +228,7 @@ class CapacityTable:
             )
             for pid, meta in PROVIDER_REGISTRY.items()
         }
-        return cls(_limits=limits, _defaults={"image": image_max, "video": video_max, "audio": audio_max})
+        return cls(_limits=limits, _defaults={"image": image_max, "video": video_max, "audio": audio_max, "text": 1})
 
     @classmethod
     async def from_db(cls) -> CapacityTable:
@@ -265,7 +277,7 @@ class CapacityTable:
         logger.info("从 DB 加载供应商容量表: %s", limits)
         return cls(
             _limits=limits,
-            _defaults={"image": default_image, "video": default_video, "audio": default_audio},
+            _defaults={"image": default_image, "video": default_video, "audio": default_audio, "text": 1},
         )
 
 
@@ -287,6 +299,9 @@ class SlotTable:
 
     被动纯内存数据结构，**容量无关**：``has_room`` 由 caller 传入 ``capacity``。
     不写 DB、不解析 provider、不决定孤儿策略、不碰状态机守卫。
+
+    ``capacity`` 的 ``0`` 只有一个含义——该 lane 不受支持，是内部哨兵值。用户契约面的
+    并发上限是「≥1 的整数或留空」，``0`` 不可由用户输入抵达（见 ``docs/adr/0043``）。
 
     **空 bucket 不残留（by design）**：``release`` / ``drain_finished`` 移除最后一个
     占用时一并删掉该 ``(provider,media)`` bucket，保证 ``occupied_providers`` 永不
@@ -386,7 +401,7 @@ async def _extract_provider(task: dict[str, Any]) -> str:
     ``resolve_image_backend``，取 ``.provider_id``。image 任务按 ``capability="t2i"`` 取一个
     **代表性** provider——worker 认领时拿不到真实 capability（见 ``docs/adr/0001``），这点近似不影响
     生成正确性（执行层会独立精确再解析一次）；``image_edit`` 是唯一例外（必然 i2i、入队即知），
-    按 i2i 槽精确解析。两条视频路线都忽略 enqueue payload 中的旧身份，分镜视频定桶经
+    按 i2i 槽精确解析。两种视频生成模式都忽略 enqueue payload 中的旧身份，分镜视频定桶经
     ``video_bucket_for_queued_task`` 与入队派生共用；reference_video 则重读最新
     project/script/unit，以实际可用资产调用公共 request projection。
     这份 provider 投影只服务 claim 过滤与限流路由，不是执行身份；正常 executor 会在开始时
@@ -401,8 +416,11 @@ async def _extract_provider(task: dict[str, Any]) -> str:
         # callers and must not be able to redirect claim-time current-state projection to a different script.
         payload = {**payload, "script_file": task["script_file"]}
     # 以 media lane 区分 video / audio / image：reference_video 等 task_type 同属 video lane。
+    is_text = task.get("media_type") == "text"
     is_video = task.get("media_type") == "video" or task.get("task_type") in ("video", "reference_video")
     is_audio = task.get("media_type") == "audio" or task.get("task_type") == "tts"
+    if is_text:
+        return "text"
 
     # 整体兜底：含项目加载（队列里可能残留指向已删除/不可读项目的任务，load_project 会抛
     # FileNotFoundError）在内的任何失败都回退 DEFAULT_PROVIDER，绝不冒泡阻断认领循环（见 docstring）。
@@ -437,8 +455,25 @@ async def _extract_provider(task: dict[str, Any]) -> str:
     return resolved.provider_id or DEFAULT_PROVIDER
 
 
+async def _execute_task(task: dict[str, Any], *, claimed_provider_id: str | None = None) -> dict[str, Any]:
+    from server.services.generation_tasks import execute_generation_task
+
+    if task.get("task_type") in ("video", "reference_video"):
+        task["video_poll_timeout_seconds"] = await _read_video_poll_timeout_seconds()
+        return await execute_generation_task(task, claimed_provider_id=claimed_provider_id)
+    return await execute_generation_task(task)
+
+
+async def _read_video_poll_timeout_seconds() -> int:
+    from lib.config.service import ConfigService
+    from lib.db import safe_session_factory
+
+    async with safe_session_factory() as session:
+        return await ConfigService(session).get_video_poll_timeout_seconds()
+
+
 class GenerationWorker:
-    """Queue worker with per-provider image/video/audio lanes and single-active lease."""
+    """Queue worker with per-provider image/video/audio/text lanes and single-active lease."""
 
     def __init__(
         self,
@@ -446,8 +481,15 @@ class GenerationWorker:
         lease_name: str = "default",
         capacity: CapacityTable | None = None,
         slots: SlotTable | None = None,
+        provider_projection: ProviderProjection = _extract_provider,
+        executor: TaskExecutor = _execute_task,
+        lanes: tuple[str, ...] = ("image", "video", "audio", "text"),
     ):
         self.queue = queue or get_generation_queue()
+        # 认领期与执行期共用的 provider 投影：限流按它的结果路由到对应容量桶。
+        self._provider_projection = provider_projection
+        self._executor = executor
+        self._lanes = lanes
         self.lease_name = lease_name
         self.owner_id = f"worker-{uuid.uuid4().hex[:10]}"
 
@@ -462,6 +504,7 @@ class GenerationWorker:
 
         self._main_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
+        self._wake_event = asyncio.Event()
         self._owns_lease = False
         # Orphan dispatcher 句柄持久化：shutdown 时 await 它跑完；lease 切换重夺时
         # 第二次进 _handle_orphan_tasks_on_start，旧句柄未 done 不能直接覆盖。
@@ -500,13 +543,27 @@ class GenerationWorker:
         if self._main_task and not self._main_task.done():
             return
         self._stop_event.clear()
+        self._wake_event.clear()
         self._main_task = asyncio.create_task(self._run_loop(), name="generation-worker")
 
     async def stop(self) -> None:
         self._stop_event.set()
+        self.wake()
         if self._main_task:
             await self._main_task
             self._main_task = None
+
+    def wake(self) -> None:
+        """Wake the local worker without changing cross-process polling."""
+        self._wake_event.set()
+
+    async def _wait_for_wake(self, timeout: float) -> None:
+        try:
+            await asyncio.wait_for(self._wake_event.wait(), timeout=timeout)
+        except TimeoutError:
+            # No local wake is normal; cross-process work is discovered on the polling timeout.
+            pass
+        self._wake_event.clear()
 
     # ------------------------------------------------------------------
     # Main loop
@@ -552,7 +609,7 @@ class GenerationWorker:
                     self._orphan_handled_once = True
 
                 if not self._owns_lease:
-                    await asyncio.sleep(self.heartbeat_interval)
+                    await self._wait_for_wake(self.heartbeat_interval)
                     continue
 
                 claimed_any = await self._claim_tasks()
@@ -560,7 +617,7 @@ class GenerationWorker:
                 if claimed_any:
                     await asyncio.sleep(0.05)
                 else:
-                    await asyncio.sleep(self.poll_interval)
+                    await self._wait_for_wake(self.poll_interval)
 
             await self._wait_inflight_completion()
         finally:
@@ -596,7 +653,7 @@ class GenerationWorker:
         """
         claimed_any = False
 
-        for media_type in ("image", "video", "audio"):
+        for media_type in self._lanes:
             attempted_current_state_tasks: set[str] = set()
             while True:
                 # 每轮重算池满集合：刚 claim 的任务可能让某 provider 进入满状态
@@ -615,7 +672,7 @@ class GenerationWorker:
                 if not task:
                     break
 
-                provider_id = await _extract_provider(task)
+                provider_id = await self._provider_projection(task)
                 cap = self._capacity.get(provider_id, media_type)
 
                 if cap <= 0:
@@ -661,7 +718,7 @@ class GenerationWorker:
                         )
                     await self._requeue_single_task(task["task_id"])
                     if task.get("task_type") in ("video", "reference_video"):
-                        # 两条视频路线都必须先重投影才能判断当前 provider；本 cycle 排除已
+                        # 两种视频生成模式都必须先重投影才能判断当前 provider；本 cycle 排除已
                         # 重投影且仍池满的任务，继续寻找其它 provider 的可运行任务。
                         attempted_current_state_tasks.add(task["task_id"])
                         continue
@@ -684,6 +741,8 @@ class GenerationWorker:
                         name=f"generation-{media_type}-{task['task_id']}",
                     ),
                 )
+                if media_type == "text":
+                    break
 
         return claimed_any
 
@@ -774,16 +833,11 @@ class GenerationWorker:
         """
         task_id = task["task_id"]
         task_type = task.get("task_type", "unknown")
-        provider_id = claimed_provider_id or await _extract_provider(task)
+        provider_id = claimed_provider_id or await self._provider_projection(task)
         logger.info("开始处理任务 %s (type=%s, provider=%s)", task_id, task_type, provider_id)
 
-        from server.services.generation_tasks import execute_generation_task
-
         try:
-            if task_type in ("video", "reference_video"):
-                result = await execute_generation_task(task, claimed_provider_id=provider_id)
-            else:
-                result = await execute_generation_task(task)
+            result = await self._executor(task, claimed_provider_id=provider_id)
         except asyncio.CancelledError:
             # 用户/级联取消：worker.request_cancel 触发 asyncio.Task.cancel()
             await asyncio.shield(self.queue.mark_task_cancelled(task_id, cancelled_by="user"))
@@ -858,7 +912,7 @@ class GenerationWorker:
     async def _process_resume_task(self, task: dict[str, Any]) -> None:
         """重启自愈入口：直接调 backend.resume_video，绕过 normal executor 流水线。
 
-        两条视频路线都在 worker 开始时按最新状态物化，并在 provider 提交前写入不可变
+        两种视频生成模式都在 worker 开始时按最新状态物化，并在 provider 提交前写入不可变
         execution checkpoint。重启后只从 checkpoint 构造固定的解析请求，不从当前项目
         配置或 enqueue payload 重算执行身份。
 
@@ -913,7 +967,7 @@ class GenerationWorker:
                 task["payload"] = payload
             payload["image_provider"] = persisted_provider_id
 
-        provider_id = checkpoint.provider_id if checkpoint is not None else await _extract_provider(task)
+        provider_id = checkpoint.provider_id if checkpoint is not None else await self._provider_projection(task)
         logger.info(
             "重启自愈处理任务 %s (type=%s, provider=%s, job=%s)",
             task_id,
@@ -1119,6 +1173,15 @@ class GenerationWorker:
                     await self.queue.mark_task_cancelled(task_id, cancelled_by="user")
                 continue
 
+            # text 同步调用可能在线程中继续运行，但进程重启后没有可接续的 job identity；
+            # 与 image/audio 一样不自动重交，避免重复计费。
+            if media_type == "text":
+                logger.warning("孤儿 text running → [restart_lost]: %s", task_id)
+                rows = await self.queue.mark_task_failed(task_id, encode_failure("restart_lost_text"))
+                if rows == 0:
+                    await self.queue.mark_task_cancelled(task_id, cancelled_by="user")
+                continue
+
             checkpoint = None
             if task_type in ("video", "reference_video"):
                 resume_state, checkpoint = classify_video_resume_state(task)
@@ -1138,13 +1201,13 @@ class GenerationWorker:
                     await self._cleanup_video_staging(task)
                     continue
 
-            # video 路径：判断 provider 是否支持 resume。两条路线均只用不可变 checkpoint；
+            # video 路径：判断 provider 是否支持 resume。两种生成模式均只用不可变 checkpoint；
             # 否则项目配置在重启前后切换时，_extract_provider 会按当前项目重新解析，可能把原本
             # Grok/Vidu 孤儿误判成可 resume，或把可 resume 任务路由到错池。
             provider_id = (
                 checkpoint.provider_id
                 if checkpoint is not None
-                else task.get("provider_id") or await _extract_provider(task)
+                else task.get("provider_id") or await self._provider_projection(task)
             )
             if provider_id in NON_RESUMABLE_VIDEO_PROVIDERS:
                 # Grok/Vidu 当前不实现 resume_video——原 job 已发给供应商无接续手段，
@@ -1179,6 +1242,10 @@ class GenerationWorker:
 
         if resumable_by_provider:
             total = sum(len(v) for v in resumable_by_provider.values())
+            poll_timeout_seconds = await _read_video_poll_timeout_seconds()
+            for tasks in resumable_by_provider.values():
+                for task in tasks:
+                    task["video_poll_timeout_seconds"] = poll_timeout_seconds
             logger.info(
                 "孤儿扫描 fast path 完成：%d 个可 resume video 任务交后台分批 dispatch",
                 total,

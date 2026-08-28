@@ -86,7 +86,7 @@ async def _gateway_credentials() -> tuple[str, str]:
     """
     from lib.db import safe_session_factory
     from lib.db.repositories.custom_provider_repo import CustomProviderRepository
-    from lib.matrix_session import GATEWAY_PROVIDER_DISPLAY_NAME
+    from lib.matrix_base import GATEWAY_PROVIDER_DISPLAY_NAME
 
     async with safe_session_factory() as session:
         repo = CustomProviderRepository(session)

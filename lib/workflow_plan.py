@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from lib.asset_types import ASSET_SPECS
 from lib.generation_result import GenerationAction, GenerationProblem, ProviderCheckpoint
 from lib.narration_delivery import POST_PRODUCTION, USE_TTS, NarrationDelivery
 from lib.workflow_rules import WorkflowStepRule, workflow_rule
@@ -61,6 +62,7 @@ class WorkflowTaskObservation(BaseModel):
 
     unit_id: str
     task_id: str
+    batch_id: str | None = None
     task_type: str
     status: str
     provider_checkpoint: ProviderCheckpoint | None = None
@@ -119,6 +121,12 @@ _ARTIFACT_BY_STEP: dict[str, str] = {
 }
 
 _TASK_STEP: dict[str, str] = {
+    "text_episode_plan": "episode_plan",
+    "text_drama_step1": "step1_content",
+    "text_narration_step1": "step1_content",
+    "text_reference_step1": "step1_content",
+    "text_episode_script": "final_script",
+    **{asset_type: "asset_sheets" for asset_type in ASSET_SPECS},
     "storyboard": "storyboard",
     "grid": "storyboard",
     "tts": "narration_delivery",
@@ -189,7 +197,7 @@ def _structure_action(
     return WorkflowNextAction(
         type=WorkflowActionType.PATCH_EPISODE_SCRIPT,
         args={
-            "expected_revision": script_revision,
+            "base_revision": script_revision,
             "problems": [problem.model_dump(mode="json") for problem in problems],
         },
         requested_ids=_problem_unit_ids(problems),
@@ -299,9 +307,16 @@ def build_workflow_plan(
     elif structure_problems:
         next_action = _structure_action(structure_problems, script_revision=script_revision)
     elif active_tasks:
+        # ponytail: fixed five-minute remote observation window; replace with per-task ETA only if providers expose it.
+        batch_ids = list(dict.fromkeys(task.batch_id for task in active_tasks if task.batch_id is not None))
         next_action = WorkflowNextAction(
             type=WorkflowActionType.WAIT_FOR_TASK,
-            args={"task_ids": [task.task_id for task in active_tasks]},
+            args={
+                "task_ids": [task.task_id for task in active_tasks],
+                **({"batch_ids": batch_ids} if batch_ids else {}),
+                "poll_after_seconds": 10,
+                "max_poll_attempts": 30,
+            },
             requested_ids=[task.unit_id for task in active_tasks],
             reason="workflow has active generation tasks",
         )

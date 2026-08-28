@@ -44,6 +44,7 @@ MESSAGES = {
     "task_fail_dispatch_provider_requeue_failed": "Nhà cung cấp tác vụ đã đổi từ {claimed_provider_id} sang {actual_provider_id}, nhưng không thể đưa tác vụ trở lại hàng đợi để nhận khe mới; vui lòng thử lại",
     "task_fail_restart_lost_image": "Tác vụ ảnh bị gián đoạn khi dịch vụ khởi động lại và không thể tiếp tục; vui lòng thử lại thủ công để tránh bị tính phí trùng",
     "task_fail_restart_lost_audio": "Tác vụ âm thanh bị gián đoạn khi dịch vụ khởi động lại và không thể tiếp tục; vui lòng thử lại thủ công để tránh bị tính phí trùng",
+    "task_fail_restart_lost_text": "Tác vụ văn bản bị gián đoạn khi dịch vụ khởi động lại và không thể tiếp tục; vui lòng thử lại thủ công để tránh bị tính phí trùng",
     "task_fail_restart_lost_no_job_id": "Tác vụ video không lưu thông tin tiếp tục trước khi dịch vụ khởi động lại và không thể tự khôi phục; vui lòng thử lại thủ công",
     "task_fail_restart_lost_resume_no_job_id": "Tác vụ thiếu thông tin tiếp tục và không thể khôi phục; vui lòng thử lại thủ công",
     "task_fail_restart_lost_checkpoint_no_job_id": "Tác vụ đã vượt qua ranh giới gửi nhưng chưa lưu mã tác vụ của nhà cung cấp và không thể tự động thử lại vì có nguy cơ tính phí trùng",
@@ -62,11 +63,10 @@ MESSAGES = {
     "prompt_text_empty": "prompt không được để trống",
     "storyboard_task_submitted": "Đã gửi tác vụ tạo phân cảnh cho '{segment_id}'",
     "generate_storyboard_first": "Vui lòng tạo phân cảnh scene_{segment_id}.png trước",
-    "video_route_is_reference_video": "Dự án này dùng lộ trình video tham chiếu, không có bước tạo video từ phân cảnh; hãy tạo theo đơn vị video trong trình chỉnh sửa video tham chiếu",
+    "video_route_is_reference_video": "Dự án này dùng chế độ video tham chiếu, không có bước tạo video từ phân cảnh; hãy tạo theo đơn vị video trong trình chỉnh sửa video tham chiếu",
     "invalid_storyboard_image_path": "Đoạn '{segment_id}' có tham chiếu ảnh phân cảnh không hợp lệ, vui lòng tạo lại phân cảnh",
     "invalid_end_frame_image_path": "Đoạn '{segment_id}' có tham chiếu ảnh khung hình cuối không hợp lệ, vui lòng chụp lại khung hình cuối",
     "video_audio_switch_not_supported": "{provider}/{model} luôn tạo ra âm thanh và không thể tắt tiếng; hãy bật lại công tắc âm thanh trong cài đặt rồi thử lại",
-    "reference_declaration_invalid": "Khai báo tài nguyên tham chiếu không hợp lệ ({count} mục); hãy sửa references rồi thử lại",
     "reference_asset_missing": "Tài nguyên tham chiếu bị thiếu hoặc không khả dụng: {missing_text}",
     "reference_capability_changed": "Khả năng đã khai báo là {declared}, nhưng tài nguyên thực tế yêu cầu {hydrated}; hãy sửa tài nguyên rồi thử lại",
     "reference_images_clamped": "Số lượng {count} ảnh tham chiếu vượt giới hạn {max_count} của {provider}/{model}; yêu cầu sẽ dùng {max_count} ảnh đầu tiên",
@@ -99,9 +99,9 @@ MESSAGES = {
     "video_task_submitted": "Đã gửi tác vụ tạo video cho '{segment_id}'",
     "grid_task_submitted": "Đã gửi {count} tác vụ tạo phân cảnh đa lưới",
     "tts_prompt_must_be_string_or_null": "prompt của tác vụ tts phải là chuỗi không rỗng hoặc để trống",
-    "tts_task_submitted": "Đã gửi tác vụ tạo thuyết minh cho '{segment_id}'",
-    "tts_batch_submitted": "Đã gửi {count} tác vụ tạo thuyết minh",
-    "tts_batch_none_missing": "Tất cả phân cảnh đã có thuyết minh, không cần tạo thêm",
+    "tts_task_submitted": "Đã gửi tác vụ tạo âm thanh thuyết minh cho '{segment_id}'",
+    "tts_batch_submitted": "Đã gửi {count} tác vụ tạo âm thanh thuyết minh",
+    "tts_batch_none_missing": "Tất cả phân cảnh đã có âm thanh thuyết minh, không cần tạo thêm",
     "tts_novel_text_missing": "Phân cảnh '{segment_id}' không có văn bản tiểu thuyết để thuyết minh",
     "tts_narration_text_missing": "Đơn vị này không có lời thuyết minh để tổng hợp",
     "tts_not_applicable": "TTS chỉ áp dụng cho đơn vị có lời dẫn thuộc người thuyết minh; hãy chọn hậu kỳ",
@@ -111,21 +111,22 @@ MESSAGES = {
     "tts_stale": "Âm thanh thuyết minh cũ hơn nội dung hiện tại; hãy tạo lại trước khi dùng TTS",
     "tts_state_unavailable": "Không thể đọc trạng thái âm thanh thuyết minh; hãy sửa trước khi dùng TTS",
     "tts_duration_unavailable": "Không thể đo thời lượng âm thanh thuyết minh; hãy sửa hoặc tạo lại",
-    "video_duration_unavailable": "Không thể đo video đã tạo so với phần thuyết minh {tts_duration:.1f}s; hãy tạo lại video",
-    "video_shorter_than_tts": "Video đã tạo dài {video_duration:.1f}s, ngắn hơn phần thuyết minh {tts_duration:.1f}s; hãy tạo lại mà không cắt hoặc tăng tốc lời nói",
+    "video_duration_unavailable": "Không thể đo video đã tạo so với âm thanh thuyết minh {tts_duration:.1f}s; hãy tạo lại video",
+    "video_shorter_than_tts": "Video đã tạo dài {video_duration:.1f}s, ngắn hơn âm thanh thuyết minh {tts_duration:.1f}s; hãy tạo lại mà không cắt hoặc tăng tốc lời nói",
     "audio_provider_not_configured": "Vui lòng cấu hình nhà cung cấp âm thanh trước: thêm nhà cung cấp hỗ trợ chuyển văn bản thành giọng nói trong Cài đặt → Nhà cung cấp",
     "narration_speed_must_be_positive": "Tốc độ thuyết minh phải là số dương",
+    "video_poll_timeout_minimum": "Thời gian chờ thăm dò video phải ít nhất 60 giây",
     "speech_rate_out_of_range": "Nhịp đọc phải nằm trong khoảng {min} đến {max} (ký tự hoặc từ mỗi giây)",
     "character_not_found": "Nhân vật '{name}' không tồn tại",
-    "character_task_submitted": "Đã gửi tác vụ tạo thiết kế nhân vật cho '{name}'",
+    "character_task_submitted": "Đã gửi tác vụ tạo hình tài sản nhân vật cho '{name}'",
     "voice_sample_voice_required": "Vui lòng chọn giọng đọc trước",
     "voice_sample_text_too_long": "Văn bản mẫu không được vượt quá {max_length} ký tự",
     "voice_sample_task_submitted": "Đã gửi tác vụ tạo mẫu giọng đọc thử cho nhân vật '{name}'",
     "voice_sample_not_ready": "Mẫu giọng đọc thử chưa tạo thành công, chưa thể xác nhận",
     "voice_sample_file_missing": "Tệp mẫu giọng đọc thử không còn tồn tại, vui lòng tạo lại",
-    "scene_task_submitted": "Đã gửi tác vụ tạo thiết kế cảnh cho '{name}'",
-    "prop_task_submitted": "Đã gửi tác vụ tạo thiết kế đạo cụ cho '{name}'",
-    "product_task_submitted": "Đã gửi tác vụ tạo ảnh tham chiếu chuẩn cho hàng hóa '{name}'",
+    "scene_task_submitted": "Đã gửi tác vụ tạo hình tài sản cảnh cho '{name}'",
+    "prop_task_submitted": "Đã gửi tác vụ tạo hình tài sản đạo cụ cho '{name}'",
+    "product_task_submitted": "Đã gửi tác vụ tạo hình tài sản hàng hóa cho '{name}'",
     # Files
     "file_not_found": "Tệp không tồn tại: {path}",
     "forbidden_access": "Cấm truy cập tệp ngoài thư mục dự án",
@@ -160,9 +161,6 @@ MESSAGES = {
     "script_review_quarantine_unreadable": (
         "Tệp bản nháp cần sửa đã hỏng hoặc sai định dạng, không thể đọc được; hãy để tác nhân chia lại tập này"
     ),
-    "draft_event_label": "Tập {episode} {label_prefix}",
-    "normalized_script": "Kịch bản đã chuẩn hóa",
-    "segment_splitting": "Chia đoạn",
     # Source loader
     "source_unsupported_format": "Định dạng nguồn không hỗ trợ: {ext} (hỗ trợ: .txt / .md / .docx / .epub / .pdf)",
     "source_decode_failed": "Không giải mã được tệp nguồn '{filename}' (đã thử: {tried})",
@@ -202,10 +200,14 @@ MESSAGES = {
     "duplicate_model_id": "model_id trùng lặp: {model_id}",
     "default_model_conflict": "Mỗi media_type chỉ có tối đa một mô hình mặc định. Xung đột: {conflict}",
     "provider_not_found": "Nhà cung cấp không tồn tại",
+    "custom_endpoint_not_found": "Endpoint không tồn tại",
+    "custom_endpoint_definition_invalid": "Định nghĩa endpoint không qua được kiểm tra, hãy sửa các lỗi được báo rồi thử lại",
+    "custom_endpoint_referenced_by_models": "Endpoint này đang được {count} mô hình sử dụng, hãy gỡ các tham chiếu đó trước khi xóa",
     "at_least_one_field_required": "Phải cung cấp ít nhất một trường để cập nhật",
     "discovery_failed": "Phát hiện mô hình thất bại: {err_msg}",
     "anthropic_discovery_no_key": "API Key chưa được cấu hình, không thể phát hiện mô hình",
     "unknown_endpoint": "Endpoint không xác định: {endpoint}",
+    "endpoint_definition_not_found": "Endpoint {endpoint} không có định nghĩa khai báo",
     "unknown_discovery_format": "discovery_format không hỗ trợ: {discovery_format}",
     "endpoint_required": "Mô hình đã bật phải chỉ định endpoint",
     "endpoint_media_type_mismatch": "media_type của endpoint không khớp: {detail}",
@@ -236,8 +238,6 @@ MESSAGES = {
     "ad_grid_not_supported": "Dự án quảng cáo/video ngắn không hỗ trợ tạo video từ phân cảnh đa lưới",
     "grid_storyboard_not_enabled": "Dự án chưa bật phân cảnh đa lưới",
     "ad_target_duration_required": "Dự án quảng cáo/video ngắn bắt buộc phải có tổng thời lượng mục tiêu (số giây nguyên dương)",
-    "project_id_not_editable": "content_mode không thể chỉnh sửa sau khi tạo dự án",
-    "source_kind_not_editable": "source_kind không thể chỉnh sửa sau khi tạo dự án",
     "project_deleted": "Đã xóa dự án '{name}'",
     "scene_updated": "Đã cập nhật cảnh '{scene_id}'",
     "segment_updated": "Đã cập nhật đoạn '{segment_id}'",
@@ -268,7 +268,6 @@ MESSAGES = {
     # Validators
     "invalid_backend_format": "Định dạng lựa chọn mô hình không hợp lệ; sử dụng provider/model",
     "backend_media_type_mismatch": "Loại mô hình không khớp: mục này cần mô hình {expected}, nhưng {provider}/{model} là mô hình {actual}",
-    "deprecated_image_backend": "Trường image_backend đã ngừng dùng; hãy dùng image_provider_t2i và image_provider_i2i",
     # Versions
     "unsupported_resource_type": "Loại tài nguyên không hỗ trợ: {resource_type}",
     "invalid_resource_id": "ID tài nguyên không hợp lệ: {resource_id}",
@@ -285,10 +284,8 @@ MESSAGES = {
     "ref_payload_too_large": "Dữ liệu ảnh tham chiếu vượt giới hạn của nhà cung cấp, đã thử lại với mức nén bổ sung",
     "ref_payload_floor_exceeded": "Ảnh tham chiếu quá lớn hoặc quá nhiều; ngay cả khi nén ở mức chất lượng thấp nhất vẫn vượt giới hạn kích thước yêu cầu của nhà cung cấp. Vui lòng giảm số lượng ảnh tham chiếu hoặc độ phân giải rồi thử lại",
     "ref_sora_single_ref": "Chế độ tham chiếu Sora hiện không hỗ trợ nhiều ảnh, đã hạ về một ảnh",
-    "ref_shot_parse_fallback": "Không phát hiện tiêu đề Shot N (Xs), được xử lý như một cảnh quay duy nhất",
     "ref_episode_not_found": "Không tìm thấy tập {episode}",
     "ref_not_reference_video_mode": "Kịch bản của tập này không ở chế độ video tham chiếu",
-    "ref_not_registered": "Các tài nguyên được tham chiếu chưa được đăng ký: {missing}",
     "ref_unit_not_found": "Không tìm thấy đơn vị video '{unit_id}'",
     "ref_unit_needs_replan": "Đơn vị video này có vấn đề về người phát ngôn hoặc di chuyển; hãy lập kế hoạch lại trước khi tạo",
     "ref_unit_ids_length_mismatch": "Số lượng unit_ids không khớp với các đơn vị hiện có",
@@ -303,11 +300,11 @@ MESSAGES = {
         "hãy kiểm tra tên hoặc tạo tài sản trước"
     ),
     "ref_warn_unclosed_brace": (
-        "Cảnh {shot}: dấu ngoặc nhọn của lời thoại chưa đóng nên không được nhận là lời thoại, "
+        "Dòng {line}: dấu ngoặc nhọn của lời thoại chưa đóng nên không được nhận là lời thoại, "
         "dòng này sẽ được gửi nguyên văn: {excerpt}…"
     ),
     "ref_warn_braces_not_speech": (
-        "Cảnh {shot}: dấu ngoặc nhọn không được nhận là lời phát ngôn nên sẽ được gửi nguyên văn. "
+        "Dòng {line}: dấu ngoặc nhọn không được nhận là lời phát ngôn nên sẽ được gửi nguyên văn. "
         "Viết lời thoại là @[nhân vật]{{lời thoại}} và lời dẫn là {{lời thoại}}; người nói phải khác "
         "rỗng, dấu ngoặc nhọn phải theo cặp và không lồng nhau"
     ),

@@ -14,7 +14,7 @@ const baseValue = {
   speechRate: null,
 };
 
-const GRID_BAR_NAME = /多宫格分镜生视频/;
+const GRID_BAR_NAME = "多宫格分镜";
 
 describe("WizardStep1Basics", () => {
   it("disables Next button when title is empty", () => {
@@ -94,7 +94,7 @@ describe("WizardStep1Basics", () => {
         onCancel={() => {}}
       />,
     );
-    expect(screen.queryByRole("radiogroup", { name: /源文件性质|Source type|Loại tệp nguồn/ })).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: /源文件性质|Source type|Loại tệp nguồn/ })).not.toBeInTheDocument();
   });
 
   it("emits onChange with screenplay when source kind selected in drama mode", () => {
@@ -214,7 +214,7 @@ describe("WizardStep1Basics", () => {
         onCancel={() => {}}
       />,
     );
-    expect(screen.getByRole("textbox")).toHaveAttribute("aria-required", "true");
+    expect(screen.getByRole("textbox")).toBeRequired();
   });
 
   it("renders project_id_auto_gen_hint below the title input", () => {
@@ -406,6 +406,6 @@ describe("WizardStep1Basics", () => {
         onCancel={() => {}}
       />,
     );
-    expect(screen.getByRole("switch", { name: /多宫格分镜生视频/ })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "多宫格分镜" })).toBeInTheDocument();
   });
 });

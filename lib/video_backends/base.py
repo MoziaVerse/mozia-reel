@@ -4,18 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 import httpx
 from sqlalchemy.exc import InterfaceError, OperationalError
 
+from lib.config.service import DEFAULT_VIDEO_POLL_TIMEOUT_SECONDS
 from lib.data_uri import file_to_data_uri
-from lib.retry import BASE_RETRYABLE_ERRORS, _should_retry, with_retry_async
+from lib.retry import BASE_RETRYABLE_ERRORS, AsyncClock, SystemClock, _should_retry, with_retry_async
 
 # `_should_retry` 默认会做字符串模式兜底（"timeout"/"503" 等），
 # 而 persist 重试要严格"DB 瞬态错误"语义——业务异常（如
@@ -23,6 +23,11 @@ from lib.retry import BASE_RETRYABLE_ERRORS, _should_retry, with_retry_async
 # 显式传 `retry_if=lambda e: isinstance(e, _PERSIST_RETRYABLE_ERRORS)` 关掉兜底。
 
 logger = logging.getLogger(__name__)
+
+VIDEO_POLL_INTERVAL_SECONDS = 5.0
+VIDEO_POLL_MAX_CONSECUTIVE_FAILURES = 10
+VIDEO_POLL_MAX_BACKOFF_SECONDS = 60.0
+
 
 # DB 瞬态错误集合：sqlite "database is locked"、pg "could not connect" / 连接已关闭。
 # 故意不收 DBAPIError 父类——会兜住 IntegrityError/DataError/ProgrammingError 等非瞬态
@@ -58,7 +63,7 @@ async def persist_provider_job_id(
     """Submit 之后立即调：把 job_id 持久化到 DB 让重启可接续。
 
     Caller 显式传 task_id；``endpoint`` 是协议标识（协议维度，只有自定义供应商有，记录本笔供应商
-    任务按哪套协议提交），``base_url`` 是本次实际请求的域名（连接维度，两类供应商通用，续跑据此
+    任务按哪套协议提交），``base_url`` 是请求实际发往的域名（连接维度，两类供应商通用，续跑据此
     回放原域名轮询）。两者与 job_id 同一次写入落地。DB 瞬态错误最多重试 3 次，业务异常立即抛。
     重试用尽抛异常，由 worker finally 兜底 mark_failed（fail-fast）。
     """
@@ -99,7 +104,7 @@ class ProviderJobIdPersistenceMixin:
     ) -> None:
         """submit 成功后立即调：worker 路径写回 job_id，非 worker 路径（task_id=None）跳过。
 
-        同时按维度分列写回本次提交所用的端点信息：协议标识取 ``request.execution_endpoint``（由
+        同时按维度分列写回该笔提交所用的端点信息：协议标识取 ``request.execution_endpoint``（由
         自定义供应商的包装层在转发前注入，内置供应商无此维度、恒 None），实际请求域名取参数
         ``endpoint``（由提交域名随用户配置变化的 backend 传入，只有 dashscope 协议这一条线）。
         两类供应商共用同一套写法，域名一律落 ``submitted_base_url``。持久化失败抛出（DB 瞬态错误
@@ -457,30 +462,43 @@ async def poll_with_retry[T](
     poll_fn: Callable[[], Awaitable[T]],
     is_done: Callable[[T], bool],
     is_failed: Callable[[T], str | None],
-    poll_interval: float,
     max_wait: float,
+    poll_interval: float = VIDEO_POLL_INTERVAL_SECONDS,
     retryable_errors: tuple[type[Exception], ...] = BASE_RETRYABLE_ERRORS,
     retry_if: Callable[[Exception], bool] | None = None,
     label: str = "",
     on_progress: Callable[[T, float], None] | None = None,
+    clock: AsyncClock | None = None,
 ) -> T:
     """通用异步轮询辅助函数，带瞬态错误重试和超时控制。
+
+    连续可重试错误（其间无一次成功响应）满 `VIDEO_POLL_MAX_CONSECUTIVE_FAILURES` 次即抛
+    RuntimeError 终态失败，任一成功响应清零。重试等待按 `poll_interval × 2^k` 退避、封顶
+    `VIDEO_POLL_MAX_BACKOFF_SECONDS`；响应带整数秒且不超过该封顶的 `Retry-After` 时优先采用。
+    失败预算管「供应商不可达」，`max_wait` 管「供应商可达但慢」。任何一次等待都截到 `max_wait`
+    的截止时刻，故最后一次轮询发出时必定仍在预算内。
+
+    失败预算对全部消费方生效，视频与图片两条通道同此一份：图片侧的 `lib/image_backends/vidu.py`
+    与 `lib/kling_backend_base.py` 同样在连续失败满额时终止，不会用满各自的 `max_wait` 窗口。
 
     Args:
         poll_fn: 每次轮询调用的异步函数，返回最新状态。
         is_done: 判断轮询结果是否表示任务完成。
         is_failed: 判断轮询结果是否表示任务失败，返回错误信息或 None。
-        poll_interval: 两次轮询之间的间隔（秒）。
         max_wait: 最大等待时间（秒），超时抛出 TimeoutError。
+        poll_interval: 成功响应后的轮询间隔，同时是失败退避的基数；视频调用通道统一用默认 5 秒。
         retryable_errors: 可重试的异常类型元组（未指定 retry_if 时生效）。
         retry_if: 自定义重试谓词，指定时替代默认的 `_should_retry`，让调用方精确控制
             哪些异常应当重试（如按 HTTP status_code 区分确定性 4xx 与瞬态 5xx）。
         label: 日志前缀（如 "Ark"、"Gemini"）。
         on_progress: 可选的进度回调，每次非终态轮询后调用。
+        clock: 单调计时与异步等待 seam；生产默认使用系统时钟。
     """
-    start = time.monotonic()
+    active_clock = clock if clock is not None else SystemClock()
+    start = active_clock.monotonic()
     prefix = f"{label} " if label else ""
     predicate = retry_if if retry_if is not None else (lambda e: _should_retry(e, retryable_errors))
+    consecutive_failures = 0
 
     # 先查询再等待：已完成/缓存命中的任务立刻返回，不被 poll_interval 白等一轮。
     while True:
@@ -489,19 +507,49 @@ async def poll_with_retry[T](
         except Exception as e:
             if not predicate(e):
                 raise
+            consecutive_failures += 1
             logger.warning("%s轮询异常（将重试）: %s - %s", prefix, type(e).__name__, str(e)[:200])
+            if consecutive_failures >= VIDEO_POLL_MAX_CONSECUTIVE_FAILURES:
+                raise RuntimeError(
+                    f"{prefix}连续轮询失败 {VIDEO_POLL_MAX_CONSECUTIVE_FAILURES} 次，最后错误: {e}"
+                ) from e
+            retry_after = _retry_after_seconds(e)
+            wait_time = (
+                retry_after
+                if retry_after is not None
+                else min(
+                    poll_interval * 2 ** (consecutive_failures - 1),
+                    VIDEO_POLL_MAX_BACKOFF_SECONDS,
+                )
+            )
         else:
+            consecutive_failures = 0
             error_msg = is_failed(result)
             if error_msg is not None:
                 raise RuntimeError(error_msg)
             if is_done(result):
                 return result
             if on_progress is not None:
-                on_progress(result, time.monotonic() - start)
+                on_progress(result, active_clock.monotonic() - start)
+            wait_time = poll_interval
 
-        if time.monotonic() - start >= max_wait:
+        remaining = max_wait - (active_clock.monotonic() - start)
+        if remaining <= 0:
             raise TimeoutError(f"{prefix}任务超时（{max_wait:.0f}秒）")
-        await asyncio.sleep(poll_interval)
+        # 等待不越过剩余预算：下一次轮询必定发在 max_wait 截止时刻或之前。
+        await active_clock.sleep(min(wait_time, remaining))
+
+
+def _retry_after_seconds(exc: Exception) -> int | None:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    raw = headers.get("Retry-After")
+    if not isinstance(raw, str) or not raw.isdigit():
+        return None
+    seconds = int(raw)
+    return seconds if 0 <= seconds <= VIDEO_POLL_MAX_BACKOFF_SECONDS else None
 
 
 @with_retry_async()
@@ -579,9 +627,55 @@ class ReferenceAudioMode(StrEnum):
     DIRECT = "direct"
 
 
+class VideoAudioMode(StrEnum):
+    """成片音轨与音轨开关的三态。
+
+    ``CONTROLLABLE`` 表示请求携带音轨开关，用户的开/关意图能抵达供应商；``ALWAYS_ON`` 表示
+    成片必然带音轨而请求里没有开关可下发（关闭意图必然落空）；``ALWAYS_OFF`` 表示该路径不产
+    音轨、也没有开关（开启意图必然落空）。
+
+    与 ``reference_audio_mode`` 是两回事：后者描述**输入**通道（能否给模型一段音色参考），本
+    枚举描述**输出**音轨。取值与前端 ``VideoAudioControl`` 字面量一一对应，两侧不各自归并。
+    """
+
+    CONTROLLABLE = "controllable"
+    ALWAYS_ON = "always_on"
+    ALWAYS_OFF = "always_off"
+
+
+def audio_capability_pair_is_coherent(*, mode: object, count: int) -> bool:
+    """音频两维的合并后不变式：声明支持音色输入就必须给出正的段数上限。
+
+    两维各自合法、合起来无意义的组合只有这一种（``direct`` ⊕ 上限 0）：自定义供应商的稀疏覆盖
+    只写其中一维就能凑出——覆盖 ``reference_audio_mode=direct`` 而不动系统判定的 0，或反过来把
+    ``max_reference_audio_count`` 压成 0 而模式仍是系统判定的 ``direct``；声明式定义则可以两维
+    直接写成这个组合。反向组合（``none`` ⊕ 正上限）不算违约：模式为 ``none`` 时上限本就不参与
+    判定，且"关掉音色输入"是正当意图，判违约反会把用户明确关掉的能力顶回开启。
+
+    不修正这组的后果是 ``gate_video_request`` 先过模式判定、再撞上限 0，把"该模型不支持参考
+    音频"报成"最多支持 0 段参考音频"——用户按提示去减角色数量，减到零段也过不了。
+
+    三处消费方共用此判定，不得各写一份：自定义供应商的写入侧
+    （``server/routers/custom_providers.py``）、能力合成侧
+    （``lib/custom_provider/capabilities.py``）与声明式定义的保存期校验器
+    （``lib/custom_provider/endpoint_definition/validator.py``）。
+    """
+    return mode in {ReferenceAudioMode.NONE, ReferenceAudioMode.NONE.value} or count > 0
+
+
+#: 视频执行路径（任务类型桶）：``i2v`` 覆盖文生与图生首帧，``r2v`` 是参考生视频。
+#: 与 ``lib.config.resolver.VideoCapability`` 同一份词汇表，因分层契约（config 是最底层，
+#: backend 不得反向导入）而各层各声明一次，取值一致由
+#: ``tests/unit/lib/video_backends/test_video_backend_capabilities.py`` 的守卫锁定。
+VideoRoute = Literal["i2v", "r2v"]
+
+
 @dataclass
 class VideoCapabilities:
     """Declares what a video backend supports.
+
+    ``text_to_video`` 表示不带任何图片素材的纯文生视频请求是否可用。默认 True 保持既有
+    backend 的兼容语义；必须带图的 model 显式声明 False。
 
     ``first_frame`` / ``last_frame`` 描述图生视频路径的首帧与尾帧槽位。
     ``max_reference_images`` 描述参考生视频路径：后端接受 ``reference_images`` 请求字段
@@ -590,6 +684,16 @@ class VideoCapabilities:
     不是统一契约：部分后端拒绝叠加（如 Agnes 抛 ``VideoCapabilityError``），部分静默叠加
     （如 v2 中转、Grok、Sora 首帧与参考共享单槽）。调用方不应假设某种统一行为，需按具体
     后端核实。
+
+    ``audio_track`` / ``reference_route_audio_track`` 描述**成片音轨**（有无音轨、开关是否可
+    控），是该维度的唯一真相源——与请求构造同源，backend 是否往请求体里放音轨开关就是这一位
+    的字面含义。两条执行路径各声明一次，与 ``first_frame`` / ``max_reference_images`` 把两条
+    路径摊平进同一个对象同构：``reference_route_audio_track`` 为 None 表示参考生视频路径与
+    ``audio_track`` 同形（绝大多数 backend 如此），非 None 时表示该路径的请求形态另有一套音轨
+    行为（可灵 v3-omni 的多图主体子路径原生 schema 不含音轨开关，故该路径恒无声）。默认取
+    ``CONTROLLABLE``——未声明即「无信号不收紧」，不把能力不明的 model 谎报成开关失效。
+    取值请走 :meth:`audio_track_for_route`，不要直接读字段，否则每个调用方都要重写一遍
+    「参考生视频优先」的合并规则。
 
     ``reference_audio_mode`` / ``max_reference_audio_count`` 描述参考音频路径，与参考图
     同构：模式非 ``NONE`` 时后端接受 ``reference_audio_files`` 请求字段，段数受上限约束。
@@ -630,6 +734,7 @@ class VideoCapabilities:
     元数据沿用后者）。
     """
 
+    text_to_video: bool = True
     first_frame: bool = True
     last_frame: bool = False
     max_reference_images: int = 0
@@ -639,6 +744,18 @@ class VideoCapabilities:
     reference_audio_per_image: bool = False
     max_prompt_chars: int | None = None
     first_frame_ratio_adaptive_only: bool = False
+    audio_track: VideoAudioMode = VideoAudioMode.CONTROLLABLE
+    reference_route_audio_track: VideoAudioMode | None = None
+
+    def audio_track_for_route(self, route: VideoRoute) -> VideoAudioMode:
+        """该执行路径上成片音轨的实际形态。
+
+        参考生视频路径未单独声明时跟随 ``audio_track``——两条路径同形是常态，逐 backend 重复
+        声明只会多出一份可漂移的副本。
+        """
+        if route == "r2v" and self.reference_route_audio_track is not None:
+            return self.reference_route_audio_track
+        return self.audio_track
 
 
 @dataclass
@@ -664,6 +781,7 @@ class VideoGenerationRequest:
     # 不构成契约，编排层（reference_video 渲染管线）必须显式提供。
     reference_audio_targets: list[int] | None = None
     generate_audio: bool = True
+    poll_timeout_seconds: int = DEFAULT_VIDEO_POLL_TIMEOUT_SECONDS
 
     # 项目上下文（用于构建文件服务 URL 等）
     project_name: str | None = None

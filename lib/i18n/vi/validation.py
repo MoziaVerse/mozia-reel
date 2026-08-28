@@ -14,6 +14,7 @@ MESSAGES = {
     "val_field_must_be_string_typed": "{field} phải là chuỗi, hiện là {actual}",
     "val_field_must_be_array": "{field} phải là mảng",
     "val_field_must_be_nonempty_array": "{field} phải là mảng không rỗng",
+    "val_field_must_be_nonempty_string": "{field} phải là chuỗi không rỗng",
     "val_field_must_be_object": "{field} phải là đối tượng",
     "val_field_invalid": "{field} không hợp lệ: {detail}",
     "val_ledger_source_file_not_relative": "source_file phải là đường dẫn POSIX tương đối trong dự án",
@@ -98,7 +99,7 @@ MESSAGES = {
     # ---- cảnh quay quảng cáo ----
     "val_shot_duration_missing_zero": "{prefix}: thiếu duration_seconds, sẽ tính 0 vào tổng thời lượng",
     "val_shot_duration_out_of_range": (
-        "{prefix}: duration_seconds không hợp lệ '{value}', tuyến reference_video yêu cầu số nguyên "
+        "{prefix}: duration_seconds không hợp lệ '{value}', chế độ reference_video yêu cầu số nguyên "
         "trong khoảng {low}-{high}"
     ),
     "val_shot_missing_voiceover_text": (
@@ -110,19 +111,7 @@ MESSAGES = {
     "val_unit_id_duplicate": "{prefix}: unit_id trùng lặp '{value}'",
     "val_video_units_missing": "Kịch bản reference_video thiếu mảng video_units hoặc mảng rỗng",
     "val_unit_duration_range": "{prefix}: duration_seconds phải là số nguyên trong khoảng {low}-{high}",
-    "val_unit_shots_too_many": "{prefix}: shots có {count} mục; chỉ cho phép tối đa {max}",
-    "val_migration_content_replan_requires_needs_replan": (
-        "{prefix}: migration_requires_content_replan=true yêu cầu needs_replan=true"
-    ),
-    "val_reference_entry_must_be_object": "{prefix}: mỗi mục reference phải là đối tượng",
-    "val_reference_type_invalid": "{prefix}: reference.type không hợp lệ: {value}",
-    "val_reference_name_invalid": "{prefix}: reference.name phải là chuỗi không rỗng: {value}",
-    "val_reference_not_in_bucket": (
-        "{prefix}: {asset_type} '{name}' được tham chiếu không nằm trong nhóm tương ứng của project.json"
-    ),
-    "val_ref_type_invalid": "{prefix}: type không hợp lệ: {value}",
-    "val_ref_name_invalid": "{prefix}: name phải là chuỗi không rỗng: {value}",
-    # ---- khung xương và tuyến sinh video ----
+    # ---- khung xương và chế độ tạo video ----
     "val_skeleton_noun_segments": "phân cảnh",
     "val_skeleton_noun_scenes": "cảnh",
     "val_skeleton_noun_shots": "cảnh quay",
@@ -130,25 +119,25 @@ MESSAGES = {
     "val_route_reference_video": "sinh video từ ảnh tham chiếu (reference_video)",
     "val_route_storyboard": "sinh video từ storyboard (storyboard)",
     "val_skeleton_mismatch_reference_known": (
-        "Khung xương kịch bản không khớp tuyến sinh video của dự án: tuyến là {route}, yêu cầu khung "
+        "Khung xương kịch bản không khớp chế độ tạo video của dự án: chế độ là {route}, yêu cầu khung "
         "{expected} ({expected_noun}), nhưng kịch bản hiện dùng {actual} ({actual_noun}). "
-        "Hãy chạy lại split-reference-video-units để tách lại tập này rồi sinh lại kịch bản. "
+        "Hãy gọi generate_step1 để tách lại tập này rồi sinh lại kịch bản. "
         "Kịch bản vẫn có thể xem, sửa và xuất."
     ),
     "val_skeleton_mismatch_reference_none": (
-        "Khung xương kịch bản không khớp tuyến sinh video của dự án: tuyến là {route}, yêu cầu khung "
+        "Khung xương kịch bản không khớp chế độ tạo video của dự án: chế độ là {route}, yêu cầu khung "
         "{expected} ({expected_noun}), nhưng kịch bản không có mảng khung xương nào. "
-        "Hãy chạy lại split-reference-video-units để tách lại tập này rồi sinh lại kịch bản. "
+        "Hãy gọi generate_step1 để tách lại tập này rồi sinh lại kịch bản. "
         "Kịch bản vẫn có thể xem, sửa và xuất."
     ),
     "val_skeleton_mismatch_storyboard_known": (
-        "Khung xương kịch bản không khớp tuyến sinh video của dự án: tuyến là {route}, yêu cầu khung "
+        "Khung xương kịch bản không khớp chế độ tạo video của dự án: chế độ là {route}, yêu cầu khung "
         "{expected} ({expected_noun}), nhưng kịch bản hiện dùng {actual} ({actual_noun}). "
         "Hãy chạy lại bước tách tập (step1) để tách lại tập này rồi sinh lại kịch bản. "
         "Kịch bản vẫn có thể xem, sửa và xuất."
     ),
     "val_skeleton_mismatch_storyboard_none": (
-        "Khung xương kịch bản không khớp tuyến sinh video của dự án: tuyến là {route}, yêu cầu khung "
+        "Khung xương kịch bản không khớp chế độ tạo video của dự án: chế độ là {route}, yêu cầu khung "
         "{expected} ({expected_noun}), nhưng kịch bản không có mảng khung xương nào. "
         "Hãy chạy lại bước tách tập (step1) để tách lại tập này rồi sinh lại kịch bản. "
         "Kịch bản vẫn có thể xem, sửa và xuất."
@@ -181,8 +170,9 @@ MESSAGES = {
     "arch_missing_asset_definition": (
         "{items_key}[{index}]: {field} tham chiếu {asset_type} không có trong project.json: {names}"
     ),
-    "arch_unit_missing_asset_definition": (
-        "video_units[{index}]: references tham chiếu {asset_type} không có trong project.json: {names}"
+    "arch_unit_unresolved_mentions": (
+        "video_units[{index}]: nội dung tham chiếu tên tài sản không có trong project.json: {names}; "
+        "chúng sẽ không tạo ảnh tham chiếu"
     ),
     "arch_generated_assets_defaults": "{label}[{index}].generated_assets: đã bổ sung các trường mặc định {fields}",
     "arch_missing_generated_assets": "{label}[{index}]: đã bổ sung trường còn thiếu generated_assets",
@@ -212,5 +202,122 @@ MESSAGES = {
     "arch_conflict_detected": "Phát hiện trùng mã dự án",
     "arch_project_name_conflict": (
         "Mã dự án '{name}' đã tồn tại. Hãy chọn ghi đè dự án hiện có hoặc nhập với tên mới."
+    ),
+    # ---- Kiểm tra định nghĩa điểm cuối tùy chỉnh ----
+    "val_ce_missing_field": "Thiếu trường bắt buộc: {field}",
+    "val_ce_unknown_field": "Trường không xác định: {field}",
+    "val_ce_removed_field": "Trường đã bị loại khỏi định dạng: {field} - {reason}",
+    "val_ce_invalid_type": "Sai kiểu dữ liệu, cần {expected}",
+    "val_ce_invalid_enum_value": "Giá trị không được phép, các giá trị hợp lệ: {allowed}",
+    "val_ce_invalid_value": "Giá trị không đúng định dạng: {detail}",
+    "val_ce_schema_violation": "Không khớp định dạng định nghĩa: {detail}",
+    "val_ce_removed_reason_request_query": (
+        "tham số query tĩnh và động đều viết trong mẫu url, query chứa thông tin xác thực thuộc về auth.query"
+    ),
+    "val_ce_removed_reason_status_codes": (
+        "chính sách mã HTTP thuộc về thời gian chạy: 2xx thành công, 429 và 5xx thử lại, còn lại là thất bại"
+    ),
+    "val_ce_removed_reason_polling_policy": (
+        "chu kỳ và thời gian chờ khi hỏi trạng thái là chính sách thời gian chạy, không nằm trong định nghĩa"
+    ),
+    "val_ce_removed_reason_extract_source": (
+        "việc trích xuất luôn bắt đầu từ thân phản hồi; mã trạng thái HTTP không đi qua JSONPath"
+    ),
+    "val_ce_removed_reason_extract_usage_keys": "mức sử dụng nay nằm trong poll.extract.usage",
+    "val_ce_removed_reason_mime_types": (
+        "định dạng tư liệu không có danh sách cho phép; nhà cung cấp sẽ từ chối định dạng không nhận"
+    ),
+    "val_ce_removed_reason_media_type": "giai đoạn này chỉ có một loại phương tiện là video",
+    "val_ce_malformed_placeholder": (
+        "{fragment} không phải là chỗ giữ hợp lệ: chỉ hỗ trợ biến trần "
+        "(như prompt hoặc inputs.first_frame) — không có bộ lọc, chỉ số hay biểu thức, "
+        "và mọi dấu ngoặc mở đều phải được đóng"
+    ),
+    "val_ce_undeclared_variable": "Chỗ giữ {name} tham chiếu tới một biến chưa được khai báo",
+    "val_ce_api_key_outside_auth": (
+        "api_key chỉ được xuất hiện trong mục auth: thông tin xác thực không đi vào thân yêu cầu hay URL, "
+        "và cũng không nằm trong định nghĩa bạn chia sẻ"
+    ),
+    "val_ce_auth_without_api_key": (
+        "Mục auth không rỗng nhưng không tham chiếu api_key: hãy để trống nếu API không cần thông tin xác thực, "
+        "nếu không hãy để mục này ghi thông tin xác thực"
+    ),
+    "val_ce_auth_header_conflict": (
+        "{header} trùng tên với auth.headers (không phân biệt hoa thường): chỉ mục auth mới được ghi header xác thực"
+    ),
+    "val_ce_header_name_duplicate": (
+        "{header} chỉ khác {first} trong cùng một bảng ở chữ hoa chữ thường: tên header HTTP không phân biệt "
+        "hoa thường nên cả hai đều được gửi đi"
+    ),
+    "val_ce_auth_query_conflict": (
+        "URL đã mang tham số query {param} trùng với auth.query: chỉ mục auth mới được ghi query xác thực"
+    ),
+    "val_ce_task_id_out_of_scope": "task_id chỉ dùng được trong mục poll và result",
+    "val_ce_result_id_out_of_scope": "result_id chỉ dùng được trong mục result",
+    "val_ce_result_id_without_extract": "Đã tham chiếu result_id nhưng poll.extract không khai báo result_id",
+    "val_ce_input_out_of_scope": (
+        "Tư liệu {name} chỉ được tham chiếu trong mục submit: yêu cầu hỏi trạng thái và lấy kết quả không mang tư liệu"
+    ),
+    "val_ce_list_input_requires_each": "{name} là tư liệu dạng danh sách, phải khai triển bằng $each thay vì chèn thẳng",
+    "val_ce_each_in_not_list_input": "$each.in trỏ tới {name}, không phải tư liệu dạng danh sách đã khai báo",
+    "val_ce_each_shape_invalid": (
+        "$each hoặc dùng item để trải thành phần tử mảng, hoặc dùng đồng thời key và value để trải thành cặp "
+        "khóa – giá trị; không được trộn hai cách viết"
+    ),
+    "val_ce_each_position_mismatch": (
+        "Cách viết $each không khớp với vị trí: ở vị trí mảng dùng item để trải thành phần tử, "
+        "ở vị trí đối tượng dùng key cùng value để trải thành cặp khóa – giá trị"
+    ),
+    "val_ce_each_alias_reserved": (
+        "{name} là biến dành riêng bên trong thân vòng lặp, không thể dùng làm bí danh phần tử của $each"
+    ),
+    "val_ce_when_unknown_input": "$when trỏ tới {name}, không phải tư liệu đã khai báo",
+    "val_ce_input_not_referenced": (
+        "Tư liệu được khai báo nhưng không được tham chiếu trong submit: nó không bao giờ được gửi đi "
+        "và cũng không thể làm cơ sở cho một năng lực"
+    ),
+    "val_ce_enum_map_variable_not_allowed": "{variable} không hỗ trợ ánh xạ, các biến ánh xạ được: {allowed}",
+    "val_ce_status_map_target_invalid": (
+        "Trạng thái {target} nằm ngoài {allowed}; hãy ánh xạ ngữ nghĩa hết hạn về failed"
+    ),
+    "val_ce_capability_declared_without_input": (
+        "Đã khai báo {capability} nhưng submit không tham chiếu tư liệu {source} nào, năng lực sẽ sai sự thật"
+    ),
+    "val_ce_capability_input_without_declaration": (
+        "submit tham chiếu tư liệu {source} nhưng không khai báo {capability}, "
+        "tư liệu vẫn được gửi đi trong khi giao diện không mở năng lực đó"
+    ),
+    "val_ce_capability_incoherent": "Năng lực {capability} mâu thuẫn với nhóm khai báo; yêu cầu: {requirement}",
+    "val_ce_jsonpath_not_a_string": "Đường dẫn trích xuất phải là chuỗi: {path_expression}",
+    "val_ce_jsonpath_surrounding_whitespace": (
+        "Đường dẫn trích xuất không được có khoảng trắng ở hai đầu: {path_expression}"
+    ),
+    "val_ce_jsonpath_missing_root": "Đường dẫn trích xuất phải bắt đầu bằng $: {path_expression}",
+    "val_ce_jsonpath_recursive_descent": (
+        "Đường dẫn trích xuất không cho phép duyệt đệ quy (tại ký tự {position}): {path_expression}"
+    ),
+    "val_ce_jsonpath_union": (
+        "Đường dẫn trích xuất không cho phép bộ chọn hợp (tại ký tự {position}): {path_expression}"
+    ),
+    "val_ce_jsonpath_slice_step": (
+        "Đường dẫn trích xuất không cho phép bước nhảy khi cắt lát (tại ký tự {position}): {path_expression}"
+    ),
+    "val_ce_jsonpath_function_extension": (
+        "Đường dẫn trích xuất không cho phép hàm mở rộng (tại ký tự {position}): {path_expression}"
+    ),
+    "val_ce_jsonpath_filter_root_reference": (
+        "Bộ lọc không được tham chiếu nút gốc (tại ký tự {position}): {path_expression}"
+    ),
+    "val_ce_jsonpath_filter_non_singular": (
+        "Bộ lọc chỉ được dùng truy vấn đơn trị (tại ký tự {position}): {path_expression}"
+    ),
+    "val_ce_jsonpath_regex_operator": (
+        "Đường dẫn trích xuất không cho phép toán tử khớp biểu thức chính quy (tại ký tự {position}): {path_expression}"
+    ),
+    "val_ce_jsonpath_syntax": "Lỗi cú pháp đường dẫn trích xuất (tại ký tự {position}): {path_expression}",
+    "val_ce_poll_without_task_id": "Yêu cầu hỏi trạng thái không tham chiếu task_id; hãy xác nhận đây là chủ ý",
+    "val_ce_jsonpath_wildcard_order": (
+        "{path_expression} dùng ký tự đại diện: với đối tượng chỉ lấy thành viên đầu tiên, "
+        "và thứ tự khóa có thể khác nhau giữa bản xem trước và phía máy chủ"
     ),
 }

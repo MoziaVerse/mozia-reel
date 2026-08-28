@@ -16,6 +16,7 @@ from lib.logging_utils import format_kwargs_for_log
 from lib.providers import PROVIDER_VIDU
 from lib.retry import DOWNLOAD_BACKOFF_SECONDS, DOWNLOAD_MAX_ATTEMPTS, with_retry_async
 from lib.video_backends.base import (
+    VideoAudioMode,
     VideoCapabilities,
     VideoCapabilityError,
     VideoGenerationRequest,
@@ -40,9 +41,6 @@ from lib.vidu_shared import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "viduq3-turbo"
-_POLL_INTERVAL_SECONDS = 5.0
-_MIN_POLL_TIMEOUT_SECONDS = 900.0
-_POLL_TIMEOUT_PER_SECOND = 90.0
 _MAX_REFERENCE_IMAGES = 7
 _PROMPT_MAX_TEXT2VIDEO = 5000
 _PROMPT_MAX_REFERENCE2VIDEO = 2000
@@ -197,6 +195,7 @@ class ViduVideoBackend:
         first_frame = model in _ENDPOINT_MODELS["/img2video"]
         last_frame = model in _ENDPOINT_MODELS["/start-end2video"]
         return VideoCapabilities(
+            text_to_video=model in _ENDPOINT_MODELS["/text2video"],
             first_frame=first_frame,
             last_frame=last_frame,
             max_reference_images=_MAX_REFERENCE_IMAGES if reference_images else 0,
@@ -210,6 +209,10 @@ class ViduVideoBackend:
             max_prompt_chars=(
                 _PROMPT_MAX_REFERENCE2VIDEO if _serves_only_reference2video(model) else _PROMPT_MAX_TEXT2VIDEO
             ),
+            # 音轨开关 body["audio"] 只对 q3 系列下发（_build_request），其余系列默认静音且无
+            # 开关可下发，故恒无声。未登记 model 不在 _Q3_MODELS 内，同样按恒无声声明——与
+            # `generate_audio=... if self._model in _Q3_MODELS else False` 的结算口径同源。
+            audio_track=(VideoAudioMode.CONTROLLABLE if model in _Q3_MODELS else VideoAudioMode.ALWAYS_OFF),
         )
 
     @property
@@ -225,7 +228,6 @@ class ViduVideoBackend:
         endpoint, body = self._build_request(request)
         # _build_request 已把 duration 归一化到 body["duration"]，统一使用以避免 None 崩溃及结果不一致。
         coerced_duration = int(body["duration"])
-        max_wait = max(_MIN_POLL_TIMEOUT_SECONDS, float(coerced_duration) * _POLL_TIMEOUT_PER_SECOND)
 
         async with create_vidu_client(api_key=self._api_key, base_url=self._base_url) as client:
             payload = await self._create_task(client, endpoint, body)
@@ -245,8 +247,7 @@ class ViduVideoBackend:
                 poll_fn=lambda: fetch_vidu_task(client, task_id),
                 is_done=is_vidu_done,
                 is_failed=vidu_failure_reason,
-                poll_interval=_POLL_INTERVAL_SECONDS,
-                max_wait=max_wait,
+                max_wait=request.poll_timeout_seconds,
                 retryable_errors=VIDU_RETRYABLE_ERRORS,
                 label="Vidu",
                 on_progress=lambda v, elapsed: logger.info(

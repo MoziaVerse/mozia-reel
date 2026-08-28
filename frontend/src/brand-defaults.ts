@@ -12,8 +12,8 @@
 
 export const BRAND_DEFAULTS = {
   name: "ArcReel",
-  tagline: "AI 视频创作工作台",
-  description: "AI 视频创作工作台，统一管理项目、脚本、分镜、视频生成与智能体对话。",
+  tagline: "Agent 驱动的 AI 视频创作工作台",
+  description: "AI 视频创作工作台，统一管理项目、脚本、分镜、视频生成与 Agent 对话。",
   /** AGPL-3.0 §13：默认指向上游仓库；修改版须经 VITE_SOURCE_URL 覆盖。 */
   sourceUrl: "https://github.com/ArcReel/ArcReel",
 } as const;

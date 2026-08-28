@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Check,
@@ -59,19 +59,30 @@ function Row({
 export function AccountSection({ overview }: { overview: MatrixOverview }) {
   const { t } = useTranslation(["dashboard", "common"]);
   const [credits, setCredits] = useState<MatrixCredits | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  // 初值即 true：挂载就要拉一次。写成 false 再由 effect 同步置 true 会触发级联渲染
+  // （react-hooks/set-state-in-effect），且首帧会闪一下"已加载完"的空态。
+  const [refreshing, setRefreshing] = useState(true);
   const [copied, setCopied] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
-  const loadCredits = () => {
-    setRefreshing(true);
-    API.getMatrixCredits()
-      .then(setCredits)
-      .catch(() => setCredits({ available: false }))
-      .finally(() => setRefreshing(false));
-  };
+  const fetchCredits = useCallback(
+    () =>
+      API.getMatrixCredits()
+        .then(setCredits)
+        .catch(() => setCredits({ available: false }))
+        .finally(() => setRefreshing(false)),
+    [],
+  );
 
-  useEffect(loadCredits, []);
+  // 手动刷新才需要把 refreshing 拨回 true —— 挂载那次由初值承担。
+  const loadCredits = useCallback(() => {
+    setRefreshing(true);
+    void fetchCredits();
+  }, [fetchCredits]);
+
+  useEffect(() => {
+    void fetchCredits();
+  }, [fetchCredits]);
 
   const ssoSub = overview.user?.sso_sub ?? "";
 
@@ -120,7 +131,7 @@ export function AccountSection({ overview }: { overview: MatrixOverview }) {
               <p className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-text">{ssoSub || "—"}</p>
               <button
                 type="button"
-                onClick={copyId}
+                onClick={() => void copyId()}
                 disabled={!ssoSub}
                 aria-label={t("dashboard:account_copy_id")}
                 className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-hairline-soft px-2.5 py-1.5 text-[11.5px] text-text-3 transition-colors hover:border-hairline hover:text-text disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
@@ -216,7 +227,7 @@ export function AccountSection({ overview }: { overview: MatrixOverview }) {
           )}
           <button
             type="button"
-            onClick={logout}
+            onClick={() => void logout()}
             disabled={loggingOut}
             className="inline-flex items-center gap-1.5 rounded-md border border-hairline-soft px-3 py-1.5 text-[12px] text-text-3 transition-colors hover:border-hairline hover:text-text disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >

@@ -6,9 +6,10 @@ import { useAppStore } from "@/stores/app-store";
 import { useTasksStore } from "@/stores/tasks-store";
 import { makeTask } from "@/test/factories";
 
-vi.mock("@/components/canvas/timeline/VersionTimeMachine", () => ({
-  VersionTimeMachine: () => <div data-testid="version-time-machine">versions</div>,
-}));
+vi.mock("@/components/canvas/timeline/VersionTimeMachine", async () => {
+  const { versionTimeMachineMock } = await import("@/__mocks__/VersionTimeMachine");
+  return versionTimeMachineMock();
+});
 
 
 describe("ProductCard", () => {
@@ -45,7 +46,7 @@ describe("ProductCard", () => {
       />,
     );
 
-    const sheetInput = screen.getByLabelText("上传设计图", { selector: "input" });
+    const sheetInput = screen.getByLabelText("上传资产图", { selector: "input" });
     // 面板打开（点击上传按钮）之后、选完文件之前，该商品被别处入队占用。
     useTasksStore.setState({
       tasks: [
@@ -63,7 +64,7 @@ describe("ProductCard", () => {
     fireEvent.change(sheetInput as HTMLInputElement, { target: { files: [file] } });
 
     await waitFor(() => {
-      expect(pushToast).toHaveBeenCalledWith("生成或编辑进行中，暂无法上传设计图", "info");
+      expect(pushToast).toHaveBeenCalledWith("生成或编辑进行中，暂无法上传资产图", "info");
     });
     expect(uploadFile).not.toHaveBeenCalled();
   });
@@ -81,7 +82,7 @@ describe("ProductCard", () => {
     );
 
     expect(screen.getByDisplayValue("限量款背包")).toHaveAttribute("readonly");
-    expect(screen.queryByTestId("version-time-machine")).toBeNull();
-    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.queryByTestId("version-time-machine")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 });

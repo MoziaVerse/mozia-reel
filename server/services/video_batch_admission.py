@@ -31,8 +31,10 @@ from lib.batch_admission import (
     UnitAdmissionTicket,
     refused_ticket,
 )
-from lib.config.resolver import video_bucket_for_generation_mode
+from lib.config.resolver import ConfigResolver, video_bucket_for_generation_mode
 from lib.db import async_session_factory
+from lib.db.base import DEFAULT_USER_ID
+from lib.generation_queue import GenerationQueue
 from lib.generation_queue_client import TaskSpec, get_active_tasks_for_resources
 from lib.generation_result import (
     GenerationAction,
@@ -50,6 +52,7 @@ from lib.narration_delivery import (
     USE_TTS,
     NarratedVideoDurationPreparation,
     NarrationDeliveryProblem,
+    TtsSettingsResolver,
     VideoRequestCostFacts,
     video_request_cost_unavailable_problem,
     video_request_requires_exact_quote,
@@ -62,7 +65,6 @@ from lib.prompt_utils import (
     strip_voice_profiles,
     video_prompt_to_yaml,
 )
-from lib.reference_video import assemble_shots_text
 from lib.reference_video.request_projection import (
     ProjectionProblem,
     ReferenceRequestOptions,
@@ -282,7 +284,7 @@ def resolve_reference_batch_targets(
 
 
 def reference_unit_task_spec(unit: object, script_file: str) -> TaskSpec:
-    """单 unit 的 TaskSpec 构造，供批量准入、批量入队与时长预检共用同一份结构校验
+    """单 unit 的 TaskSpec 构造，供整批准入判定、批量入队与时长预检共用同一份结构校验
     （见 ADR-0001）——``TaskSpec.from_request`` 是「是否可入队」的唯一真相源，几处判断
     不能各自维护一份、由此产生分歧（如预检放行了入队会拒绝的空提示词 unit）。
     """
@@ -294,19 +296,19 @@ def reference_unit_task_spec(unit: object, script_file: str) -> TaskSpec:
     unit_id = str(unit.get("unit_id") or "")
     if unit.get("needs_replan") is True:
         require_script_unit_admitted("video_units", unit)
-    shots = unit.get("shots")
-    if not shots:
-        raise ValueError("没有 shots")
-    if not isinstance(shots, list):
+    text = unit.get("text")
+    if not isinstance(text, str):
         # 容器校验落在入队校验这一处：脏值（导入 / Agent 裸写 script 产生的 dict、数字）
-        # 不拦就会在拼接镜头文本时抛出 TypeError，把整批打成 500，而不是让这个 unit
+        # 不拦就会在下游拼接提示词时抛出 TypeError，把整批打成 500，而不是让这个 unit
         # 带着自己的问题码进入准入结论。
-        raise ValueError(f"shots 必须是数组，当前为 {type(shots).__name__}")
+        raise ValueError(f"text 必须是字符串，当前为 {type(text).__name__}")
+    if not text.strip():
+        raise ValueError("正文为空")
     spec = TaskSpec.from_request(
         task_type="reference_video",
         media_type="video",
         resource_id=unit_id,
-        prompt=assemble_shots_text(shots),
+        prompt=text,
         script_file=script_file,
     )
     require_script_unit_admitted("video_units", unit)
@@ -332,7 +334,6 @@ _PROBLEM_ACTIONS: dict[str, GenerationAction] = {
     "confirm_duration": GenerationAction.CONFIRM_REQUEST_DURATION,
     "configure_video_model": GenerationAction.CONFIGURE_PROVIDER,
     "enable_model_audio": GenerationAction.CONFIGURE_PROVIDER,
-    "repair_reference_declaration": GenerationAction.FIX_INPUT,
     "repair_reference_assets": GenerationAction.GENERATE_DEPENDENCY,
     "review_reference_selection": GenerationAction.FIX_INPUT,
     "review_request_configuration": GenerationAction.FIX_INPUT,
@@ -410,6 +411,8 @@ async def _active_conflicts(
     task_type: str,
     script_file: str | None,
     unit_ids: Sequence[str],
+    user_id: str = DEFAULT_USER_ID,
+    queue: GenerationQueue | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Map unit id → the active task that already occupies it, if any."""
 
@@ -420,6 +423,8 @@ async def _active_conflicts(
         task_type=task_type,
         resource_ids=list(unit_ids),
         script_file=script_file,
+        user_id=user_id,
+        queue=queue,
     )
     return {str(task["resource_id"]): task for task in active if task.get("resource_id")}
 
@@ -455,6 +460,10 @@ async def admit_reference_video_batch(
     confirmed_request_durations: Mapping[str, int] | None = None,
     spec_check: Callable[[dict[str, Any]], object] | None = None,
     extra_tickets: Sequence[UnitAdmissionTicket] = (),
+    user_id: str = DEFAULT_USER_ID,
+    queue: GenerationQueue | None = None,
+    config_resolver: object | None = None,
+    tts_settings_resolver: TtsSettingsResolver | None = None,
 ) -> BatchAdmission:
     """Evaluate every reference unit of one request against the current state.
 
@@ -474,12 +483,16 @@ async def admit_reference_video_batch(
         task_type="reference_video",
         script_file=script_file,
         unit_ids=unit_ids,
+        user_id=user_id,
+        queue=queue,
     )
     active_tts = (
         await active_tts_resource_ids(
             project_name=project_name,
             resource_ids=unit_ids,
             script_file=script_file,
+            user_id=user_id,
+            queue=queue,
         )
         if request_options.narration_delivery == USE_TTS
         else frozenset()
@@ -543,6 +556,8 @@ async def admit_reference_video_batch(
                 project_path=project_path,
                 options=unit_options,
                 project_name=project_name,
+                user_id=user_id,
+                tts_settings_resolver=tts_settings_resolver,
                 tts_in_progress=unit_id in active_tts,
             )
             projection = await project_reference_unit_request(
@@ -553,6 +568,7 @@ async def admit_reference_video_batch(
                 options=current_options,
                 tts_in_progress=unit_id in active_tts,
                 current_options_materialized=True,
+                resolver=config_resolver,
             )
         except ValueError as exc:
             # 投影读的是剧本上的值（如 duration_seconds）：脏值在这里抛出去会让整个请求塌成
@@ -645,6 +661,10 @@ async def admit_storyboard_video_batch(
     selection: GenerationSelectionMode,
     confirmed_request_durations: Mapping[str, int] | None = None,
     extra_tickets: Sequence[UnitAdmissionTicket] = (),
+    user_id: str = DEFAULT_USER_ID,
+    queue: GenerationQueue | None = None,
+    config_resolver: ConfigResolver | None = None,
+    tts_settings_resolver: TtsSettingsResolver | None = None,
 ) -> BatchAdmission:
     """Evaluate every storyboard unit of one request against the current state.
 
@@ -663,12 +683,16 @@ async def admit_storyboard_video_batch(
         task_type="video",
         script_file=script_file,
         unit_ids=resource_ids,
+        user_id=user_id,
+        queue=queue,
     )
     active_tts = (
         await active_tts_resource_ids(
             project_name=project_name,
             resource_ids=resource_ids,
             script_file=script_file,
+            user_id=user_id,
+            queue=queue,
         )
         if request_options.narration_delivery == USE_TTS
         else frozenset()
@@ -702,6 +726,10 @@ async def admit_storyboard_video_batch(
             ),
             confirmed_request_duration_seconds=unit_options.confirmed_request_duration_seconds,
             tts_in_progress=resource_id in active_tts,
+            user_id=user_id,
+            queue=queue,
+            config_resolver=config_resolver,
+            tts_settings_resolver=tts_settings_resolver,
         )
         tickets.append(await _storyboard_ticket(resource_id=resource_id, preparation=preparation))
 
@@ -776,14 +804,14 @@ def storyboard_video_prompt(
     prompt = item.get("video_prompt")
     if not prompt:
         item_id = item.get("segment_id") or item.get("scene_id")
-        raise ValueError(f"片段/场景缺少 video_prompt 字段: {item_id}")
+        raise ValueError(f"分镜缺少 video_prompt 字段: {item_id}")
     if is_structured_video_prompt(prompt):
         # Voice_Profiles 声明段唯一来源是下方 build_drama_video_prompt 系的机械派生：剧本 JSON
         # 里残留的 voice_profiles 一律先剥离，不因门控不触发（narration/ad、或 drama 无
         # utterances 的条目）而绕过 C 类（真无声）门控直达 YAML。
         prompt = strip_voice_profiles(prompt)
         if content_mode == "drama":
-            # drama 口型台词单一真相源在场景级有序 utterances：取 dialogue-kind 注入 video YAML 的
+            # drama 口型台词单一真相源在分镜级有序 utterances：取 dialogue-kind 注入 video YAML 的
             # dialogue 出口（drama video_prompt 已不带 dialogue）。utterances 迁移前的存量剧本
             # （load_script 按原始 JSON 读盘不过 pydantic，不会被 DramaScene._migrate_legacy
             # 自动补齐）台词仍留在 video_prompt.dialogue，改走 legacy 出口。
@@ -794,10 +822,10 @@ def storyboard_video_prompt(
         return video_prompt_to_yaml(prompt)
     if isinstance(prompt, dict):
         item_id = item.get("segment_id") or item.get("scene_id")
-        raise ValueError(f"片段/场景 video_prompt 为对象但格式不符合结构化规范: {item_id}")
+        raise ValueError(f"分镜 video_prompt 为对象但格式不符合结构化规范: {item_id}")
     if not isinstance(prompt, str):
         item_id = item.get("segment_id") or item.get("scene_id")
-        raise TypeError(f"片段/场景 video_prompt 类型无效（期望 str 或 dict）: {item_id}")
+        raise TypeError(f"分镜 video_prompt 类型无效（期望 str 或 dict）: {item_id}")
     return prompt
 
 
@@ -815,14 +843,14 @@ async def resolve_voice_context(project: dict[str, Any], content_mode: str) -> d
 
 
 async def audio_switch_conflict(project: dict[str, Any]) -> str | None:
-    """分镜路线的音频闸门（``assert_audio_switch_supported``，与 WebUI 提交入口同一判据）。
+    """分镜图生视频的音频闸门（``assert_audio_switch_supported``，与 WebUI 提交入口同一判据）。
 
-    成片恒有声的模型收不到关闭音频的请求，放行只会让无声判据把音色约束整批裁掉。闸门与内容模式
+    成片恒有声的模型收不到关闭音频的请求，放行只会让无声判据把音色约束整批裁掉。闸门与创作类型
     无关，narration/ad 同样受检。
 
     调用点固定在「确有目标要请求」之后：整集已完成、或条目全被 :func:`build_storyboard_video_specs`
     过滤时本就不会产生任何请求，此时拒绝等于把一次正常的空转变成报错。
-    参考路线由公共 request projection 给出同一音频能力判定。
+    参考生视频由公共 request projection 给出同一音频能力判定。
 
     返回冲突说明文本；无冲突返回 ``None``。调用方把它折成逐目标的准入结论，与其它缺口
     一起在建任务之前一次报全。
@@ -847,33 +875,32 @@ def build_storyboard_video_specs(
     episode: int = 1,
     resolver: ArtifactCurrencyResolver | None = None,
     voice_characters: dict[str, Any] | None = None,
-) -> tuple[list[TaskSpec], dict[str, int], list[UnitAdmissionTicket]]:
-    """Build the storyboard-route specs, refusing each unit that cannot be requested.
+) -> tuple[list[TaskSpec], list[UnitAdmissionTicket]]:
+    """Build the Storyboard-mode specs, refusing each unit that cannot be requested.
 
     A unit whose speech, inputs or prompt are unusable is refused with its own code
     and next action instead of being dropped into a log line, so one bad unit never
     silently shrinks the batch — and, because the refusal is a ticket rather than a
     recorded block, it can hold the whole batch back before any task exists.
 
-    ``skeleton_kind`` 取路线闸门给出的剧本实际骨架种类，而不是按内容模式反推：族内的历史
+    ``skeleton_kind`` 取生成模式闸门给出的剧本实际骨架种类，而不是按创作类型反推：族内的历史
     形态（narration 数据落 ``scenes`` 键）按反推值去适配，合法的旧剧本会被整批判成解析失败。
 
-    发声准入在这里执行，与参考路线由 ``reference_unit_task_spec`` 承担的位置对应：
+    发声准入在这里执行，与参考生视频由 ``reference_unit_task_spec`` 承担的位置对应：
     构造 TaskSpec 的这一步是「这个 unit 能不能被请求」的唯一口径，四个 storyboard 入口
     （整集 / 全部 / 点名 / 单条）与只读的工作流计划都经由它，混合发声与 needs_replan 因此
     在任何入口都会在建任务之前扣住整批，计划预告的准入结论也与真正提交时一致。
     """
 
-    item_type = "片段" if content_mode == "narration" else "场景"
+    item_type = "分镜"
     skip_set = set(skip_ids or [])
 
     specs: list[TaskSpec] = []
-    order_map: dict[str, int] = {}
     refused: list[UnitAdmissionTicket] = []
     project = project or {}
     if resolver is None:
         resolver = active_artifact_currency_resolver(project_dir, project)
-    for idx, item in enumerate(items):
+    for item in items:
         item_id = str(storyboard_item_id(item, id_field))
         if item_id in skip_set:
             continue
@@ -952,8 +979,7 @@ def build_storyboard_video_specs(
             )
             continue
         specs.append(spec)
-        order_map[item_id] = idx
-    return specs, order_map, refused
+    return specs, refused
 
 
 async def admit_storyboard_video_request(
@@ -971,8 +997,12 @@ async def admit_storyboard_video_request(
     operation: str,
     selection: GenerationSelectionMode,
     extra_tickets: Sequence[UnitAdmissionTicket],
+    user_id: str = DEFAULT_USER_ID,
+    queue: GenerationQueue | None = None,
+    config_resolver: ConfigResolver | None = None,
+    tts_settings_resolver: TtsSettingsResolver | None = None,
 ) -> BatchAdmission:
-    """Admit one storyboard-route request from the specs it would actually enqueue.
+    """Admit one Storyboard-mode request from the specs it would actually enqueue.
 
     The visual prompt each spec already carries is what the admission compares
     against the paid artifact, so the triples are built from the specs rather than
@@ -1003,6 +1033,10 @@ async def admit_storyboard_video_request(
         operation=operation,
         selection=selection,
         extra_tickets=extra_tickets,
+        user_id=user_id,
+        queue=queue,
+        config_resolver=config_resolver,
+        tts_settings_resolver=tts_settings_resolver,
     )
     if conflict_detail is None:
         return admission

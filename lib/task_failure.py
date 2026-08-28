@@ -21,7 +21,7 @@ from typing import Any
 # Backend capability rejections (``ImageCapabilityError`` / ``VideoCapabilityError`` /
 # ``ReferencePayloadFloorError``). Their ``.code`` is already an ``errors`` catalog key,
 # so the mapping below is identity — no prefix indirection. Enumerated rather than
-# derived so an unregistered code fails fast; ``tests/test_task_failure_capability.py``
+# derived so an unregistered code fails fast; ``tests/integration/lib/test_task_failure_capability.py``
 # AST-scans the raise sites and fails CI when a new code is added without registering it.
 CAPABILITY_FAILURE_CODES: frozenset[str] = frozenset(
     {
@@ -65,7 +65,6 @@ REFERENCE_PROJECTION_FAILURE_CODES: frozenset[str] = frozenset(
         "reference_asset_missing",
         "reference_capability_changed",
         "reference_capability_unavailable",
-        "reference_declaration_invalid",
         "reference_duration_confirmation_required",
         "reference_supported_durations_incompatible",
         "reference_supported_durations_invalid",
@@ -105,6 +104,7 @@ FAILURE_CODE_KEYS: dict[str, str] = {
     "dispatch_provider_requeue_failed": "task_fail_dispatch_provider_requeue_failed",
     "restart_lost_image": "task_fail_restart_lost_image",
     "restart_lost_audio": "task_fail_restart_lost_audio",
+    "restart_lost_text": "task_fail_restart_lost_text",
     "restart_lost_no_job_id": "task_fail_restart_lost_no_job_id",
     "restart_lost_resume_no_job_id": "task_fail_restart_lost_resume_no_job_id",
     "resume_unsupported_provider": "task_fail_resume_unsupported_provider",
