@@ -122,3 +122,69 @@ class TestWindowPlanning:
 
     def test_no_timestamps_yields_no_window(self):
         assert plan_window([{"id": 1, "provider": "anthropic"}]) is None
+
+
+class TestFetchIsTimeBounded:
+    """对账是展示增强，不该拿可用性换完整性。
+
+    平台**变慢**（不是挂掉）时最危险：单请求超时不触发，20 页逐页等下去能把一次
+    费用查询拖到几分钟，期间一直占着一个 worker。所以除了单请求超时，还要有一个
+    整窗口的总预算，超了就带 truncated 返回已拿到的部分。
+    """
+
+    def test_total_budget_is_shorter_than_worst_case_paging(self):
+        from lib.gateway_usage import (
+            _MAX_PAGES,
+            _REQUEST_TIMEOUT_SECONDS,
+            _TOTAL_BUDGET_SECONDS,
+        )
+
+        assert _TOTAL_BUDGET_SECONDS < _MAX_PAGES * _REQUEST_TIMEOUT_SECONDS
+
+    def test_slow_platform_stops_at_the_budget(self, monkeypatch):
+        """慢响应下必须提前收手，并如实标 truncated。"""
+        import asyncio
+        import time as _time
+
+        import lib.gateway_usage as gu
+
+        gu.clear_cache()
+        monkeypatch.setenv("MATRIX_BACKEND_URL", "https://matrix.invalid")
+        pages = {"n": 0}
+
+        class _Resp:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                # 恒返回满页 → 不靠「最后一页」收敛，只能靠预算停下
+                return {"items": [{"requestId": f"r{pages['n']}", "createdAt": 1, "quota": 1}] * 100}
+
+        class _Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, _url, **_kw):
+                pages["n"] += 1
+                await asyncio.sleep(0.05)
+                return _Resp()
+
+        monkeypatch.setattr(gu, "_TOTAL_BUDGET_SECONDS", 0.12)
+        monkeypatch.setattr(gu.httpx, "AsyncClient", lambda **_kw: _Client())
+        started = _time.monotonic()
+        window = asyncio.run(gu.fetch_window("tok", start=0, end=10))
+        assert _time.monotonic() - started < 1.0, "没在预算内收手"
+        assert window.truncated, "截断了却没如实标注，调用方会当成完整结果"
+        assert pages["n"] < gu._MAX_PAGES
+
+    def test_reconcile_survives_platform_failure(self):
+        """平台不可达时整批标未知，而不是把用量面板一起拖挂。"""
+        import asyncio
+
+        from server.services.usage_reconciliation import reconcile_rows
+
+        rows = [_row(1, finished="2026-08-28T03:01:12", provider="anthropic", model="m")]
+        assert asyncio.run(reconcile_rows(rows, wallet_token="tok-unreachable")) == {}

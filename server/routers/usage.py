@@ -12,7 +12,6 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Query
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from lib.db import async_session_factory
 from lib.db.repositories.usage_repo import UsageRepository
@@ -27,14 +26,16 @@ router = APIRouter()
 _STATS_RECONCILE_LIMIT = 500
 
 
-async def _reconcile(session: AsyncSession, rows: list[dict[str, Any]]) -> dict[int, ReconciledCost] | None:
+async def _settle(rows: list[dict[str, Any]], token: str | None) -> dict[int, ReconciledCost] | None:
     """对账结果；本部署没有平台账本时返回 None（不是空 dict）。
 
     两者必须分开：空 dict 是「对过了，一条都没对上」，None 是「这个部署压根没有平台
     账本可对」。自建供应商部署下本地估算是**唯一**可得的口径，也确实按用户自己配的
     价目表算，把它换成一列「未知」是纯粹的倒退——那种部署继续走原有的货币展示。
+
+    token 由调用方在 DB session 内取好后传进来：取数要外呼平台，不该把 DB 连接
+    一起占着等网络。
     """
-    token = await get_wallet_token(session)
     if not token:
         return None
     return await reconcile_rows(rows, wallet_token=token)
@@ -89,7 +90,9 @@ async def get_stats(
             page_size=_STATS_RECONCILE_LIMIT,
         )
         rows: list[dict[str, Any]] = page["items"]
-        settled = await _reconcile(session, rows)
+        token = await get_wallet_token(session)
+    # 对账要外呼平台，放到 session 块外做：几秒的网络往返不该一直占着 DB 连接。
+    settled = await _settle(rows, token)
 
     if settled is None:
         return stats
@@ -133,7 +136,8 @@ async def get_calls(
             page=1,
             page_size=min(page * page_size + page_size, _STATS_RECONCILE_LIMIT),
         )
-        settled = await _reconcile(session, context["items"])
+        token = await get_wallet_token(session)
+    settled = await _settle(context["items"], token)
     result["items"] = _attach_costs(result["items"], settled)
     return result
 

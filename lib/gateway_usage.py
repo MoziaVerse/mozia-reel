@@ -30,6 +30,11 @@ _MAX_PAGES = 20
 # 结果缓存时长。面板翻页/切项目会连续发起对账，同一窗口重复拉平台是纯浪费；
 # 但也不能久——用户刚生成完就看费用，缓存太长会让新记录迟迟不出现。
 _CACHE_TTL_SECONDS = 20.0
+# 单个请求的超时，以及整个窗口取数的总预算。两个都要有：只设单请求超时的话，
+# 平台变慢（不是挂掉）时 20 页 × 单页超时会把一次费用查询拖到几分钟，期间占着
+# 一个 worker——对账是展示增强，不值得拿可用性换完整性。超预算就带 truncated 返回。
+_REQUEST_TIMEOUT_SECONDS = 10.0
+_TOTAL_BUDGET_SECONDS = 15.0
 
 
 @dataclass(frozen=True)
@@ -111,8 +116,13 @@ async def fetch_window(token: str, *, start: int, end: int) -> GatewayWindow:
 
     records: list[GatewayRecord] = []
     truncated = False
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    deadline = time.monotonic() + _TOTAL_BUDGET_SECONDS
+    async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT_SECONDS) as client:
         for page in range(1, _MAX_PAGES + 1):
+            if time.monotonic() > deadline:
+                truncated = True
+                logger.warning("平台流水取数超出总预算 %.0fs，对账结果不完整", _TOTAL_BUDGET_SECONDS)
+                break
             try:
                 response = await client.get(
                     f"{base}/api/external/logs",
