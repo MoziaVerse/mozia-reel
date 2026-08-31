@@ -777,7 +777,6 @@ export function ProjectsPage() {
   const importInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const isConfigComplete = useConfigStatusStore((s) => s.isComplete);
-  const managed = useConfigStatusStore((s) => s.managed);
 
   const phaseLabels = usePhaseLabels();
 
@@ -1007,7 +1006,7 @@ export function ProjectsPage() {
           navigate("/app/assets");
         }}
         onOpenExternalAgent={() => setShowExternalAgent(true)}
-        showExternalAgent={!managed}
+        showExternalAgent
         importing={importingProject}
         configIncomplete={!isConfigComplete}
         searchInputRef={searchInputRef}
@@ -1165,9 +1164,7 @@ export function ProjectsPage() {
         />
       )}
 
-      {showExternalAgent && !managed && (
-        <ExternalAgentModal onClose={() => setShowExternalAgent(false)} />
-      )}
+      {showExternalAgent && <ExternalAgentModal onClose={() => setShowExternalAgent(false)} />}
       {showCreateModal && <CreateProjectModal />}
 
       <ConfirmDialog

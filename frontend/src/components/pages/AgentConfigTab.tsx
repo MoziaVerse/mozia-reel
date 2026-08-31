@@ -170,11 +170,11 @@ export function AgentConfigTab({ visible, matrixOverview }: AgentConfigTabProps)
   return (
     <div className={visible ? undefined : "hidden"}>
       <div className="space-y-7 pb-0 pt-1">
-        {/* 托管态不传 onOpenExternalGuide：外部 Agent 那条链路整个撤掉了，
-            接入指引入口一并不出现。 */}
+        {/* 接入指引两态都给：外部 Agent 经远程 MCP 驱动本站在托管态同样可用。
+            兼容提示仍只给独立部署——托管态没有可填的配置项。 */}
         <AgentPageIntro
           showCompatHint={!matrixOverview?.enabled}
-          onOpenExternalGuide={matrixOverview?.enabled ? undefined : () => setShowExternalGuide(true)}
+          onOpenExternalGuide={() => setShowExternalGuide(true)}
         />
         {/* 托管态没有凭证可管：地址与密钥由平台握手时下发，"选供应商"那一排选了也没用
             （网关只有一个）。只留真正可调的模型路由。 */}

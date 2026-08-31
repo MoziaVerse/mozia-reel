@@ -46,7 +46,8 @@ from server.auth import ensure_auth_password, get_current_user
 from server.dependencies import require_project_migration_ok
 from server.error_handlers import register_error_handlers
 from server.matrix_gate import MatrixSessionGate
-from server.remote_mcp import remote_mcp_host
+from server.mcp_tenant_gate import McpTenantGate, build_tenant_aware_mcp_server
+from server.remote_mcp import RemoteMCPHost
 from server.routers import (
     agent_config,
     api_keys,
@@ -273,6 +274,10 @@ def detect_docker_environment(
 # 对真实文件系统产生副作用。
 setup_logging(file=False)
 logger = logging.getLogger(__name__)
+
+# 远程 MCP 的 server 在 host lifespan 里构造一次，那时租户为 None。用注入的工厂换上
+# 租户感知的 ProjectManager，否则所有租户共用构造期那一个实例、工具全落在共享数据根上。
+remote_mcp_host = RemoteMCPHost(server_factory=build_tenant_aware_mcp_server)
 
 
 def _log_profile_sync_outcome(stats: dict, *, log: logging.Logger = logger) -> None:
@@ -724,7 +729,8 @@ app.include_router(
 )
 app.include_router(project_events.self_auth_router, prefix="/api/v1", tags=["项目变更流"])
 app.include_router(projects.self_auth_router, prefix="/api/v1", tags=["项目管理"])
-app.mount("/mcp", remote_mcp_host)
+# 托管态靠 McpTenantGate 从 API Key 解出租户；单机态它整条让开，行为与上游一致。
+app.mount("/mcp", McpTenantGate(remote_mcp_host))
 
 
 def create_generation_worker() -> GenerationWorker:
@@ -741,16 +747,10 @@ async def health_check():
 async def serve_agent_installation_guide(request: Request) -> Response:
     """动态渲染 Agent 安装指引，将 {{BASE_URL}} 替换为实际服务地址（无需认证）。
 
-    托管态不提供：这份文档只服务"外部 Agent 凭 API 令牌驱动本站"那条链路，
-    而托管态下该链路整个撤掉了（入口与令牌管理都不再提供）。继续对外发一份
-    教人去拿令牌的说明，只会把人引到一个不存在的设置页。
+    托管态同样提供：这份文档的读者是用户自己的 Agent 宿主，它带不了 matrix 会话
+    cookie，门禁因此按前缀放行（见 server/matrix_gate.py）。
     """
     from starlette.responses import PlainTextResponse
-
-    from lib.matrix_capabilities import matrix_mode_enabled
-
-    if matrix_mode_enabled():
-        return PlainTextResponse("Not Found", status_code=404)
 
     template_path = PROJECT_ROOT / "public" / "agent-installation-guide.md"
 

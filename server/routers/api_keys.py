@@ -4,7 +4,6 @@ API Key 管理路由
 提供 API Key 的创建、列表查询和删除接口。
 """
 
-import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
@@ -15,6 +14,8 @@ from sqlalchemy.exc import IntegrityError
 from lib.db import async_session_factory
 from lib.db.repositories.api_key_repository import ApiKeyRepository
 from lib.i18n import Translator
+from lib.tenant_api_key import build_api_key, display_prefix
+from lib.tenant_context import current_tenant
 from server.auth import (
     API_KEY_PREFIX,
     CurrentUser,
@@ -36,9 +37,12 @@ API_KEY_DEFAULT_EXPIRY_DAYS = 30
 
 
 def _generate_api_key() -> str:
-    """生成格式为 arc-<32位随机字符> 的 API Key。"""
-    random_part = secrets.token_hex(16)  # 32 hex chars
-    return f"{API_KEY_PREFIX}{random_part}"
+    """生成 API Key：单机态 ``arc-<32 hex>``，托管态 ``arc-<tenant>-<32 hex>``。
+
+    托管态多带一段租户是 ``api_keys`` 表按租户分库逼出来的——持 key 的请求得先定出
+    租户才能打开正确那份库（见 lib/tenant_api_key.py）。
+    """
+    return build_api_key(API_KEY_PREFIX, current_tenant())
 
 
 def _default_expires_at() -> datetime:
@@ -78,7 +82,7 @@ async def create_api_key(
     _require_jwt_auth(user, _t)
     key = _generate_api_key()
     key_hash = _hash_api_key(key)
-    key_prefix = key[:8]  # e.g. "arc-abcd"
+    key_prefix = display_prefix(key, API_KEY_PREFIX)  # e.g. "arc-abcd"
 
     if body.expires_days == 0:
         expires_at: datetime | None = None
