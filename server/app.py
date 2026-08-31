@@ -743,16 +743,10 @@ async def health_check():
 async def serve_agent_installation_guide(request: Request) -> Response:
     """动态渲染 Agent 安装指引，将 {{BASE_URL}} 替换为实际服务地址（无需认证）。
 
-    托管态不提供：这份文档只服务"外部 Agent 凭 API 令牌驱动本站"那条链路，
-    而托管态下该链路整个撤掉了（入口与令牌管理都不再提供）。继续对外发一份
-    教人去拿令牌的说明，只会把人引到一个不存在的设置页。
+    托管态同样提供：这份文档的读者是用户自己的 Agent 宿主，它带不了 matrix 会话
+    cookie，门禁因此按前缀放行（见 server/matrix_gate.py）。
     """
     from starlette.responses import PlainTextResponse
-
-    from lib.matrix_capabilities import matrix_mode_enabled
-
-    if matrix_mode_enabled():
-        return PlainTextResponse("Not Found", status_code=404)
 
     template_path = PROJECT_ROOT / "public" / "agent-installation-guide.md"
 

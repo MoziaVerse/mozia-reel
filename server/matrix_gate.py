@@ -48,10 +48,14 @@ logger = logging.getLogger(__name__)
 # ``/api/`` 之外的新挂载点而忘了定租户，都会落到下面那条"静态资源放行"的兜底分支：
 # 它只看 ``/api/`` 前缀与是否浏览器导航，MCP 客户端的 POST 两条都不满足，会被**放行**
 # 且 tenant 恒为 None —— 工具于是静默落到不带租户段的共享数据根上，不报错。
+#
+# ``/agent-installation-guide.md`` 是给用户自己的 Agent 宿主读的接入说明，同样带不了
+# 会话 cookie。它只讲怎么接线、不含任何租户数据，公开无损。
 _PUBLIC_PREFIXES = (
     "/handoff",
     "/api/v1/matrix-session/init",
     "/health",
+    "/agent-installation-guide.md",
     MCP_MOUNT_PREFIX,
     MEDIA_URL_PREFIX,
 )

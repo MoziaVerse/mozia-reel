@@ -65,11 +65,12 @@ def test_served_without_auth(client, monkeypatch):
     assert res.headers["content-type"].startswith("text/markdown")
 
 
-def test_not_served_in_hosted_mode(client, monkeypatch):
-    """托管态下外部 Agent 那条链路整个撤掉了（入口与令牌管理都不再提供）。
+def test_served_in_hosted_mode(client, monkeypatch):
+    """托管态同样提供：外部 Agent 经远程 MCP 驱动本站那条链路在这里是通的。
 
-    继续对外发一份"去设置页的 API 令牌区拿 key"的说明，只会把人引到一个
-    不存在的页面。
+    托管态签发的 API Key 自带租户段，``McpTenantGate`` 据此定位租户库，指引里
+    ``?section=api-keys`` 那个链接也确实落得到设置页。这一页由 Agent 宿主自己拉取、
+    带不了会话 cookie，门禁按前缀放行（见 server/matrix_gate.py）。
     """
     monkeypatch.setenv("MATRIX_BACKEND_URL", "https://matrix.example.com")
-    assert client.get("/agent-installation-guide.md").status_code == 404
+    assert client.get("/agent-installation-guide.md").status_code == 200
