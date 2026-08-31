@@ -46,8 +46,8 @@ from server.auth import ensure_auth_password, get_current_user
 from server.dependencies import require_project_migration_ok
 from server.error_handlers import register_error_handlers
 from server.matrix_gate import MatrixSessionGate
-from server.mcp_tenant_gate import McpTenantGate
-from server.remote_mcp import remote_mcp_host
+from server.mcp_tenant_gate import McpTenantGate, build_tenant_aware_mcp_server
+from server.remote_mcp import RemoteMCPHost
 from server.routers import (
     agent_config,
     api_keys,
@@ -274,6 +274,10 @@ def detect_docker_environment(
 # 对真实文件系统产生副作用。
 setup_logging(file=False)
 logger = logging.getLogger(__name__)
+
+# 远程 MCP 的 server 在 host lifespan 里构造一次，那时租户为 None。用注入的工厂换上
+# 租户感知的 ProjectManager，否则所有租户共用构造期那一个实例、工具全落在共享数据根上。
+remote_mcp_host = RemoteMCPHost(server_factory=build_tenant_aware_mcp_server)
 
 
 def _log_profile_sync_outcome(stats: dict, *, log: logging.Logger = logger) -> None:

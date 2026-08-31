@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 from lib.matrix_blocklist import is_allowed
 from lib.matrix_session import matrix_backend_url
@@ -44,6 +45,38 @@ def _bearer_token(headers: list[tuple[bytes, bytes]]) -> str | None:
         if scheme.lower() == "bearer" and token:
             return token.strip()
     return None
+
+
+class TenantProjectManager:
+    """把每次属性访问转发给**当前租户**的 ProjectManager。
+
+    远程 MCP 的 server 在 host lifespan 里构造一次，那时没有请求、租户为 None，
+    ``build_remote_mcp_server`` 于是把那一个实例固化进闭包供所有租户共用——工具因此
+    全部落在不带租户段的共享数据根上，读写的是同一批项目。这不会报错：每个租户都能
+    正常建项目、正常列出来，只是列出来的是所有人的。
+
+    转发代理让每次访问都按当时的 ContextVar 取实例（``get_project_manager`` 本身
+    按租户缓存），构造期被固化的就只剩代理本身。与 ``lib/db/engine.py`` 的
+    ``TenantEngineProxy`` 同一套做法。
+    """
+
+    def __getattr__(self, name: str) -> Any:
+        from lib.project_manager import get_project_manager
+
+        return getattr(get_project_manager(), name)
+
+    def __repr__(self) -> str:
+        from lib.tenant_context import current_tenant
+
+        return f"<TenantProjectManager tenant={current_tenant()!r}>"
+
+
+def build_tenant_aware_mcp_server():
+    """``RemoteMCPHost`` 的 server 工厂：把租户感知的 ProjectManager 注进上游构造。"""
+    from lib.project_manager import ProjectManager
+    from server.remote_mcp import build_remote_mcp_server
+
+    return build_remote_mcp_server(projects=cast("ProjectManager", TenantProjectManager()))
 
 
 async def _ensure_tenant_db() -> None:
