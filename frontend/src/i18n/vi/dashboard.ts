@@ -1458,7 +1458,7 @@ export default {
   'external_agent_tab_agent': 'Cài đặt bằng AI Agent',
   'external_agent_prompt_title': 'Gửi lời nhắc này cho AI Agent',
   'external_agent_prompt_desc': 'Agent sẽ đọc hướng dẫn cài đặt dành riêng và hoàn tất skills, MCP cùng bước xác minh kết nối.',
-  'external_agent_prompt': 'Hãy giúp tôi kết nối ArcReel. Đọc và làm theo {{guideUrl}}',
+  'external_agent_prompt': 'Hãy giúp tôi kết nối [[brand]]. Đọc và làm theo {{guideUrl}}',
   'external_agent_copy_prompt': 'Sao chép lời nhắc',
   'external_agent_prompt_copied': 'Đã sao chép lời nhắc.',
   'external_agent_mcp_endpoint': 'URL endpoint MCP',

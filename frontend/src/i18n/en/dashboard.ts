@@ -1746,7 +1746,7 @@ export default {
   'external_agent_tab_agent': 'Set up with an AI Agent',
   'external_agent_prompt_title': 'Send this prompt to your AI Agent',
   'external_agent_prompt_desc': 'The Agent will read its installation guide and walk through skills, MCP, and connection verification.',
-  'external_agent_prompt': 'Help me connect ArcReel. Read and follow {{guideUrl}}',
+  'external_agent_prompt': 'Help me connect [[brand]]. Read and follow {{guideUrl}}',
   'external_agent_copy_prompt': 'Copy prompt',
   'external_agent_prompt_copied': 'Prompt copied.',
   'external_agent_mcp_endpoint': 'MCP endpoint URL',
