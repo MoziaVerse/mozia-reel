@@ -466,8 +466,7 @@ _DEFAULT_BACKEND_KEYS = {
 # 各媒体类型的首选默认模型，按实测**开箱可用性**排序，命中即用；都不在就回落到
 # 字典序第一个。
 #
-# 为什么需要这张表：字典序第一个跟"能不能用"毫无关系。实测网关上 5 个图像模型里
-# 只有 mozia/image-2 在 ArcReel 的默认 720P 下可用 —— doubao/seedream-4.5 与
+# 为什么需要这张表：字典序第一个跟"能不能用"毫无关系。doubao/seedream-4.5 与
 # seedream-5.0-lite 都要求 ≥3686400 像素（4K 级），而字典序恰好把 seedream-4.5
 # 排在第一，等于给每个新用户配了一个开箱即挂的默认值。
 #
@@ -475,7 +474,7 @@ _DEFAULT_BACKEND_KEYS = {
 #     POST {gateway}/v1/images/generations  {"model":..., "size":"720x1280"}
 # 表里的模型不存在时自动跳过，不会因为它下架而让 seed 失败。
 _PREFERRED_DEFAULT_MODELS: dict[str, tuple[str, ...]] = {
-    "image": ("mozia/image-2",),
+    "image": ("qwen/qwen-image", "mozia/image-2"),
     # 文本这条排序同时受三个约束，缺一个都会给新用户一个开箱不可用的默认值：
     #
     # 1) 死锁：GLM-4.7 在 Agent 的多层子任务嵌套下会**静默死锁**——不报错、
@@ -485,16 +484,11 @@ _PREFERRED_DEFAULT_MODELS: dict[str, tuple[str, ...]] = {
     # 3) 赠送额度：网关按模型限定可消耗的钱包分区，只有少数模型允许 gift。
     #    新用户手里通常只有赠送额度，默认值落在 paid-only 上等于开箱就欠费。
     #
-    # ⚠️ 当前这张表**一个 gift 档都没有**，不是排序没做好，是三条约束交集为空：
-    # 网关上允许 gift 的文本模型只有 qwen 那几个和 GLM-4.7，前者卡在 messages 里的
-    # system 消息上（见 ``AGENT_MODEL_ALLOWLIST``）、后者卡在死锁上。也就是说托管态
-    # 下只有赠送额度的新用户，智能体开箱即欠费。解法在网关侧——把 messages 里的
-    # system 并入首条 system，qwen 三档就能回来。在那之前这里只能全 paid 兜底。
     # ⚠️ gift 授权同样会漂移，改动前先核对网关的 mozia_model_quota_policies。
     "text": (
-        "z-ai/glm-5.2",
-        "z-ai/glm-5.1",
+        "deepseek/deepseek-v4-flash",
         "deepseek/deepseek-v4-pro",
+        "z-ai/glm-5.2",
         "qwen/qwen3.6-plus",
     ),
     # 视频只挑 H3，与画布（ZeoCanvasLite）同口径——那边实测下来也是只用 H3 出片。
