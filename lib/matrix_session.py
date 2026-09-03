@@ -485,7 +485,18 @@ _PREFERRED_DEFAULT_MODELS: dict[str, tuple[str, ...]] = {
     #    新用户手里通常只有赠送额度，默认值落在 paid-only 上等于开箱就欠费。
     #
     # ⚠️ gift 授权同样会漂移，改动前先核对网关的 mozia_model_quota_policies。
+    #
+    # 前三个是自建集群的 qwen，网关策略为 gift,paid（qwen3.5-397b 无策略条目，网关对
+    # 未匹配模型默认放行全部分区），且都用真实 CLI 跑通了带工具的一轮对话。排序依据：
+    #   - qwen3.8-27b 首选：两条渠道做负载均衡，回答不夹思考过程；
+    #   - qwen3.6-35b-a3b 次之：行为同样干净，单渠道；
+    #   - qwen3.5-397b-a17b 垫底：能力最强，但安全对齐偏激进——探测时曾把读一个
+    #     叫 secret.txt 的文件当成提示注入拒绝，正常任务有误拒风险，不宜做默认。
+    # 之后是 paid-only 的兜底项，按倍率从低到高。
     "text": (
+        "qwen/qwen3.8-27b",
+        "qwen/qwen3.6-35b-a3b",
+        "qwen/qwen3.5-397b-a17b",
         "deepseek/deepseek-v4-flash",
         "deepseek/deepseek-v4-pro",
         "z-ai/glm-5.2",
@@ -523,15 +534,14 @@ def preferred_model(media: str, available: set[str]) -> str | None:
 #
 # ⚠️ 判据必须用真实 CLI 跑。手写一个「形状相同」的 HTTP 请求验不出下面这条：
 # CLI 在带工具的请求里会往 messages 塞一条 role="system" 的消息（内容是它自己
-# 生成的可用 agent 类型清单，Anthropic 的 messages 规范里本没有这个角色），
-# 网关原样透传给上游，而 dashscope 系强制 system 只能在首位，直接 400。
+# 生成的可用 agent 类型清单，Anthropic 的 messages 规范里本没有这个角色）。
+# 自建 qwen 集群强制 system 只能在首位，原样透传会直接 400
+# `System message must be at the beginning`。网关现已提供渠道级开关
+# `merge_inline_system_message`，把中途 system 并入首条；qwen3.5-397b-a17b、
+# qwen3.8-27b、qwen3.6-35b-a3b 所在的渠道都已开启，三个型号才得以进名单。
+# 网关上新开一条自建 qwen 渠道时必须同样打开该开关，否则这条又会断。
 #
 # 落在名单外的，各有各的坏法，都不该出现在智能体的模型下拉里：
-#   - qwen/qwen3.5-397b-a17b · qwen/qwen3.8-27b · qwen/qwen3.6-35b-a3b：
-#     即上面那条，`System message must be at the beginning`，一轮都跑不完。
-#     同族的 qwen3.6-plus 不在此列——它走的上游渠道不校验 system 位置。
-#     这条是网关侧的转换缺陷（messages 里的 system 该并入首条 system 而非透传），
-#     网关修好后这三个可以放回来，届时 gift 档才重新有得选。
 #   - GLM-4.7：单轮工具调用正常，但在多层子任务嵌套下**静默死锁**（见
 #     ``_PREFERRED_DEFAULT_MODELS`` 的注释），浅层验证看不出来
 #   - 其余非对话类目：Agent SDK 走对话协议，选中即失败
@@ -544,6 +554,9 @@ def preferred_model(media: str, available: set[str]) -> str | None:
 # 上面那条判据实跑，不要按参数量或价格猜。
 AGENT_MODEL_ALLOWLIST: frozenset[str] = frozenset(
     {
+        "qwen/qwen3.8-27b",
+        "qwen/qwen3.6-35b-a3b",
+        "qwen/qwen3.5-397b-a17b",
         "qwen/qwen3.6-plus",
         "deepseek/deepseek-v4-pro",
         "deepseek/deepseek-v4-flash",

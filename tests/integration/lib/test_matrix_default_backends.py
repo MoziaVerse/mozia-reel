@@ -204,14 +204,26 @@ class TestTextModelPreference:
     def test_prefers_a_working_model_over_alphabetical_first(self):
         from lib.matrix_session import preferred_model
 
-        available = {"GLM-4.7", "qwen/qwen3.8-27b", "z-ai/glm-5.2"}
+        available = {"GLM-4.7", "moonshotai/kimi-k3", "z-ai/glm-5.2"}
         assert preferred_model("text", available) == "z-ai/glm-5.2"
+
+    def test_prefers_gift_eligible_self_hosted_qwen_as_default(self):
+        """新用户通常只有赠送额度：gift,paid 的自建 qwen 排在 paid-only 兜底项前面，
+        三个之间按实测行为排序，安全对齐偏激进的 397b 垫底。"""
+        from lib.matrix_session import preferred_model
+
+        gift = {"qwen/qwen3.8-27b", "qwen/qwen3.6-35b-a3b", "qwen/qwen3.5-397b-a17b"}
+        assert preferred_model("text", gift | {"deepseek/deepseek-v4-flash", "z-ai/glm-5.2"}) == "qwen/qwen3.8-27b"
+        assert preferred_model("text", gift - {"qwen/qwen3.8-27b"}) == "qwen/qwen3.6-35b-a3b"
+        assert preferred_model("text", {"qwen/qwen3.5-397b-a17b", "deepseek/deepseek-v4-flash"}) == (
+            "qwen/qwen3.5-397b-a17b"
+        )
 
     def test_never_picks_the_deadlocking_model(self):
         """GLM-4.7 虽然也允许 gift，但它会静默死锁，不能进偏好表。"""
         from lib.matrix_session import preferred_model
 
-        assert preferred_model("text", {"GLM-4.7", "z-ai/glm-5.1"}) == "z-ai/glm-5.1"
+        assert preferred_model("text", {"GLM-4.7", "z-ai/glm-5.2"}) == "z-ai/glm-5.2"
 
     def test_transient_upstream_outage_is_not_grounds_for_exclusion(self):
         """kimi 全系与 deepseek-v4-flash 曾因一次上游抖动被划掉，真实 CLI 复验
@@ -234,17 +246,17 @@ class TestTextModelPreference:
 
         assert set(_PREFERRED_DEFAULT_MODELS["text"]) <= AGENT_MODEL_ALLOWLIST
 
-    def test_never_picks_models_rejected_for_mid_list_system_message(self):
-        """CLI 会往 messages 塞一条 role=system 的消息，dashscope 系强制 system
-        只能在首位，于是这三个 qwen 一轮都跑不完——哪怕它们是仅有的 gift 档。"""
-        from lib.matrix_session import AGENT_MODEL_ALLOWLIST, preferred_model
+    def test_self_hosted_qwen_are_agent_ready_once_gateway_merges_inline_system(self):
+        """CLI 会往 messages 塞一条 role=system 的消息，自建 qwen 集群强制 system
+        只能在首位。网关渠道开关 merge_inline_system_message 把它并入首条后，
+        三个型号都用真实 CLI 跑通了带工具的一轮对话，回到名单。"""
+        from lib.matrix_session import agent_model_ready
 
-        rejected = {"qwen/qwen3.5-397b-a17b", "qwen/qwen3.8-27b", "qwen/qwen3.6-35b-a3b"}
-        assert not (rejected & AGENT_MODEL_ALLOWLIST)
-        assert preferred_model("text", rejected) is None
+        for restored in ("qwen/qwen3.5-397b-a17b", "qwen/qwen3.8-27b", "qwen/qwen3.6-35b-a3b"):
+            assert agent_model_ready(restored)
 
-    def test_same_family_sibling_on_a_working_channel_stays(self):
-        """同族的 qwen3.6-plus 走的上游渠道不校验 system 位置，不能连坐移除。"""
+    def test_same_family_sibling_on_a_third_party_channel_stays(self):
+        """qwen3.6-plus 走第三方渠道，与自建集群的开关无关，独立判定。"""
         from lib.matrix_session import agent_model_ready, preferred_model
 
         assert agent_model_ready("qwen/qwen3.6-plus")
@@ -255,14 +267,15 @@ class TestTextModelPreference:
         from lib.matrix_session import preferred_model
 
         assert preferred_model("text", {"moonshotai/kimi-k3"}) is None
-        assert preferred_model("text", {"moonshotai/kimi-k3", "z-ai/glm-5.1"}) == "z-ai/glm-5.1"
+        assert preferred_model("text", {"moonshotai/kimi-k3", "z-ai/glm-5.2"}) == "z-ai/glm-5.2"
 
     def test_falls_back_to_paid_only_when_no_gift_model_listed(self):
-        """gift 档都没上架时回落到 paid-only 的兜底项，而不是返回 None。"""
+        """gift 档都没上架时回落到 paid-only 的兜底项，而不是返回 None；兜底项之间按倍率从低到高。"""
         from lib.matrix_session import preferred_model
 
         available = {"GLM-4.7", "z-ai/glm-5.2", "deepseek/deepseek-v4-pro"}
-        assert preferred_model("text", available) == "z-ai/glm-5.2"
+        assert preferred_model("text", available) == "deepseek/deepseek-v4-pro"
+        assert preferred_model("text", {"GLM-4.7", "z-ai/glm-5.2"}) == "z-ai/glm-5.2"
 
     def test_returns_none_when_no_preference_available(self):
         """偏好项一个都没上架时交给调用方回落，而不是硬塞一个不存在的模型。"""
