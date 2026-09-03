@@ -232,10 +232,21 @@ def _validate_visual_inputs(basis: ArtifactBasis) -> None:
             raise ValueError("storyboard visual basis has invalid frame evidence")
         return
 
-    if set(inputs) != {"unit_id", "visual_lines", "style", "canvas", "request_references"}:
+    # 参考生视频的画面依据有两种形状，kind_version 都是 1：
+    #   - ``visual_lines``：当前形状，正文的画面行平铺成一个列表；
+    #   - ``visual_shots``：单元还按镜头切分时写下的形状，``[{lines, shot_index}]``。
+    # 存量视频的依据摘要是按落盘时的 inputs 算的，改写形状会让摘要全部失配，所以这里
+    # 原样接受旧形状，只校验结构。用现行正文重算的依据与它必然不同——这类版本会被
+    # 判为过期，但仍可读、可播、可导出，而不是整条「演示不可用」。
+    keys = set(inputs)
+    if keys == {"unit_id", "visual_lines", "style", "canvas", "request_references"}:
+        lines = inputs["visual_lines"]
+        lines_valid = isinstance(lines, list) and all(_nonempty(line) for line in lines)
+    elif keys == {"unit_id", "visual_shots", "style", "canvas", "request_references"}:
+        shots = inputs["visual_shots"]
+        lines_valid = isinstance(shots, list) and all(_legacy_shot_is_valid(shot) for shot in shots)
+    else:
         raise ValueError("reference visual basis has invalid canonical inputs")
-    lines = inputs["visual_lines"]
-    lines_valid = isinstance(lines, list) and all(_nonempty(line) for line in lines)
     references = inputs["request_references"]
     references_valid = isinstance(references, list) and all(_reference_evidence_is_valid(item) for item in references)
     if (
@@ -246,6 +257,14 @@ def _validate_visual_inputs(basis: ArtifactBasis) -> None:
         or not references_valid
     ):
         raise ValueError("reference visual basis has invalid canonical inputs")
+
+
+def _legacy_shot_is_valid(value: object) -> bool:
+    if not isinstance(value, Mapping) or set(value) != {"lines", "shot_index"}:
+        return False
+    lines = value["lines"]
+    index = value["shot_index"]
+    return isinstance(lines, list) and all(_nonempty(line) for line in lines) and type(index) is int and index >= 0
 
 
 def _reference_evidence_is_valid(value: object) -> bool:

@@ -142,3 +142,62 @@ def test_video_artifact_currency_accepts_unlimited_reference_projection_but_reje
             reference_image_limit=-1,
             parent_version=0,
         )
+
+
+def test_video_artifact_currency_accepts_legacy_visual_shots_reference_basis() -> None:
+    """单元还按镜头切分时落盘的参考依据（visual_shots）必须仍能通过自验。
+
+    依据摘要按落盘时的 inputs 计算，改写形状会让摘要失配；拒绝它则存量视频整条
+    「演示不可用」。旧形状只校验结构，判过期与否交给现行依据的比对。
+    """
+    facts = _facts()
+    legacy = ArtifactBasis.build(
+        "artifact-visual/video-reference",
+        kind_version=1,
+        inputs={
+            "unit_id": "E1U01",
+            "visual_shots": [
+                {"lines": ["景别：特写。"], "shot_index": 0},
+                {"lines": ["景别：中景。"], "shot_index": 1},
+            ],
+            "style": "电影感",
+            "canvas": {"aspect_ratio": "9:16"},
+            "request_references": [],
+        },
+    )
+    video = compose_video_artifact_basis(visual=legacy, speech=facts.speech_basis, duration=facts.duration_basis)
+    stored = VideoArtifactCurrencyFacts(
+        episode=1,
+        request_duration_seconds=8,
+        visual_basis=legacy,
+        speech_basis=facts.speech_basis,
+        duration_basis=facts.duration_basis,
+        video_basis=video,
+        voice_style_speakers=facts.voice_style_speakers,
+        duration_tiers=facts.duration_tiers,
+        reference_image_limit=None,
+        parent_version=0,
+    )
+
+    assert VideoArtifactCurrencyFacts.from_dict(stored.to_dict()) == stored
+
+    malformed = ArtifactBasis.build(
+        "artifact-visual/video-reference",
+        kind_version=1,
+        inputs={**legacy.to_evidence_dict()["inputs"], "visual_shots": [{"lines": [""], "shot_index": 0}]},
+    )
+    with pytest.raises(ValueError, match="invalid canonical inputs"):
+        VideoArtifactCurrencyFacts(
+            episode=1,
+            request_duration_seconds=8,
+            visual_basis=malformed,
+            speech_basis=facts.speech_basis,
+            duration_basis=facts.duration_basis,
+            video_basis=compose_video_artifact_basis(
+                visual=malformed, speech=facts.speech_basis, duration=facts.duration_basis
+            ),
+            voice_style_speakers=facts.voice_style_speakers,
+            duration_tiers=facts.duration_tiers,
+            reference_image_limit=None,
+            parent_version=0,
+        )
