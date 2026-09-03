@@ -198,6 +198,31 @@ class TestTenantDbIsReadyForReturningSessions:
         # 断真实产出而不是「调用过某个函数」：库文件确实建出来了，才代表迁移真的跑了。
         assert (tmp_path / "tenants" / "user-1" / ".arcreel.db").exists()
 
+    def test_concurrent_first_requests_migrate_once(self, monkeypatch):
+        """同一租户首屏并发的多个 /api 请求只能跑一次迁移。
+
+        alembic 的 context 是进程级全局代理，并行跑会互相踩踏，留下 _alembic_tmp_*
+        残表和「表已建但版本没推进」的半迁移库，此后该租户每个请求都 500。
+        """
+        from lib import db as libdb
+
+        calls = 0
+        real_init_db = libdb.init_db
+
+        async def counting_init_db():
+            nonlocal calls
+            calls += 1
+            await asyncio.sleep(0.01)  # 拉开窗口，让其余请求都到达检查点
+            await real_init_db()
+
+        monkeypatch.setattr(libdb, "init_db", counting_init_db)
+
+        async def burst():
+            return await asyncio.gather(*(_probe("/api/v1/projects", API + _with_session()) for _ in range(8)))
+
+        assert asyncio.run(burst()) == [(True, 200)] * 8
+        assert calls == 1
+
     def test_static_request_does_not_touch_the_database(self, tmp_path):
         """静态资源与 SPA 外壳不碰 DB，不该为它们付建库的代价。"""
         reached, status = asyncio.run(_probe("/assets/app.js", _with_session()))

@@ -1,6 +1,8 @@
 """Database package — ORM models, engine, and session factory."""
 
+import asyncio
 import logging
+import weakref
 
 from lib.db.base import Base
 from lib.db.engine import (
@@ -75,6 +77,22 @@ async def init_db() -> None:
 
 _initialized_tenants: set[str | None] = set()
 
+# 迁移必须在进程内串行。alembic 的 ``context`` / ``op`` 是进程级全局代理，两个线程同时
+# ``run_migrations`` 会互相覆盖对方的状态：报出来的是 "No context has been configured
+# yet" / ``KeyError: 'config'`` / "table batches already exists"，留下的是 ``_alembic_tmp_*``
+# 残表和「表已建但 alembic_version 没推进」的半迁移库——之后该租户每个请求重试都失败。
+# SPA 首屏会并发打十几个 /api，同一租户的首次访问必然并发，所以不能只靠上面那个集合。
+# 锁按事件循环各持一把：asyncio.Lock 首次争用后绑定循环，跨循环复用会抛 RuntimeError。
+_migration_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
+
+
+def _migration_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _migration_locks.get(loop)
+    if lock is None:
+        lock = _migration_locks[loop] = asyncio.Lock()
+    return lock
+
 
 async def ensure_tenant_db() -> None:
     """确保当前租户的库已建表（幂等，每租户只跑一次迁移）。
@@ -87,8 +105,11 @@ async def ensure_tenant_db() -> None:
     tenant = current_tenant()
     if tenant in _initialized_tenants:
         return
-    await init_db()
-    _initialized_tenants.add(tenant)
+    async with _migration_lock():
+        if tenant in _initialized_tenants:
+            return  # 等锁期间已由并发的另一个请求完成
+        await init_db()
+        _initialized_tenants.add(tenant)
 
 
 def _reset_tenant_db_cache_for_tests() -> None:
