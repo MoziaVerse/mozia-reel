@@ -69,6 +69,20 @@ def app_data_dir() -> Path:
     return path
 
 
+def project_roots(root: Path) -> list[Path]:
+    """启动期文件级迁移要扫的全部项目根：部署级根目录，加每个租户的目录。
+
+    接入 matrix 后项目都在 ``<root>/tenants/<ssoSub>/`` 下，根目录本身只剩 ``tenants/``
+    这一个子目录。只扫根目录的迁移会一个项目都看不到——schema 升版后所有租户的
+    项目都停在旧版本，每个都弹「需要修复」，而设计上唯一的写入者就是启动期 runner。
+    """
+    roots = [root]
+    tenants_dir = root / "tenants"
+    if tenants_dir.is_dir():
+        roots.extend(sorted(d for d in tenants_dir.iterdir() if d.is_dir() and not d.name.startswith(".")))
+    return roots
+
+
 def _reset_for_tests() -> None:
     """Clear the cached value so tests can monkeypatch env between cases."""
     base_data_dir.cache_clear()

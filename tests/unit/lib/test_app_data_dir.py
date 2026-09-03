@@ -140,3 +140,29 @@ def test_result_is_cached_within_single_call_sequence(
     monkeypatch.setenv("ARCREEL_DATA_DIR", str(target_b))
     second = app_data_dir_fn()
     assert first == second == target_a.resolve()
+
+
+class TestProjectRoots:
+    """启动期文件级迁移要同时覆盖根目录与每个租户目录。
+
+    接入 matrix 后项目都在 tenants/<ssoSub>/ 下，只扫根目录会一个项目都看不到——
+    升版后所有租户项目都停在旧 schema，每个都弹「需要修复」。
+    """
+
+    def test_root_only_when_no_tenants_dir(self, tmp_path: Path):
+        from lib.app_data_dir import project_roots
+
+        assert project_roots(tmp_path) == [tmp_path]
+
+    def test_includes_every_tenant_dir_sorted(self, tmp_path: Path):
+        from lib.app_data_dir import project_roots
+
+        for name in ("b-tenant", "a-tenant", ".hidden"):
+            (tmp_path / "tenants" / name).mkdir(parents=True)
+        (tmp_path / "tenants" / "stray-file").write_text("x")
+
+        assert project_roots(tmp_path) == [
+            tmp_path,
+            tmp_path / "tenants" / "a-tenant",
+            tmp_path / "tenants" / "b-tenant",
+        ]

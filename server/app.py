@@ -33,7 +33,7 @@ from lib import PROJECT_ROOT
 from lib.agent_session_store import session_store_enabled
 from lib.agent_session_store.import_local import migrate_local_transcripts_to_store
 from lib.agent_session_store.store import DbSessionStore
-from lib.app_data_dir import app_data_dir
+from lib.app_data_dir import app_data_dir, project_roots
 from lib.config.env_keys import PROVIDER_SECRET_KEYS
 from lib.db import async_session_factory, close_db, init_db
 from lib.generation_worker import GenerationWorker
@@ -334,10 +334,15 @@ async def _migrate_source_encoding_on_startup(
                 pass
             return {"error": str(exc)}
 
-    for project_dir in projects_root.iterdir():
-        if not project_dir.is_dir() or project_dir.name.startswith("."):
-            continue
-        summary[project_dir.name] = await asyncio.to_thread(_run_one, project_dir)
+    for root in project_roots(projects_root):
+        for project_dir in root.iterdir():
+            if not project_dir.is_dir() or project_dir.name.startswith("."):
+                continue
+            # 根目录下的 tenants/ 是租户容器，不是项目；租户目录由 project_roots 单独展开
+            if root == projects_root and project_dir.name == "tenants":
+                continue
+            key = str(project_dir.relative_to(projects_root))
+            summary[key] = await asyncio.to_thread(_run_one, project_dir)
     return summary
 
 
@@ -385,15 +390,18 @@ async def lifespan(app: FastAPI):
     # Run any pending project.json schema migrations (file-based).
     # Both calls are synchronous filesystem walks — offload to a worker thread
     # so they don't block the event loop during uvicorn startup.
-    migration_summary = await asyncio.to_thread(run_project_migrations, projects_root)
-    if migration_summary.migrated or migration_summary.failed:
-        logger.info(
-            "Project migrations: migrated=%s skipped=%d failed=%s",
-            migration_summary.migrated,
-            len(migration_summary.skipped),
-            migration_summary.failed,
-        )
-    await asyncio.to_thread(cleanup_stale_backups, projects_root, 7)
+    # 逐个项目根跑：部署级根目录之外还有每个租户自己的目录，runner 只认传入的那一层。
+    for root in project_roots(projects_root):
+        migration_summary = await asyncio.to_thread(run_project_migrations, root)
+        if migration_summary.migrated or migration_summary.failed:
+            logger.info(
+                "Project migrations (%s): migrated=%s skipped=%d failed=%s",
+                root.relative_to(projects_root) if root != projects_root else ".",
+                migration_summary.migrated,
+                len(migration_summary.skipped),
+                migration_summary.failed,
+            )
+        await asyncio.to_thread(cleanup_stale_backups, root, 7)
 
     # Migrate any pre-existing local SDK jsonl transcripts into the DbSessionStore.
     # Runs once (marker-gated); failures are non-fatal and logged.
