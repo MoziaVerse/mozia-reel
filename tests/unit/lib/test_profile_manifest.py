@@ -957,3 +957,27 @@ def test_sync_all_agent_profiles_per_project_mode(tmp_path: Path, monkeypatch: p
     assert stats.get("aborted") is not True
     assert (pm.projects_root / "a" / "CLAUDE.md").read_text() == "narration top"
     assert (pm.projects_root / "b" / "CLAUDE.md").read_text() == "drama top"
+
+
+def test_sync_all_agent_profiles_covers_tenant_projects_and_skips_tenants_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """接入 matrix 后项目都在 <root>/tenants/<ssoSub>/ 下。启动期物化必须走到那里，
+    并且不能把 tenants/ 本身当项目物化——否则真正的项目一直带着首次下发的旧 agent 定义。"""
+    from lib import project_manager as pm_module
+
+    pm, profile = _setup_pm_with_profile(tmp_path, monkeypatch)
+    pm.create_project("root-proj", content_mode="narration")
+    tenant_pm = pm_module.ProjectManager(projects_root=str(pm.projects_root / "tenants" / "sub-1"))
+    tenant_proj = tenant_pm.create_project("tenant-proj", content_mode="drama")
+    assert (tenant_proj / ".claude" / "agents" / "generate-assets.md").read_text() == "common"
+
+    # 模拟 profile 升级：agent 定义改了名字里的工具
+    (profile / ".claude" / "agents" / "generate-assets.md").write_text("common v2")
+    stats = pm.sync_all_agent_profiles()
+
+    assert stats.get("aborted") is not True
+    assert (pm.projects_root / "root-proj" / ".claude" / "agents" / "generate-assets.md").read_text() == "common v2"
+    assert (tenant_proj / ".claude" / "agents" / "generate-assets.md").read_text() == "common v2"
+    assert not (pm.projects_root / "tenants" / "CLAUDE.md").exists()
+    assert not (pm.projects_root / "tenants" / ".claude").exists()

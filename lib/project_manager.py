@@ -27,7 +27,7 @@ import portalocker
 from pydantic import BaseModel, Field
 
 from lib.agent_profile import agent_profile_dir
-from lib.app_data_dir import app_data_dir
+from lib.app_data_dir import app_data_dir, project_roots
 from lib.artifact_manifest import ArtifactBasisDescriptor, ArtifactEntryRekeyReceipt
 from lib.asset_rename import (
     AssetRenameConflictError,
@@ -562,12 +562,22 @@ class ProjectManager:
             "collision",
             "migrated_total",
         )
-        for project_dir in sorted(self.projects_root.iterdir()):
-            # 与 ``list_projects`` 同规则：跳过点开头（.git 等）和下划线开头
-            # （``_global_assets`` 保留目录 — 跨项目共享 character/scene/prop 库，
-            # 不是项目，不应物化 Agent profile）
-            if not project_dir.is_dir() or project_dir.name.startswith((".", "_")):
-                continue
+        # 接入 matrix 后项目都在 <root>/tenants/<ssoSub>/ 下：只扫根目录会把 ``tenants/``
+        # 本身当成一个项目物化（在里面留下一套 CLAUDE.md + .claude），而真正的租户项目
+        # 一个都不同步——它们就带着首次下发时的旧 agent 定义一直跑，直到子智能体去调用
+        # 一个早已改名的工具。逐个项目根遍历，根目录下的 ``tenants/`` 是容器不是项目。
+        candidates: list[Path] = []
+        for root in project_roots(self.projects_root):
+            for project_dir in sorted(root.iterdir()):
+                # 与 ``list_projects`` 同规则：跳过点开头（.git 等）和下划线开头
+                # （``_global_assets`` 保留目录 — 跨项目共享 character/scene/prop 库，
+                # 不是项目，不应物化 Agent profile）
+                if not project_dir.is_dir() or project_dir.name.startswith((".", "_")):
+                    continue
+                if root == self.projects_root and project_dir.name == "tenants":
+                    continue
+                candidates.append(project_dir)
+        for project_dir in candidates:
             try:
                 result = self.sync_agent_profile(project_dir)
                 for key in _STAT_KEYS_TO_AGGREGATE:
