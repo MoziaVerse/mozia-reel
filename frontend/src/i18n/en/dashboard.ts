@@ -675,6 +675,8 @@ export default {
   'cost_details_eyebrow': 'Usage & Spend',
 
   // AgentModelRouting（托管态智能体模型路由）
+  'agent_fixed_model': "Agent model",
+  'agent_fixed_model_desc': "GLM 5.2 is used for all agent tasks. No additional configuration is needed.",
   'agent_models': "Model routing",
   'agent_models_desc': "Routes by task complexity. Candidates are the text models verified for agent use.",
   'agent_tier_default': "Default model",

@@ -225,45 +225,24 @@ class TestTextModelPreference:
 
         assert preferred_model("text", {"GLM-4.7", "z-ai/glm-5.2"}) == "z-ai/glm-5.2"
 
-    def test_transient_upstream_outage_is_not_grounds_for_exclusion(self):
-        """kimi 全系与 deepseek-v4-flash 曾因一次上游抖动被划掉，真实 CLI 复验
-        三个都跑得通——排除一个型号前必须确认错误可复现。"""
-        from lib.matrix_session import agent_model_ready
-
-        for restored in ("moonshotai/kimi-k3", "moonshotai/kimi-k2.6", "deepseek/deepseek-v4-flash"):
-            assert agent_model_ready(restored)
-
-    def test_allowlist_excludes_the_deadlocking_model(self):
-        """GLM-4.7 单轮工具调用是正常的，死锁只在多层子任务嵌套下出现。"""
-        from lib.matrix_session import agent_model_ready
-
-        assert not agent_model_ready("GLM-4.7")
-
-    def test_allowlist_covers_every_preferred_default(self):
-        """偏好表挑出来的默认值必须是智能体下拉里选得到的，否则 seed 完就成了
-        一个「界面上不存在」的模型。"""
-        from lib.matrix_session import _PREFERRED_DEFAULT_MODELS, AGENT_MODEL_ALLOWLIST
-
-        assert set(_PREFERRED_DEFAULT_MODELS["text"]) <= AGENT_MODEL_ALLOWLIST
-
-    def test_self_hosted_qwen_are_agent_ready_once_gateway_merges_inline_system(self):
-        """CLI 会往 messages 塞一条 role=system 的消息，自建 qwen 集群强制 system
-        只能在首位。网关渠道开关 merge_inline_system_message 把它并入首条后，
-        三个型号都用真实 CLI 跑通了带工具的一轮对话，回到名单。"""
-        from lib.matrix_session import agent_model_ready
-
-        for restored in ("qwen/qwen3.5-397b-a17b", "qwen/qwen3.8-27b", "qwen/qwen3.6-35b-a3b"):
-            assert agent_model_ready(restored)
-
-    def test_same_family_sibling_on_a_third_party_channel_stays(self):
-        """qwen3.6-plus 走第三方渠道，与自建集群的开关无关，独立判定。"""
+    def test_managed_agent_only_exposes_glm52(self):
+        """托管智能体仅开放 GLM 5.2，普通文本生成的偏好表独立保留。"""
         from lib.matrix_session import agent_model_ready, preferred_model
 
-        assert agent_model_ready("qwen/qwen3.6-plus")
+        assert agent_model_ready("z-ai/glm-5.2")
+        for model in (
+            "GLM-4.7",
+            "z-ai/glm-5.3-flash",
+            "moonshotai/kimi-k3",
+            "deepseek/deepseek-v4-flash",
+            "qwen/qwen3.8-27b",
+            "qwen/qwen3.6-plus",
+        ):
+            assert not agent_model_ready(model)
         assert preferred_model("text", {"qwen/qwen3.6-plus"}) == "qwen/qwen3.6-plus"
 
-    def test_allowlisted_but_unpreferred_model_is_not_a_default(self):
-        """能选不等于该当默认：kimi 在下拉里可选，但不进偏好表。"""
+    def test_unpreferred_text_model_is_not_a_default(self):
+        """普通文本模型目录与默认偏好独立：kimi 不进默认偏好表。"""
         from lib.matrix_session import preferred_model
 
         assert preferred_model("text", {"moonshotai/kimi-k3"}) is None

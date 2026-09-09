@@ -263,7 +263,7 @@ describe("SystemConfigPage · 托管态", () => {
     expect(await screen.findByText("sub-123")).toBeInTheDocument();
   });
 
-  it("智能体页只留模型路由，凭证 CRUD 整个撤掉", async () => {
+  it("智能体页固定 GLM 5.2，隐藏模型路由和高级设置", async () => {
     vi.spyOn(API, "listAgentCredentials").mockResolvedValue({
       credentials: [
         {
@@ -286,7 +286,9 @@ describe("SystemConfigPage · 托管态", () => {
 
     renderPage("/app/settings?section=agent");
 
-    expect(await screen.findByText("模型路由")).toBeInTheDocument();
+    expect(await screen.findByText("GLM 5.2")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
     // 地址与密钥由平台下发，用户改不了也不该看到入口
     expect(screen.queryByText(/添加供应商/)).not.toBeInTheDocument();
     expect(screen.queryByText(/连接测试/)).not.toBeInTheDocument();

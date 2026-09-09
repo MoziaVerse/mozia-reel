@@ -80,6 +80,28 @@ async def test_load_provider_env_overrides_injects_anthropic_and_empties() -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("managed", [True, False])
+async def test_model_policy_overrides_stale_routes_only_in_managed_mode(monkeypatch, managed) -> None:
+    """存量凭证的各档路由在托管态统一收敛，独立部署保留原值。"""
+    monkeypatch.setenv("MATRIX_BACKEND_URL", "https://matrix.example" if managed else "")
+    model_keys = (
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+    )
+    stored: dict[str, str] = {key: "qwen/qwen3.8-27b" for key in model_keys}
+    stored.update(ANTHROPIC_API_KEY="test-key", ANTHROPIC_BASE_URL="https://gateway.example")
+    with patch("lib.config.service.build_anthropic_env_dict", return_value=stored):
+        env = await load_provider_env_overrides()
+    assert {env[key] for key in model_keys} == {"z-ai/glm-5.2" if managed else "qwen/qwen3.8-27b"}
+    assert env["ANTHROPIC_API_KEY"] == "test-key"
+    assert env["ANTHROPIC_BASE_URL"] == "https://gateway.example"
+    assert stored["ANTHROPIC_MODEL"] == "qwen/qwen3.8-27b"
+
+
+@pytest.mark.asyncio
 async def test_build_provider_env_overrides_uses_injected_loader(tmp_path: Path) -> None:
     """注入 provider_env_loader 时，build_provider_env_overrides 走注入源而非 DB。"""
     sentinel = {"ANTHROPIC_API_KEY": "injected"}
