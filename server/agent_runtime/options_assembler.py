@@ -25,6 +25,7 @@ from lib.agent_session_store.store import DbSessionStore
 from lib.db.base import DEFAULT_USER_ID
 from lib.db.engine import async_session_factory as default_async_session_factory
 from lib.i18n import DEFAULT_LOCALE, LOCALE_LANGUAGE_MAP
+from lib.matrix_capabilities import MANAGED_AGENT_MODEL, matrix_mode_enabled
 from server.agent_runtime.agent_access_policy import AgentAccessPolicy
 from server.agent_runtime.sdk_tools import build_arcreel_mcp_server
 
@@ -53,6 +54,16 @@ async def load_provider_env_overrides() -> dict[str, str]:
         anthropic_env = await build_anthropic_env_dict(session)
 
     result = dict(anthropic_env)
+    if matrix_mode_enabled():
+        # 覆盖存量凭证中的路由，主会话、各档位与子任务统一使用托管模型。
+        for key in (
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+        ):
+            result[key] = MANAGED_AGENT_MODEL
     for key in OTHER_PROVIDER_ENV_KEYS:
         result[key] = ""
     return result

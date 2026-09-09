@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import os
 
+MANAGED_AGENT_MODEL = "z-ai/glm-5.2"
+
 # 网关实测可用的 endpoint（2026-08-19 逐条探测确认）：
 #   /v1/chat/completions · /v1/images/* · /v1/videos · /v1/audio/speech · /v1/messages
 GATEWAY_SUPPORTED_ENDPOINTS: frozenset[str] = frozenset(

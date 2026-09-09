@@ -674,6 +674,8 @@ export default {
   'cost_details_eyebrow': '用量与费用',
 
   // AgentModelRouting（托管态智能体模型路由）
+  'agent_fixed_model': "智能体模型",
+  'agent_fixed_model_desc': "统一使用 GLM 5.2，无需额外配置。",
   'agent_models': "模型路由",
   'agent_models_desc': "按任务复杂度路由到不同模型；候选为平台已验证可用于智能体的文本模型。",
   'agent_tier_default': "默认模型",

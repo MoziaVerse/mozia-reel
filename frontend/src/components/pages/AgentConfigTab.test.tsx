@@ -102,6 +102,18 @@ describe("AgentConfigTab — credentials directory", () => {
     vi.restoreAllMocks();
   });
 
+  it("shows only the fixed model in managed mode without loading editable settings", () => {
+    setupBaseMocks();
+    render(<AgentConfigTab visible matrixOverview={{ enabled: true }} />);
+
+    expect(screen.getByText("GLM 5.2")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(API.getSystemConfig).not.toHaveBeenCalled();
+    expect(API.listAgentCredentials).not.toHaveBeenCalled();
+  });
+
   it("renders empty hint when no credentials are present", async () => {
     setupBaseMocks();
     render(<AgentConfigTab visible />);

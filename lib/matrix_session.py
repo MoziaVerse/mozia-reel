@@ -21,6 +21,8 @@ import time
 
 import httpx
 
+from lib.matrix_capabilities import MANAGED_AGENT_MODEL
+
 logger = logging.getLogger(__name__)
 
 SESSION_COOKIE_NAME = "arcreel_matrix_session"
@@ -528,45 +530,8 @@ def preferred_model(media: str, available: set[str]) -> str | None:
     return next((m for m in _PREFERRED_DEFAULT_MODELS.get(media, ()) if m in available), None)
 
 
-# Agent 能跑通的文本模型白名单。判据只有一条：拿真实 CLI（不是手写的等价请求）
-# 跑一轮带工具的对话能不能出结果——Agent 跑的是 Claude Code harness，链断了表现成
-# 「发一句话就报错」或「点了没反应」，而不是回答质量差。
-#
-# ⚠️ 判据必须用真实 CLI 跑。手写一个「形状相同」的 HTTP 请求验不出下面这条：
-# CLI 在带工具的请求里会往 messages 塞一条 role="system" 的消息（内容是它自己
-# 生成的可用 agent 类型清单，Anthropic 的 messages 规范里本没有这个角色）。
-# 自建 qwen 集群强制 system 只能在首位，原样透传会直接 400
-# `System message must be at the beginning`。网关现已提供渠道级开关
-# `merge_inline_system_message`，把中途 system 并入首条；qwen3.5-397b-a17b、
-# qwen3.8-27b、qwen3.6-35b-a3b 所在的渠道都已开启，三个型号才得以进名单。
-# 网关上新开一条自建 qwen 渠道时必须同样打开该开关，否则这条又会断。
-#
-# 落在名单外的，各有各的坏法，都不该出现在智能体的模型下拉里：
-#   - GLM-4.7：单轮工具调用正常，但在多层子任务嵌套下**静默死锁**（见
-#     ``_PREFERRED_DEFAULT_MODELS`` 的注释），浅层验证看不出来
-#   - 其余非对话类目：Agent SDK 走对话协议，选中即失败
-#
-# ⚠️ 一次性的上游抖动不算判据。kimi-k3 / kimi-k2.6 / deepseek-v4-flash 曾因
-# `upstream error: do request failed` 被划掉，换真实 CLI 复验时三个都跑得通——
-# 那是当时的上游故障，不是模型的固有缺陷。排除一个型号前先确认错误可复现。
-#
-# ⚠️ 平台上架/下架与上游可用性都会漂移，本名单不是长期真相。增删条目前先按
-# 上面那条判据实跑，不要按参数量或价格猜。
-AGENT_MODEL_ALLOWLIST: frozenset[str] = frozenset(
-    {
-        "qwen/qwen3.8-27b",
-        "qwen/qwen3.6-35b-a3b",
-        "qwen/qwen3.5-397b-a17b",
-        "qwen/qwen3.6-plus",
-        "deepseek/deepseek-v4-pro",
-        "deepseek/deepseek-v4-flash",
-        "moonshotai/kimi-k3",
-        "moonshotai/kimi-k2.6",
-        "z-ai/glm-5",
-        "z-ai/glm-5.1",
-        "z-ai/glm-5.2",
-    }
-)
+# 托管智能体仅开放固定模型，其他文本模型仍可用于普通生成。
+AGENT_MODEL_ALLOWLIST: frozenset[str] = frozenset({MANAGED_AGENT_MODEL})
 
 
 def agent_model_ready(model_id: str) -> bool:
