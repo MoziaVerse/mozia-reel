@@ -104,9 +104,13 @@ const HOSTED_GROUPS: SectionGroup[] = [
   },
   {
     kicker: "Access",
-    // API 令牌只服务"外部 Agent 凭 skill.md 驱动本站"那条链路，托管态下该链路
-    // 整个不提供，令牌也就没有了用处。
-    items: [{ id: "usage", labelKey: "dashboard:usage", Icon: BarChart3 }],
+    // API 令牌服务"外部 Agent 经远程 MCP 驱动本站"那条链路：托管态的令牌自带租户段，
+    // 是用户把自己的 Codex / Claude 接上来的唯一凭据。安装指引里给出的
+    // ?section=api-keys 链接也落在这里，撤掉它那份指引就是死链。
+    items: [
+      { id: "usage", labelKey: "dashboard:usage", Icon: BarChart3 },
+      { id: "api-keys", labelKey: "dashboard:api_keys", Icon: KeyRound },
+    ],
   },
   {
     kicker: "System",
@@ -135,7 +139,7 @@ export function SystemConfigPage() {
     if (section === "agent") return "agent";
     if (section === "media") return "media";
     if (section === "usage") return "usage";
-    if (section === "api-keys") return hosted ? "account" : "api-keys";
+    if (section === "api-keys") return "api-keys";
     if (section === "about") return "about";
     // 托管态没有供应商页；存量书签落到 ?section=providers 时改去账户，
     // 而不是渲染一个空壳或 404。

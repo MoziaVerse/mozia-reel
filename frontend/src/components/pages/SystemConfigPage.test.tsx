@@ -234,6 +234,7 @@ describe("SystemConfigPage · 托管态", () => {
     vi.spyOn(API, "listCustomProviders").mockResolvedValue({ providers: [] });
     vi.spyOn(API, "getSystemVersion").mockResolvedValue(makeVersionResponse());
     vi.spyOn(API, "getUsageStatsGrouped").mockResolvedValue({ stats: [], period: { start: "", end: "" } });
+    vi.spyOn(API, "listApiKeys").mockResolvedValue([]);
     vi.spyOn(API, "getMatrixCredits").mockResolvedValue({ available: false });
     vi.spyOn(API, "getMatrixOverview").mockResolvedValue({
       enabled: true,
@@ -293,15 +294,15 @@ describe("SystemConfigPage · 托管态", () => {
     expect(screen.queryByText(/gw\.example\.com/)).not.toBeInTheDocument();
   });
 
-  it("撤掉 API 令牌入口——外部 Agent 那条链路整个不提供", async () => {
+  it("保留 API 令牌入口——它是用户把自己的 Agent 接上来的唯一凭据", async () => {
     renderPage();
     expect(await screen.findByRole("button", { name: /账户/ })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /API 令牌/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /API 令牌/ })).toBeInTheDocument();
   });
 
-  it("存量的 ?section=api-keys 书签同样落到账户页", async () => {
+  it("?section=api-keys 落到令牌页——安装指引给出的正是这个链接", async () => {
     renderPage("/app/settings?section=api-keys");
-    expect(await screen.findByText("sub-123")).toBeInTheDocument();
+    expect(await screen.findByText("暂无 API 密钥")).toBeInTheDocument();
   });
 
   it("模型页在选择器之外附一份网关可用模型清单", async () => {

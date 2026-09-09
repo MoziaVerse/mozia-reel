@@ -1745,7 +1745,7 @@ export default {
   'external_agent_tab_agent': '通过 AI Agent 接入',
   'external_agent_prompt_title': '把提示词发给你的 AI Agent',
   'external_agent_prompt_desc': 'Agent 会读取专用安装指引，并带你完成 skills、MCP 与连通验证。',
-  'external_agent_prompt': '帮我接入 ArcReel。请阅读并执行 {{guideUrl}}',
+  'external_agent_prompt': '帮我接入 [[brand]]。请阅读并执行 {{guideUrl}}',
   'external_agent_copy_prompt': '复制提示词',
   'external_agent_prompt_copied': '提示词已复制。',
   'external_agent_mcp_endpoint': 'MCP 端点 URL',

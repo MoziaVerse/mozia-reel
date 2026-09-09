@@ -164,9 +164,12 @@ complete corresponding source code of this modified version.
 - 修改 `public/skill.md.template`、`server/app.py`、`Dockerfile` —
   文档里的产品名改用 `{{BRAND}}` 占位符，运行期从 `BRAND_NAME` 填充。此前前端
   已改名而这份文档仍写上游名，外部 Agent 会看到两个不一致的产品
-- 托管态撤掉「外部 Agent 凭 API 令牌驱动本站」整条链路：`ProjectsPage` 的
-  OpenClaw 入口、设置页的「API 令牌」小节、后端 `/skill.md`（托管态返回 404）。
-  该功能在托管形态下不完整，留着半条链路只会把人引到不存在的页面
+- 新增 `lib/tenant_api_key.py` 与 `server/mcp_tenant_gate.py` — 托管态支持「外部
+  Agent 经远程 MCP 驱动本站」：签发的 API Key 带上租户段（`arc-<tenant>-<32 hex>`，
+  单机态仍是上游的 `arc-<32 hex>`），租户门在上游那套 Bearer 鉴权之前把它解出来设进
+  ContextVar。上游按单用户设计（ADR 0065，工具调用沿用 `DEFAULT_USER_ID`），而托管态
+  一租户一库、`api_keys` 表本身就落在租户库里——不先定出租户就无从验 key。租户逻辑
+  全部留在这两个新文件内，`server/remote_mcp.py` 一行未动
 - 修改 `frontend/src/stores/config-status-store.ts` — 暴露 `managed`，
   各处复用同一次总览请求判断托管态
 - 新增 `lib/matrix_blocklist.py` — 可选的拒止名单，按 ssoSub 封禁指定用户。
@@ -196,12 +199,13 @@ complete corresponding source code of this modified version.
 - 删除 `README.md` 的赞助位 —— 上游那段的注册链接带 `?s=arc` 推荐码。第三方发行版
   转载它会把本发行版的用户导到上游的返佣下，与"独立分发"的定位不符。上游其余
   README 内容照旧沿用
-- `server/matrix_gate.py` 新增 `_MANAGED_DISABLED_PREFIXES`，托管态下 `/mcp` 返回
-  404 —— 上游的远程 MCP 端点自带 ArcReel 原生 API Key 鉴权，与 matrix 会话不是一套
-  身份，且它挂在 `/mcp` 而非 `/api/` 下，会命中门禁"静态资源放行"的兜底分支被放行、
-  租户上下文恒为空。与托管态撤掉外部 Agent 链路的口径一致
-- 上游把 `/skill.md` 改名为 `/agent-installation-guide.md`，本发行版的品牌替换与
-  托管态 404 随之迁到新端点；`public/agent-installation-guide.md` 中的产品名参数化为
+- `server/matrix_gate.py` 放行 `/mcp` 与 `/agent-installation-guide.md` —— 两者的
+  访问方都是用户自己的 Agent 宿主，带不了会话 cookie；前者自带 API Key 鉴权，后者
+  只讲怎么接线、不含租户数据。`/mcp` 的租户由 `McpTenantGate` 承担，它 fail closed：
+  门禁那条"静态资源放行"的兜底分支只看 `/api/` 前缀与是否浏览器导航，MCP 客户端的
+  POST 两条都不满足，漏过去不会报错，只会让租户恒为空、工具静默写进共享数据根
+- 上游把 `/skill.md` 改名为 `/agent-installation-guide.md`，本发行版的品牌替换
+  随之迁到新端点；`public/agent-installation-guide.md` 中的产品名参数化为
   `{{BRAND}}`，但 `ArcReel/skills`、`setup-arcreel-skills` 这类指向上游实际仓库与包
   的标识符保持原样
 - 不采纳上游 `test_list_voices_returns_full_catalog_for_custom_openai_tts_endpoint`
