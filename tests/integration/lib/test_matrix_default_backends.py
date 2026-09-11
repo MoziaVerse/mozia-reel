@@ -207,12 +207,15 @@ class TestTextModelPreference:
         available = {"GLM-4.7", "moonshotai/kimi-k3", "z-ai/glm-5.2"}
         assert preferred_model("text", available) == "z-ai/glm-5.2"
 
-    def test_prefers_gift_eligible_self_hosted_qwen_as_default(self):
-        """新用户通常只有赠送额度：gift,paid 的自建 qwen 排在 paid-only 兜底项前面，
-        三个之间按实测行为排序，安全对齐偏激进的 397b 垫底。"""
+    def test_prefers_gift_eligible_w8a8_then_self_hosted_qwen(self):
+        """新用户通常只有赠送额度：gift,paid 的模型排在 paid-only 兜底项前面。
+        w8a8 最便宜且延迟最低，做首选；之后是自建 qwen，三个之间按实测行为排序，
+        安全对齐偏激进的 397b 垫底。"""
         from lib.matrix_session import preferred_model
 
         gift = {"qwen/qwen3.8-27b", "qwen/qwen3.6-35b-a3b", "qwen/qwen3.5-397b-a17b"}
+        w8a8 = "deepseek/deepseek-v4-flash-w8a8"
+        assert preferred_model("text", gift | {w8a8, "deepseek/deepseek-v4-flash", "z-ai/glm-5.2"}) == w8a8
         assert preferred_model("text", gift | {"deepseek/deepseek-v4-flash", "z-ai/glm-5.2"}) == "qwen/qwen3.8-27b"
         assert preferred_model("text", gift - {"qwen/qwen3.8-27b"}) == "qwen/qwen3.6-35b-a3b"
         assert preferred_model("text", {"qwen/qwen3.5-397b-a17b", "deepseek/deepseek-v4-flash"}) == (
@@ -235,6 +238,7 @@ class TestTextModelPreference:
             "z-ai/glm-5.3-flash",
             "moonshotai/kimi-k3",
             "deepseek/deepseek-v4-flash",
+            "deepseek/deepseek-v4-flash-w8a8",
             "qwen/qwen3.8-27b",
             "qwen/qwen3.6-plus",
         ):
