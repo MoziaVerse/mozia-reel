@@ -488,14 +488,27 @@ _PREFERRED_DEFAULT_MODELS: dict[str, tuple[str, ...]] = {
     #
     # ⚠️ gift 授权同样会漂移，改动前先核对网关的 mozia_model_quota_policies。
     #
-    # 前三个是自建集群的 qwen，网关策略为 gift,paid（qwen3.5-397b 无策略条目，网关对
+    # 这张表只管**普通文本生成**（剧本、分镜、改写等单轮/少轮请求）；托管智能体
+    # 走 ``MANAGED_AGENT_MODEL``，不看这里。两者判据不同：智能体要求模型在
+    # Claude Code harness 的长 system prompt + 中途 system 消息 + 70 个工具下仍能
+    # 正确调工具，普通生成只要求单轮输出干净。
+    #
+    # deepseek-v4-flash-w8a8 首选：gift,paid、目前 gift 可用对话模型里最便宜
+    # （ratio 0.6，输出价约为 qwen3.6-35b 的 1/3），不吐推理 token，10 并发 × 3 波
+    # 分镜 JSON 生成 30/30 HTTP 200、p50 20 s，延迟远好于 qwen3.8-27b（目录 24h 均值
+    # 43 s）。它**不能**进智能体：网关把 messages 中途的 system 原样透传时，它会续写
+    # 那条 system 并把 ``</think>`` 泄漏进正文——那是渠道配置问题
+    # （``merge_inline_system_message``），不是普通生成路径会碰到的形状。
+    #
+    # 之后三个是自建集群的 qwen，网关策略为 gift,paid（qwen3.5-397b 无策略条目，网关对
     # 未匹配模型默认放行全部分区），且都用真实 CLI 跑通了带工具的一轮对话。排序依据：
-    #   - qwen3.8-27b 首选：两条渠道做负载均衡，回答不夹思考过程；
+    #   - qwen3.8-27b：两条渠道做负载均衡，回答不夹思考过程；
     #   - qwen3.6-35b-a3b 次之：行为同样干净，单渠道；
     #   - qwen3.5-397b-a17b 垫底：能力最强，但安全对齐偏激进——探测时曾把读一个
     #     叫 secret.txt 的文件当成提示注入拒绝，正常任务有误拒风险，不宜做默认。
     # 之后是 paid-only 的兜底项，按倍率从低到高。
     "text": (
+        "deepseek/deepseek-v4-flash-w8a8",
         "qwen/qwen3.8-27b",
         "qwen/qwen3.6-35b-a3b",
         "qwen/qwen3.5-397b-a17b",
