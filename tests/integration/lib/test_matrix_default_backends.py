@@ -240,7 +240,6 @@ class TestTextModelPreference:
             "z-ai/glm-5.3-flash",
             "moonshotai/kimi-k3",
             "deepseek/deepseek-v4-flash",
-            "deepseek/deepseek-v4-flash-w8a8",
             "qwen/qwen3.8-27b",
             "qwen/qwen3.6-plus",
         ):
