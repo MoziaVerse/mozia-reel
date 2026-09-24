@@ -21,7 +21,7 @@ import time
 
 import httpx
 
-from lib.matrix_capabilities import MANAGED_AGENT_MODEL
+from lib.matrix_capabilities import MANAGED_AGENT_MODEL, gift_agent_model
 
 logger = logging.getLogger(__name__)
 
@@ -482,7 +482,7 @@ _PREFERRED_DEFAULT_MODELS: dict[str, tuple[str, ...]] = {
     # 1) 死锁：GLM-4.7 在 Agent 的多层子任务嵌套下会**静默死锁**——不报错、
     #    不超时，就是没有输出。它绝不能进这张表；而按字典序挑恰好挑中它。
     #    （它在单轮工具调用上是正常的，别拿浅层验证的通过率把它放回来。）
-    # 2) 工具调用链：只收 ``AGENT_MODEL_ALLOWLIST`` 里的型号，判据见那边。
+    # 2) 工具调用链：只收 ``agent_model_ready`` 认可的型号。
     # 3) 赠送额度：网关按模型限定可消耗的钱包分区，只有少数模型允许 gift。
     #    新用户手里通常只有赠送额度，默认值落在 paid-only 上等于开箱就欠费。
     #
@@ -530,13 +530,21 @@ def preferred_model(media: str, available: set[str]) -> str | None:
     return next((m for m in _PREFERRED_DEFAULT_MODELS.get(media, ()) if m in available), None)
 
 
-# 托管智能体仅开放固定模型，其他文本模型仍可用于普通生成。
-AGENT_MODEL_ALLOWLIST: frozenset[str] = frozenset({MANAGED_AGENT_MODEL})
-
-
 def agent_model_ready(model_id: str) -> bool:
-    """该模型能否承载 Agent 的工具调用链。"""
-    return model_id in AGENT_MODEL_ALLOWLIST
+    """该模型能否承载 Agent 的工具调用链：只有托管智能体会路由到的两档。
+
+    其他文本模型仍可用于普通生成。
+    """
+    return model_id in (MANAGED_AGENT_MODEL, gift_agent_model())
+
+
+def effective_agent_model(stored: str | None) -> str:
+    """托管智能体实际使用的模型：设置页选定的可用档位，未选或不在可选范围时用 gift 档。
+
+    默认 gift 档：新用户手里通常只有赠送额度，而 GLM 5.2 只收付费额度。
+    """
+    value = (stored or "").strip()
+    return value if agent_model_ready(value) else gift_agent_model()
 
 
 async def backfill_video_durations(session, *, provider_id: int) -> int:
@@ -913,20 +921,5 @@ async def _models_for_new_provider(*, gateway: str, api_key: str, wallet_token: 
 
 
 async def seed_agent_credential_for_gateway(session, *, gateway: str, api_key: str) -> None:
-    """便捷入口：读回该租户已 seed 的模型清单，挑一个文本模型配给 Agent。"""
-    from lib.db.repositories.custom_provider_repo import CustomProviderRepository
-
-    repo = CustomProviderRepository(session)
-    provider = next(
-        (p for p in await repo.list_providers() if p.display_name == GATEWAY_PROVIDER_DISPLAY_NAME),
-        None,
-    )
-    text_model = None
-    if provider is not None:
-        chat_models = [
-            m.model_id for m in await repo.list_models(provider.id) if m.endpoint == "openai-chat" and m.is_enabled
-        ]
-        # 与 default_text_backend 用同一张偏好表：Agent 是子任务嵌套最深的地方，
-        # 挑中会死锁的那个模型，症状是"点了没反应"，最难查。
-        text_model = preferred_model("text", set(chat_models)) or next(iter(sorted(chat_models)), None)
-    await seed_agent_credential(session, gateway=gateway, api_key=api_key, text_model=text_model)
+    """便捷入口：新租户的 Agent 凭据默认指向 gift 档，用户可在设置页改选。"""
+    await seed_agent_credential(session, gateway=gateway, api_key=api_key, text_model=gift_agent_model())

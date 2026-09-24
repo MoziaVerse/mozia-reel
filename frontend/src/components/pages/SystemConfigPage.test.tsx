@@ -240,7 +240,11 @@ describe("SystemConfigPage · 托管态", () => {
       connected: true,
       gateway_host: "gw.example.com",
       media_counts: { text: 1, image: 1, video: 1, audio: 1 },
-      models: [{ model_id: "m/one", display_name: "One", media_type: "video" }],
+      models: [
+        { model_id: "m/one", display_name: "One", media_type: "video" },
+        { model_id: "z-ai/glm-5.2", display_name: "GLM 5.2", media_type: "text", quota_sources: ["paid"], agent_ready: true },
+      ],
+      agent_default_model: "z-ai/glm-5.2",
       matrix_web_url: "https://matrix.example.com",
       user: { username: "zeo", sso_sub: "sub-123" },
     });
@@ -263,7 +267,7 @@ describe("SystemConfigPage · 托管态", () => {
     expect(await screen.findByText("sub-123")).toBeInTheDocument();
   });
 
-  it("智能体页固定 GLM 5.2，隐藏模型路由和高级设置", async () => {
+  it("智能体页只提供可选的智能体模型，隐藏地址、密钥与高级设置", async () => {
     vi.spyOn(API, "listAgentCredentials").mockResolvedValue({
       credentials: [
         {

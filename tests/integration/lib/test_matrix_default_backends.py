@@ -225,11 +225,13 @@ class TestTextModelPreference:
 
         assert preferred_model("text", {"GLM-4.7", "z-ai/glm-5.2"}) == "z-ai/glm-5.2"
 
-    def test_managed_agent_only_exposes_glm52(self):
-        """托管智能体仅开放 GLM 5.2，普通文本生成的偏好表独立保留。"""
+    def test_managed_agent_exposes_paid_and_gift_tiers_only(self, monkeypatch):
+        """托管智能体只开放付费档 GLM 5.2 与 gift 档，普通文本生成的偏好表独立保留。"""
         from lib.matrix_session import agent_model_ready, preferred_model
 
+        monkeypatch.delenv("MATRIX_GIFT_AGENT_MODEL", raising=False)
         assert agent_model_ready("z-ai/glm-5.2")
+        assert agent_model_ready("deepseek/deepseek-v4-flash-w8a8")
         for model in (
             "GLM-4.7",
             "z-ai/glm-5.3-flash",
@@ -416,3 +418,46 @@ class TestCatalogRefresh:
 
         assert result == {"refreshed": False, "reason": "catalog_unavailable"}
         assert len(await CustomProviderRepository(db_session).list_models(provider_id)) == 1
+
+
+class TestManagedAgentModelSelection:
+    """托管智能体用设置页选定的模型；未选或选了不可用的型号时默认 gift 档。
+
+    GLM 5.2 只收付费额度，新用户通常只有赠送额度，所以默认落在 gift 档。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _default_gift_tier(self, monkeypatch):
+        monkeypatch.delenv("MATRIX_GIFT_AGENT_MODEL", raising=False)
+
+    def test_selected_paid_model_is_kept(self):
+        from lib.matrix_session import effective_agent_model
+
+        assert effective_agent_model("z-ai/glm-5.2") == "z-ai/glm-5.2"
+
+    def test_unselected_or_unsupported_falls_back_to_gift_tier(self):
+        from lib.matrix_session import effective_agent_model
+
+        for stored in (None, "", "qwen/qwen3.6-plus", "GLM-4.7"):
+            assert effective_agent_model(stored) == "deepseek/deepseek-v4-flash-w8a8"
+
+    def test_gift_tier_is_switchable_by_env(self, monkeypatch):
+        """gift 档依赖网关渠道配置，未就绪时运维换一个已就绪的型号，不必发版。"""
+        from lib.matrix_session import agent_model_ready, effective_agent_model
+
+        monkeypatch.setenv("MATRIX_GIFT_AGENT_MODEL", "qwen/qwen3.8-27b")
+        assert effective_agent_model(None) == "qwen/qwen3.8-27b"
+        assert agent_model_ready("qwen/qwen3.8-27b")
+        assert not agent_model_ready("deepseek/deepseek-v4-flash-w8a8")
+
+    async def test_new_tenant_agent_credential_defaults_to_gift_tier(self, db_session):
+        from lib.db.repositories.agent_credential_repo import AgentCredentialRepository
+        from lib.matrix_session import seed_agent_credential_for_gateway
+
+        await seed_agent_credential_for_gateway(db_session, gateway="https://gw.example/v1", api_key="k")
+        cred = await AgentCredentialRepository(db_session).get_active()
+        assert cred is not None
+        assert cred.base_url == "https://gw.example"
+        assert {cred.model, cred.haiku_model, cred.sonnet_model, cred.opus_model, cred.subagent_model} == {
+            "deepseek/deepseek-v4-flash-w8a8"
+        }
