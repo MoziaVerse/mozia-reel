@@ -472,8 +472,14 @@ async def lifespan(app: FastAPI):
         with tenant_scope(_bound["sso_sub"]):
             await ensure_tenant_db()
             async with safe_session_factory() as _s:
+                # 带上 wallet_token：存量供应商的目录同步只在有它时才做，不带的话
+                # 绑定模式下平台新上架的模型要等手动刷新目录才看得到。
                 await seed_gateway_provider(
-                    _s, gateway=_bound["gateway"], api_key=_bound["api_key"], sso_sub=_bound["sso_sub"]
+                    _s,
+                    gateway=_bound["gateway"],
+                    api_key=_bound["api_key"],
+                    sso_sub=_bound["sso_sub"],
+                    wallet_token=_bound.get("wallet_token"),
                 )
                 await seed_agent_credential_for_gateway(_s, gateway=_bound["gateway"], api_key=_bound["api_key"])
                 await save_wallet_token(_s, _bound.get("wallet_token"))
