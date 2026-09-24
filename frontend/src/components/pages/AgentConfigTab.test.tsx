@@ -102,43 +102,57 @@ describe("AgentConfigTab — credentials directory", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows only the fixed model in managed mode without loading editable settings", () => {
-    setupBaseMocks();
-    render(<AgentConfigTab visible matrixOverview={{ enabled: true }} />);
+  const MANAGED_OVERVIEW = {
+    enabled: true,
+    agent_default_model: "deepseek/deepseek-v4-flash-w8a8",
+    models: [
+      { model_id: "z-ai/glm-5.2", display_name: "GLM 5.2", media_type: "text" as const, quota_sources: ["paid"], agent_ready: true },
+      {
+        model_id: "deepseek/deepseek-v4-flash-w8a8",
+        display_name: "Deepseek V4 Flash W8A8",
+        media_type: "text" as const,
+        quota_sources: ["gift", "paid"],
+        agent_ready: true,
+      },
+      { model_id: "qwen/qwen3.6-plus", display_name: "Qwen3.6 Plus", media_type: "text" as const, quota_sources: ["paid"], agent_ready: false },
+    ],
+  };
+  const managedCredential = (model: string) =>
+    makeCredential({ preset_id: "__custom__", display_name: "Matrix 网关", model });
 
-    expect(screen.getByText("GLM 5.2")).toBeInTheDocument();
-    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  it("managed mode offers only agent-ready models and preselects the gift default for unsupported stored values", async () => {
+    setupBaseMocks({ credentials: [managedCredential("qwen/qwen3.8-27b")] });
+    render(<AgentConfigTab visible matrixOverview={MANAGED_OVERVIEW} />);
+
+    const gift = await screen.findByRole("radio", { name: /Deepseek V4 Flash W8A8/ });
+    expect(gift).toBeChecked();
+    expect(screen.getByRole("radio", { name: /GLM 5.2/ })).not.toBeChecked();
+    expect(screen.queryByText("Qwen3.6 Plus")).not.toBeInTheDocument();
+    expect(screen.getByText("默认")).toBeInTheDocument();
+    // 地址、密钥与并发等部署参数不在托管态暴露
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(API.getSystemConfig).not.toHaveBeenCalled();
-    expect(API.listAgentCredentials).not.toHaveBeenCalled();
   });
 
-  it("lists the gift-credit agent model next to GLM 5.2 in managed mode", () => {
-    setupBaseMocks();
-    render(
-      <AgentConfigTab
-        visible
-        matrixOverview={{
-          enabled: true,
-          models: [
-            { model_id: "z-ai/glm-5.2", display_name: "GLM 5.2", media_type: "text", quota_sources: ["paid"], agent_ready: true },
-            {
-              model_id: "deepseek/deepseek-v4-flash-w8a8",
-              display_name: "Deepseek V4 Flash W8A8",
-              media_type: "text",
-              quota_sources: ["gift", "paid"],
-              agent_ready: true,
-            },
-            { model_id: "qwen/qwen3.6-plus", display_name: "Qwen3.6 Plus", media_type: "text", quota_sources: ["paid"], agent_ready: false },
-          ],
-        }}
-      />,
-    );
+  it("managed mode writes the chosen model to every tier of the agent credential", async () => {
+    setupBaseMocks({ credentials: [managedCredential("deepseek/deepseek-v4-flash-w8a8")] });
+    const update = vi
+      .spyOn(API, "updateAgentCredential")
+      .mockResolvedValue(managedCredential("z-ai/glm-5.2") as never);
+    const user = userEvent.setup();
+    render(<AgentConfigTab visible matrixOverview={MANAGED_OVERVIEW} />);
 
-    expect(screen.getByText("GLM 5.2")).toBeInTheDocument();
-    expect(screen.getByText("Deepseek V4 Flash W8A8")).toBeInTheDocument();
-    expect(screen.queryByText("Qwen3.6 Plus")).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("radio", { name: /GLM 5.2/ }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(update).toHaveBeenCalledWith(1, {
+      model: "z-ai/glm-5.2",
+      haiku_model: "z-ai/glm-5.2",
+      sonnet_model: "z-ai/glm-5.2",
+      opus_model: "z-ai/glm-5.2",
+      subagent_model: "z-ai/glm-5.2",
+    });
+    expect(screen.queryByRole("button", { name: "保存" })).not.toBeInTheDocument();
   });
 
   it("renders empty hint when no credentials are present", async () => {

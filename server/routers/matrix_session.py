@@ -277,7 +277,7 @@ async def session_overview(
     """
     from lib.custom_provider.endpoints import endpoint_to_media_type
     from lib.db.repositories.custom_provider_repo import CustomProviderRepository
-    from lib.matrix_capabilities import matrix_mode_enabled
+    from lib.matrix_capabilities import gift_agent_model, matrix_mode_enabled
     from lib.matrix_session import (
         GATEWAY_PROVIDER_DISPLAY_NAME,
         agent_model_ready,
@@ -340,6 +340,8 @@ async def session_overview(
         "gateway_host": _host_only(provider.base_url) if provider else None,
         "media_counts": media_counts,
         "models": models,
+        # 智能体未选模型时实际使用的档位，设置页据此标出默认项。
+        "agent_default_model": gift_agent_model(),
         "matrix_web_url": matrix_web_url(),
     }
 

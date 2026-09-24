@@ -675,7 +675,8 @@ export default {
 
   // AgentModelRouting（托管态智能体模型路由）
   'agent_fixed_model': "智能体模型",
-  'agent_fixed_model_desc': "有付费额度时使用 GLM 5.2；只剩赠送额度时自动改用可消耗赠送额度的模型，无需额外配置。",
+  'agent_fixed_model_desc': "选择智能体使用的模型。默认使用可消耗赠送额度的模型；GLM 5.2 能力更强，只消耗付费额度。",
+  'agent_model_default_tag': "默认",
   'agent_models': "模型路由",
   'agent_models_desc': "按任务复杂度路由到不同模型；候选为平台已验证可用于智能体的文本模型。",
   'agent_tier_default': "默认模型",

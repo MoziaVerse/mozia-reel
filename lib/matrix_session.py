@@ -538,31 +538,13 @@ def agent_model_ready(model_id: str) -> bool:
     return model_id in (MANAGED_AGENT_MODEL, gift_agent_model())
 
 
-async def resolve_managed_agent_model(session) -> str:
-    """按当前租户钱包挑托管智能体的模型。
+def effective_agent_model(stored: str | None) -> str:
+    """托管智能体实际使用的模型：设置页选定的可用档位，未选或不在可选范围时用 gift 档。
 
-    付费模型付得起就用它，付不起而 gift 档付得起就落到 gift 档。判据取平台目录的
-    ``access.available``（网关按钱包分区算好的「此刻付不付得起」），不在本地复刻
-    分区规则。拿不到钱包凭据或目录时维持付费模型，余额不足由网关报出。
+    默认 gift 档：新用户手里通常只有赠送额度，而 GLM 5.2 只收付费额度。
     """
-    token = await get_wallet_token(session)
-    if not token:
-        return MANAGED_AGENT_MODEL
-    catalog = await fetch_model_catalog(token)
-    if not catalog:
-        return MANAGED_AGENT_MODEL
-    available = {
-        item.get("model_name"): (item.get("access") or {}).get("available")
-        for item in catalog
-        if isinstance(item, dict)
-    }
-    if available.get(MANAGED_AGENT_MODEL) is not False:
-        return MANAGED_AGENT_MODEL
-    gift_model = gift_agent_model()
-    if available.get(gift_model) is True:
-        logger.info("钱包付不起 %s，智能体改用 %s", MANAGED_AGENT_MODEL, gift_model)
-        return gift_model
-    return MANAGED_AGENT_MODEL
+    value = (stored or "").strip()
+    return value if agent_model_ready(value) else gift_agent_model()
 
 
 async def backfill_video_durations(session, *, provider_id: int) -> int:
@@ -939,20 +921,5 @@ async def _models_for_new_provider(*, gateway: str, api_key: str, wallet_token: 
 
 
 async def seed_agent_credential_for_gateway(session, *, gateway: str, api_key: str) -> None:
-    """便捷入口：读回该租户已 seed 的模型清单，挑一个文本模型配给 Agent。"""
-    from lib.db.repositories.custom_provider_repo import CustomProviderRepository
-
-    repo = CustomProviderRepository(session)
-    provider = next(
-        (p for p in await repo.list_providers() if p.display_name == GATEWAY_PROVIDER_DISPLAY_NAME),
-        None,
-    )
-    text_model = None
-    if provider is not None:
-        chat_models = [
-            m.model_id for m in await repo.list_models(provider.id) if m.endpoint == "openai-chat" and m.is_enabled
-        ]
-        # 与 default_text_backend 用同一张偏好表：Agent 是子任务嵌套最深的地方，
-        # 挑中会死锁的那个模型，症状是"点了没反应"，最难查。
-        text_model = preferred_model("text", set(chat_models)) or next(iter(sorted(chat_models)), None)
-    await seed_agent_credential(session, gateway=gateway, api_key=api_key, text_model=text_model)
+    """便捷入口：新租户的 Agent 凭据默认指向 gift 档，用户可在设置页改选。"""
+    await seed_agent_credential(session, gateway=gateway, api_key=api_key, text_model=gift_agent_model())

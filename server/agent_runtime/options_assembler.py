@@ -50,17 +50,16 @@ async def load_provider_env_overrides() -> dict[str, str]:
     from lib.config.service import build_anthropic_env_dict
     from lib.db import async_session_factory
 
-    agent_model: str | None = None
     async with async_session_factory() as session:
         anthropic_env = await build_anthropic_env_dict(session)
-        if matrix_mode_enabled():
-            from lib.matrix_session import resolve_managed_agent_model
-
-            agent_model = await resolve_managed_agent_model(session)
 
     result = dict(anthropic_env)
-    if agent_model is not None:
-        # 覆盖存量凭证中的路由，主会话、各档位与子任务统一使用按钱包选定的托管模型。
+    if matrix_mode_enabled():
+        from lib.matrix_session import effective_agent_model
+
+        # 主会话、各档位与子任务统一使用设置页选定的托管模型；存量凭证里不在可选
+        # 范围内的旧路由收敛到默认的 gift 档。
+        agent_model = effective_agent_model(anthropic_env.get("ANTHROPIC_MODEL"))
         for key in (
             "ANTHROPIC_MODEL",
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",

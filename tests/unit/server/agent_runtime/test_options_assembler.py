@@ -82,8 +82,9 @@ async def test_load_provider_env_overrides_injects_anthropic_and_empties() -> No
 @pytest.mark.asyncio
 @pytest.mark.parametrize("managed", [True, False])
 async def test_model_policy_overrides_stale_routes_only_in_managed_mode(monkeypatch, managed) -> None:
-    """存量凭证的各档路由在托管态统一收敛到按钱包选定的模型，独立部署保留原值。"""
+    """托管态各档路由统一为设置页选定的模型，选了不可用型号时收敛到 gift 档；独立部署保留原值。"""
     monkeypatch.setenv("MATRIX_BACKEND_URL", "https://matrix.example" if managed else "")
+    monkeypatch.delenv("MATRIX_GIFT_AGENT_MODEL", raising=False)
     model_keys = (
         "ANTHROPIC_MODEL",
         "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -91,17 +92,18 @@ async def test_model_policy_overrides_stale_routes_only_in_managed_mode(monkeypa
         "ANTHROPIC_DEFAULT_OPUS_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
     )
-    stored: dict[str, str] = {key: "qwen/qwen3.8-27b" for key in model_keys}
-    stored.update(ANTHROPIC_API_KEY="test-key", ANTHROPIC_BASE_URL="https://gateway.example")
-    with (
-        patch("lib.config.service.build_anthropic_env_dict", return_value=stored),
-        patch("lib.matrix_session.resolve_managed_agent_model", return_value="deepseek/deepseek-v4-flash-w8a8"),
+    for selected, expected_managed in (
+        ("z-ai/glm-5.2", "z-ai/glm-5.2"),
+        ("qwen/qwen3.6-plus", "deepseek/deepseek-v4-flash-w8a8"),
     ):
-        env = await load_provider_env_overrides()
-    assert {env[key] for key in model_keys} == {"deepseek/deepseek-v4-flash-w8a8" if managed else "qwen/qwen3.8-27b"}
-    assert env["ANTHROPIC_API_KEY"] == "test-key"
-    assert env["ANTHROPIC_BASE_URL"] == "https://gateway.example"
-    assert stored["ANTHROPIC_MODEL"] == "qwen/qwen3.8-27b"
+        stored: dict[str, str] = {key: selected for key in model_keys}
+        stored.update(ANTHROPIC_API_KEY="test-key", ANTHROPIC_BASE_URL="https://gateway.example")
+        with patch("lib.config.service.build_anthropic_env_dict", return_value=stored):
+            env = await load_provider_env_overrides()
+        assert {env[key] for key in model_keys} == {expected_managed if managed else selected}
+        assert env["ANTHROPIC_API_KEY"] == "test-key"
+        assert env["ANTHROPIC_BASE_URL"] == "https://gateway.example"
+        assert stored["ANTHROPIC_MODEL"] == selected
 
 
 @pytest.mark.asyncio

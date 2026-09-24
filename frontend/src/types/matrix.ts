@@ -19,6 +19,8 @@ export interface MatrixOverview {
   gateway_host?: string | null;
   media_counts?: Record<string, number>;
   models?: MatrixModelInfo[];
+  /** 智能体未选模型时服务端实际使用的档位（可消耗赠送额度） */
+  agent_default_model?: string;
   /** Matrix 控制台地址，用于"管理账户/充值"这类跳转 */
   matrix_web_url?: string;
   user?: MatrixUser | null;
