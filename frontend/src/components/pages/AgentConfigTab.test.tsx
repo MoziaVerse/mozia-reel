@@ -114,6 +114,33 @@ describe("AgentConfigTab — credentials directory", () => {
     expect(API.listAgentCredentials).not.toHaveBeenCalled();
   });
 
+  it("lists the gift-credit agent model next to GLM 5.2 in managed mode", () => {
+    setupBaseMocks();
+    render(
+      <AgentConfigTab
+        visible
+        matrixOverview={{
+          enabled: true,
+          models: [
+            { model_id: "z-ai/glm-5.2", display_name: "GLM 5.2", media_type: "text", quota_sources: ["paid"], agent_ready: true },
+            {
+              model_id: "deepseek/deepseek-v4-flash-w8a8",
+              display_name: "Deepseek V4 Flash W8A8",
+              media_type: "text",
+              quota_sources: ["gift", "paid"],
+              agent_ready: true,
+            },
+            { model_id: "qwen/qwen3.6-plus", display_name: "Qwen3.6 Plus", media_type: "text", quota_sources: ["paid"], agent_ready: false },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("GLM 5.2")).toBeInTheDocument();
+    expect(screen.getByText("Deepseek V4 Flash W8A8")).toBeInTheDocument();
+    expect(screen.queryByText("Qwen3.6 Plus")).not.toBeInTheDocument();
+  });
+
   it("renders empty hint when no credentials are present", async () => {
     setupBaseMocks();
     render(<AgentConfigTab visible />);

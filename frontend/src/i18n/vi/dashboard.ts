@@ -659,7 +659,7 @@ export default {
 
   // AgentModelRouting（托管态智能体模型路由）
   'agent_fixed_model': "Mô hình trợ lý",
-  'agent_fixed_model_desc': "GLM 5.2 được sử dụng cho mọi tác vụ trợ lý. Không cần cấu hình thêm.",
+  'agent_fixed_model_desc': "Khi có tín dụng trả phí, trợ lý dùng GLM 5.2; khi chỉ còn tín dụng tặng, trợ lý tự động chuyển sang mô hình chấp nhận tín dụng tặng. Không cần cấu hình thêm.",
   'agent_models': "Dinh tuyen mo hinh",
   'agent_models_desc': "Dinh tuyen theo do phuc tap cua tac vu; ung vien la cac mo hinh van ban da duoc xac nhan dung duoc cho tac nhan.",
   'agent_tier_default': "Mo hinh mac dinh",

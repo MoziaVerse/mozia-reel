@@ -676,7 +676,7 @@ export default {
 
   // AgentModelRouting（托管态智能体模型路由）
   'agent_fixed_model': "Agent model",
-  'agent_fixed_model_desc': "GLM 5.2 is used for all agent tasks. No additional configuration is needed.",
+  'agent_fixed_model_desc': "GLM 5.2 is used when you have paid credits; with only gift credits left, the agent automatically switches to a model that accepts gift credits. No additional configuration is needed.",
   'agent_models': "Model routing",
   'agent_models_desc': "Routes by task complexity. Candidates are the text models verified for agent use.",
   'agent_tier_default': "Default model",

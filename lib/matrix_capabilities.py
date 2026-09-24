@@ -22,6 +22,16 @@ import os
 
 MANAGED_AGENT_MODEL = "z-ai/glm-5.2"
 
+# 钱包里付不起 ``MANAGED_AGENT_MODEL``（它只收付费额度）时智能体改用的模型，须允许
+# gift 分区。可用环境变量换：它依赖网关渠道开启 ``merge_inline_system_message``，
+# 渠道未就绪时运维可临时切到已开启该开关的模型（如 qwen/qwen3.8-27b）而不必发版。
+_DEFAULT_GIFT_AGENT_MODEL = "deepseek/deepseek-v4-flash-w8a8"
+
+
+def gift_agent_model() -> str:
+    return os.environ.get("MATRIX_GIFT_AGENT_MODEL", "").strip() or _DEFAULT_GIFT_AGENT_MODEL
+
+
 # 网关实测可用的 endpoint（2026-08-19 逐条探测确认）：
 #   /v1/chat/completions · /v1/images/* · /v1/videos · /v1/audio/speech · /v1/messages
 GATEWAY_SUPPORTED_ENDPOINTS: frozenset[str] = frozenset(

@@ -225,11 +225,13 @@ class TestTextModelPreference:
 
         assert preferred_model("text", {"GLM-4.7", "z-ai/glm-5.2"}) == "z-ai/glm-5.2"
 
-    def test_managed_agent_only_exposes_glm52(self):
-        """托管智能体仅开放 GLM 5.2，普通文本生成的偏好表独立保留。"""
+    def test_managed_agent_exposes_paid_and_gift_tiers_only(self, monkeypatch):
+        """托管智能体只开放付费档 GLM 5.2 与 gift 档，普通文本生成的偏好表独立保留。"""
         from lib.matrix_session import agent_model_ready, preferred_model
 
+        monkeypatch.delenv("MATRIX_GIFT_AGENT_MODEL", raising=False)
         assert agent_model_ready("z-ai/glm-5.2")
+        assert agent_model_ready("deepseek/deepseek-v4-flash-w8a8")
         for model in (
             "GLM-4.7",
             "z-ai/glm-5.3-flash",
@@ -416,3 +418,80 @@ class TestCatalogRefresh:
 
         assert result == {"refreshed": False, "reason": "catalog_unavailable"}
         assert len(await CustomProviderRepository(db_session).list_models(provider_id)) == 1
+
+
+class TestManagedAgentModelByWallet:
+    """托管智能体按钱包选模型：付费模型付得起用它，只剩赠送额度时落到 gift 档。
+
+    GLM 5.2 只收付费额度；新用户手里通常只有赠送额度，固定用它等于开箱就欠费。
+    """
+
+    CATALOG_URL = "https://matrix.invalid/api/external/catalog"
+
+    @pytest.fixture(autouse=True)
+    def _gateway_url(self, monkeypatch):
+        monkeypatch.setenv("MATRIX_BACKEND_URL", "https://matrix.invalid")
+        monkeypatch.delenv("MATRIX_GIFT_AGENT_MODEL", raising=False)
+
+    @staticmethod
+    def _catalog(paid_available: bool, gift_available: bool, gift_model: str = "deepseek/deepseek-v4-flash-w8a8"):
+        return httpx.Response(
+            200,
+            json={
+                "models": [
+                    {
+                        "model_name": "z-ai/glm-5.2",
+                        "access": {"available": paid_available, "required_sources": ["paid"]},
+                    },
+                    {
+                        "model_name": gift_model,
+                        "access": {"available": gift_available, "required_sources": ["gift", "paid"]},
+                    },
+                ]
+            },
+        )
+
+    async def _with_wallet_token(self, db_session):
+        await ConfigService(db_session).set_setting("matrix_wallet_token", "wt-1")
+        await db_session.commit()
+
+    async def test_paid_wallet_keeps_glm52(self, db_session, respx_mock):
+        from lib.matrix_session import resolve_managed_agent_model
+
+        await self._with_wallet_token(db_session)
+        respx_mock.get(self.CATALOG_URL).mock(return_value=self._catalog(True, True))
+        assert await resolve_managed_agent_model(db_session) == "z-ai/glm-5.2"
+
+    async def test_gift_only_wallet_routes_to_gift_tier(self, db_session, respx_mock):
+        from lib.matrix_session import resolve_managed_agent_model
+
+        await self._with_wallet_token(db_session)
+        respx_mock.get(self.CATALOG_URL).mock(return_value=self._catalog(False, True))
+        assert await resolve_managed_agent_model(db_session) == "deepseek/deepseek-v4-flash-w8a8"
+
+    async def test_gift_tier_is_switchable_by_env(self, db_session, respx_mock, monkeypatch):
+        """gift 档依赖网关渠道配置，未就绪时运维换一个已就绪的型号，不必发版。"""
+        from lib.matrix_session import agent_model_ready, resolve_managed_agent_model
+
+        monkeypatch.setenv("MATRIX_GIFT_AGENT_MODEL", "qwen/qwen3.8-27b")
+        await self._with_wallet_token(db_session)
+        respx_mock.get(self.CATALOG_URL).mock(return_value=self._catalog(False, True, "qwen/qwen3.8-27b"))
+        assert await resolve_managed_agent_model(db_session) == "qwen/qwen3.8-27b"
+        assert agent_model_ready("qwen/qwen3.8-27b")
+
+    async def test_empty_wallet_keeps_glm52_so_gateway_reports_balance(self, db_session, respx_mock):
+        """两档都付不起时不换模型：余额不足由网关报出，比换一个同样付不起的模型更好懂。"""
+        from lib.matrix_session import resolve_managed_agent_model
+
+        await self._with_wallet_token(db_session)
+        respx_mock.get(self.CATALOG_URL).mock(return_value=self._catalog(False, False))
+        assert await resolve_managed_agent_model(db_session) == "z-ai/glm-5.2"
+
+    async def test_unknown_wallet_state_keeps_glm52(self, db_session, respx_mock):
+        """拿不到钱包凭据或目录时保持改动前的行为。"""
+        from lib.matrix_session import resolve_managed_agent_model
+
+        assert await resolve_managed_agent_model(db_session) == "z-ai/glm-5.2"
+        await self._with_wallet_token(db_session)
+        respx_mock.get(self.CATALOG_URL).mock(return_value=httpx.Response(503))
+        assert await resolve_managed_agent_model(db_session) == "z-ai/glm-5.2"

@@ -21,7 +21,7 @@ import time
 
 import httpx
 
-from lib.matrix_capabilities import MANAGED_AGENT_MODEL
+from lib.matrix_capabilities import MANAGED_AGENT_MODEL, gift_agent_model
 
 logger = logging.getLogger(__name__)
 
@@ -482,7 +482,7 @@ _PREFERRED_DEFAULT_MODELS: dict[str, tuple[str, ...]] = {
     # 1) 死锁：GLM-4.7 在 Agent 的多层子任务嵌套下会**静默死锁**——不报错、
     #    不超时，就是没有输出。它绝不能进这张表；而按字典序挑恰好挑中它。
     #    （它在单轮工具调用上是正常的，别拿浅层验证的通过率把它放回来。）
-    # 2) 工具调用链：只收 ``AGENT_MODEL_ALLOWLIST`` 里的型号，判据见那边。
+    # 2) 工具调用链：只收 ``agent_model_ready`` 认可的型号。
     # 3) 赠送额度：网关按模型限定可消耗的钱包分区，只有少数模型允许 gift。
     #    新用户手里通常只有赠送额度，默认值落在 paid-only 上等于开箱就欠费。
     #
@@ -530,13 +530,39 @@ def preferred_model(media: str, available: set[str]) -> str | None:
     return next((m for m in _PREFERRED_DEFAULT_MODELS.get(media, ()) if m in available), None)
 
 
-# 托管智能体仅开放固定模型，其他文本模型仍可用于普通生成。
-AGENT_MODEL_ALLOWLIST: frozenset[str] = frozenset({MANAGED_AGENT_MODEL})
-
-
 def agent_model_ready(model_id: str) -> bool:
-    """该模型能否承载 Agent 的工具调用链。"""
-    return model_id in AGENT_MODEL_ALLOWLIST
+    """该模型能否承载 Agent 的工具调用链：只有托管智能体会路由到的两档。
+
+    其他文本模型仍可用于普通生成。
+    """
+    return model_id in (MANAGED_AGENT_MODEL, gift_agent_model())
+
+
+async def resolve_managed_agent_model(session) -> str:
+    """按当前租户钱包挑托管智能体的模型。
+
+    付费模型付得起就用它，付不起而 gift 档付得起就落到 gift 档。判据取平台目录的
+    ``access.available``（网关按钱包分区算好的「此刻付不付得起」），不在本地复刻
+    分区规则。拿不到钱包凭据或目录时维持付费模型，余额不足由网关报出。
+    """
+    token = await get_wallet_token(session)
+    if not token:
+        return MANAGED_AGENT_MODEL
+    catalog = await fetch_model_catalog(token)
+    if not catalog:
+        return MANAGED_AGENT_MODEL
+    available = {
+        item.get("model_name"): (item.get("access") or {}).get("available")
+        for item in catalog
+        if isinstance(item, dict)
+    }
+    if available.get(MANAGED_AGENT_MODEL) is not False:
+        return MANAGED_AGENT_MODEL
+    gift_model = gift_agent_model()
+    if available.get(gift_model) is True:
+        logger.info("钱包付不起 %s，智能体改用 %s", MANAGED_AGENT_MODEL, gift_model)
+        return gift_model
+    return MANAGED_AGENT_MODEL
 
 
 async def backfill_video_durations(session, *, provider_id: int) -> int:
