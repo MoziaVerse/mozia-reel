@@ -37,6 +37,27 @@ from claude_agent_sdk.types import HookMatcher, SystemPromptPreset
 SDK_AVAILABLE = True
 
 
+# 模型可见的内置工具。``allowed_tools`` 只决定哪些调用免审放行，不决定模型能看到
+# 什么：不传 ``tools`` 时 CLI 会把全部内置工具定义（Workflow、DesignSync、Cron*、
+# Worktree、WebSearch 等三十余个，十余万字符）都发给模型。它们与视频创作无关，
+# 却占去每轮请求约一半的输入，并把非 Claude 模型引向错误的工具（用 Bash 解析
+# JSON、调 TaskCreate 等）。这里只保留 profile 里的 skill / 子智能体真正会用的；
+# ArcReel 自己的工具走 MCP，不受此名单影响。
+MODEL_VISIBLE_BUILTIN_TOOLS: tuple[str, ...] = (
+    "Agent",
+    "Skill",
+    "AskUserQuestion",
+    "Bash",
+    "TaskOutput",
+    "TaskStop",
+    "Read",
+    "Write",
+    "Edit",
+    "Grep",
+    "Glob",
+)
+
+
 async def load_provider_env_overrides() -> dict[str, str]:
     """构造 options.env 注入字典。
 
@@ -305,6 +326,7 @@ class OptionsAssembler:
         )
 
         return ClaudeAgentOptions(
+            tools=list(MODEL_VISIBLE_BUILTIN_TOOLS),
             cwd=str(project_cwd),
             setting_sources=self._setting_sources,  # type: ignore[arg-type]
             allowed_tools=allowed_tools,

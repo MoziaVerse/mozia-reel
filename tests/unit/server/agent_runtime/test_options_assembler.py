@@ -14,6 +14,7 @@ import pytest
 
 from server.agent_runtime.agent_access_policy import AgentAccessPolicy
 from server.agent_runtime.options_assembler import (
+    MODEL_VISIBLE_BUILTIN_TOOLS,
     OptionsAssembler,
     load_provider_env_overrides,
 )
@@ -182,3 +183,26 @@ async def test_build_sandbox_disabled_strips_bash(tmp_path: Path) -> None:
         assert tool not in options.allowed_tools
     assert "Read" in options.allowed_tools
     assert options.sandbox == {"enabled": False}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sandbox_enabled", [True, False])
+async def test_build_limits_model_visible_builtin_tools(tmp_path: Path, sandbox_enabled) -> None:
+    """模型只看得到创作流程用得上的内置工具；与视频创作无关的内置工具不下发。
+
+    sandbox 关闭时 Bash 只是不再免审放行，仍由 can_use_tool 按前缀白名单裁决，
+    所以可见名单不随 sandbox 变化。
+    """
+
+    async def fake_loader():
+        return {}
+
+    policy = _make_policy(tmp_path, sandbox_enabled=sandbox_enabled)
+    assembler = _make_assembler(tmp_path, policy=policy, provider_env_loader=fake_loader)
+    options = await assembler.build("demo")
+
+    assert options.tools == list(MODEL_VISIBLE_BUILTIN_TOOLS)
+    for needed in ("Agent", "Skill", "AskUserQuestion", "Bash", "Read", "Write", "Edit"):
+        assert needed in options.tools
+    for noise in ("Workflow", "DesignSync", "CronCreate", "EnterWorktree", "WebSearch", "TaskCreate"):
+        assert noise not in options.tools
