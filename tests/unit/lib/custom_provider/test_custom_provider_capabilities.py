@@ -206,6 +206,7 @@ class TestSystemCapabilities:
         assert system_video_capabilities(endpoint="openai-video", model_id="minimax/minimax-h3-ref2va") == (
             VideoCapabilities(
                 text_to_video=False,
+                first_frame=False,
                 max_reference_images=9,
                 audio_track=VideoAudioMode.ALWAYS_ON,
             )

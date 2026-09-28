@@ -66,14 +66,24 @@ def _is_minimax_h3(model: str) -> bool:
     return "minimax-h3" in (model or "").lower()
 
 
-def _h3_requires_reference(model: str) -> bool:
-    """该 H3 型号是否强制要求参考素材（即不支持纯文生）。
+def _h3_variant(model: str) -> str:
+    """H3 对外型号的素材契约分档：``t2va`` / ``fl2va`` / ``ref2va`` / ``2k``。
 
-    只有 ref2va 这一档如此。生产网关实测：不带图提交 ref2va 返回 400
-    ``MoziaH3 ref2va task requires reference material``，而 t2va / fl2va / 2k
-    都受理纯文生请求。按 "minimax-h3" 前缀一刀切会把三个能纯文生的型号一并封掉。
+    三档素材规则互斥（见 docs/api-docs/endpoints/openai-video.md 链接的 H3 模型页）：
+    t2va 只收纯文本；fl2va 只收首帧（旧接口 ``images`` 第一张为首帧、第二张为尾帧），
+    不收参考素材；ref2va 必须带 1～9 张参考图。带后缀的变体（如 ``-fl2va-vdn``）按所含
+    档位名归档。2k 的素材规则平台未单列，按首帧档对待。
     """
-    return _is_minimax_h3(model) and "ref2va" in (model or "").lower()
+    lowered = (model or "").lower()
+    for variant in ("ref2va", "fl2va", "t2va", "2k"):
+        if variant in lowered:
+            return variant
+    return "fl2va"
+
+
+def _h3_requires_reference(model: str) -> bool:
+    """该 H3 型号是否强制要求参考素材（即不支持纯文生）：只有 ref2va。"""
+    return _is_minimax_h3(model) and _h3_variant(model) == "ref2va"
 
 
 def _video_status(video: object) -> ProviderJobStatus:
@@ -113,15 +123,22 @@ def _video_error_message(video: object) -> str:
     return "unknown"
 
 
-# H3 的 parse_size 只认 32 的倍数，且面积不超过 1344×768。9:16 的 720P 档算出来是
-# 720x1280 —— 720 不是 32 的倍数，直接 400。所以 H3 的尺寸必须自己算，不能借用
-# Sora 的固定档。
+# H3 只识别下列 size 取值（短边 768 的五档比例）；其余值不报错，而是静默回落到
+# 768P + 16:9，竖屏项目会拿到横屏成片。所以任何比例都吸附到这五档之一。
+_H3_SIZES: dict[str, str] = {
+    "16:9": "1344x768",
+    "9:16": "768x1344",
+    "1:1": "768x768",
+    "4:3": "1024x768",
+    "3:4": "768x1024",
+}
+# 2k 型号不在上表的约束内，沿用按面积吸附的旧算法：32 的倍数、面积不超过 1344×768。
 _H3_SIZE_MULTIPLE = 32
 _H3_MAX_AREA = 1344 * 768
 
 
 def _snap_h3_size(width: int, height: int) -> str:
-    """吸附到 32 的倍数，并在超面积时等比缩到 H3 的上限内。"""
+    """吸附到 32 的倍数，并在超面积时等比缩到上限内（仅 2k 型号使用）。"""
 
     def _snap(v: int) -> int:
         return max(_H3_SIZE_MULTIPLE, round(v / _H3_SIZE_MULTIPLE) * _H3_SIZE_MULTIPLE)
@@ -137,13 +154,22 @@ def _snap_h3_size(width: int, height: int) -> str:
     return f"{w}x{h}"
 
 
+def _h3_size_for_ratio(ratio: float) -> str:
+    """按宽高比取 H3 可识别的 size；非五档比例吸附到最接近的一档并告警。"""
+    label, size = min(_H3_SIZES.items(), key=lambda kv: abs(_ratio_of(kv[1]) - ratio))
+    if abs(_ratio_of(size) - ratio) > 0.01:
+        logger.warning("MiniMax H3: 比例 %.3f 不在可识别档位内，吸附到 %s（%s）", ratio, label, size)
+    return size
+
+
+def _ratio_of(size: str) -> float:
+    w, h = (int(x) for x in size.split("x"))
+    return w / h
+
+
 def _h3_size_for_aspect(aspect_ratio: str) -> str:
-    """按目标比例算一个 H3 合法的尺寸，尽量贴近面积上限。"""
     aw, ah = parse_aspect_ratio(aspect_ratio)
-    ratio = aw / ah
-    # 以面积上限为基准反解边长，再交给 _snap_h3_size 收口。
-    height = (_H3_MAX_AREA / ratio) ** 0.5
-    return _snap_h3_size(round(height * ratio), round(height))
+    return _h3_size_for_ratio(aw / ah)
 
 
 def _resolve_size(model: str, resolution: str | None, aspect_ratio: str) -> str:
@@ -153,15 +179,20 @@ def _resolve_size(model: str, resolution: str | None, aspect_ratio: str) -> str:
     sora-2（base）或缺分辨率时落 720p（缺分辨率默认 720P，不擅自升 1080p 以免超额计费）。size 必传以锁定
     比例，绝不出现「不传 size → 上游默认比例」。其它比例（1:1/21:9 等）sora 无对应档，吸附后告警。
     """
-    # 显式的「宽×高」原样下发 —— **仅对 H3**：它的 parse_size 接受 32 的倍数、
-    # 面积 ≤1344×768，档位吸附会把用户指定的分辨率改掉。
+    # H3 按自己的比例档取值（见 _H3_SIZES），不落 Sora 档位。
     # Sora 必须继续走吸附：它只认固定档，透传自定义值会被上游拒绝，
     # 这也是上游 test_custom_resolution_value_ignored_uses_legal_size 锁的行为。
     if _is_minimax_h3(model):
-        if resolution is not None and (match := _CUSTOM_SIZE_RE.match(resolution)):
-            return _snap_h3_size(int(match.group(1)), int(match.group(2)))
-        # 没给显式尺寸时也不能落回 Sora 档位：那套档里的 720 不是 32 的倍数，
-        # H3 会直接 400（invalid_size: must use width/height multiples of 32）。
+        match = _CUSTOM_SIZE_RE.match(resolution) if resolution is not None else None
+        if _h3_variant(model) == "2k":
+            if match:
+                return _snap_h3_size(int(match.group(1)), int(match.group(2)))
+            aw, ah = parse_aspect_ratio(aspect_ratio)
+            height = (_H3_MAX_AREA / (aw / ah)) ** 0.5
+            return _snap_h3_size(round(height * aw / ah), round(height))
+        # 显式「宽×高」只取其比例：H3 按比例档出片，透传未登记的像素值会被静默改成 16:9。
+        if match:
+            return _h3_size_for_ratio(int(match.group(1)) / int(match.group(2)))
         return _h3_size_for_aspect(aspect_ratio)
 
     aw, ah = parse_aspect_ratio(aspect_ratio)
@@ -236,23 +267,33 @@ class OpenAIVideoBackend(ProviderJobIdPersistenceMixin):
         """按 model_id 纯计算 caps —— 不构造 SDK client（无需 api_key）。
 
         Sora input_reference 为单张首帧图，参考图上限为 1；首帧与参考共享该单槽位。
-        经中转网关过来的 MiniMax H3 走同一个 endpoint 但契约不同，上限是 9
-        （见 mozia-h3-api 的 request_images）。所以这里必须按 model_id 分支，
-        不能在 endpoint 上写死一个数 —— 写死会让真 Sora 也声称支持 9 张。
-        instance property 委托至此，保持 backend 为单一真相源。
+        经中转网关过来的 MiniMax H3 走同一个 endpoint 但契约不同，且三档型号的素材规则互斥
+        （见 :func:`_h3_variant`）：只有 ref2va 收参考图（上限 9）。所以这里必须按 model_id
+        分支，不能在 endpoint 上写死一个数。instance property 委托至此，保持 backend 为单一
+        真相源。
 
         音轨恒有声：Sora 与 H3 的成片都自带音轨，``generate`` / ``_create_h3_video`` 组装的
         请求体里都没有音轨开关字段，用户的关闭意图无处可下发。
 
         纯文生只对 ref2va 关闭（见 :func:`_h3_requires_reference`）：声明出来才能在提交前
-        拦下，否则用户要等一次必然失败的往返。其余 H3 型号照常支持。
+        拦下，否则用户要等一次必然失败的往返。
         """
         if _is_minimax_h3(model):
-            return VideoCapabilities(
-                text_to_video=not _h3_requires_reference(model),
-                max_reference_images=9,
-                audio_track=VideoAudioMode.ALWAYS_ON,
-            )
+            variant = _h3_variant(model)
+            if variant == "ref2va":
+                # 必须带 1～9 张参考图；首帧角色只属于 fl2va。
+                return VideoCapabilities(
+                    text_to_video=False,
+                    first_frame=False,
+                    max_reference_images=9,
+                    audio_track=VideoAudioMode.ALWAYS_ON,
+                )
+            if variant == "t2va":
+                # 带任何素材都会被拒。
+                return VideoCapabilities(first_frame=False, audio_track=VideoAudioMode.ALWAYS_ON)
+            # fl2va / 2k：首帧生视频，空素材由平台自动转纯文生；不收参考素材——旧接口的
+            # images 在这一档按首帧、尾帧解释，参考图会被当成首尾帧，超过两张直接 400。
+            return VideoCapabilities(audio_track=VideoAudioMode.ALWAYS_ON)
         return VideoCapabilities(max_reference_images=1, audio_track=VideoAudioMode.ALWAYS_ON)
 
     @property

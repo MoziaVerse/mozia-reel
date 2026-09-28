@@ -457,7 +457,8 @@ async def _discover_gateway_models(*, base_url: str, api_key: str) -> list[dict]
 
 # 各媒体类型的默认模型 setting key。细分档位（i2v/r2v/t2i/i2i/simple/complex）
 # 刻意留空：它们的读取路径都会回落到这里的主默认值，预填反而会把"用户没选过"
-# 和"用户选了同一个"混为一谈，日后想调主默认时细分档位会悄悄拦住。
+# 和"用户选了同一个"混为一谈，日后想调主默认时细分档位会悄悄拦住。唯一例外是
+# 参考生视频桶：主默认做不了参考生视频时回落等于必然失败，见 _seed_reference_video_bucket。
 _DEFAULT_BACKEND_KEYS = {
     "text": "default_text_backend",
     "image": "default_image_backend",
@@ -632,10 +633,51 @@ async def seed_default_backends(session, *, provider_id: int) -> dict[str, str]:
         await svc.set_setting(key, option)
         applied[media] = option
 
+    r2v_option = await _seed_reference_video_bucket(session, svc, repo, provider_id=provider_id, pid=pid)
+    if r2v_option:
+        applied["video_r2v"] = r2v_option
+
     if applied:
         await session.commit()
         logger.info("默认模型已配置: %s", applied)
     return applied
+
+
+# 参考生视频桶的首选。H3 的三档素材规则互斥：默认视频模型 fl2va 只收首帧，参考图会被
+# 当成首尾帧；参考生视频必须落到 ref2va。
+_PREFERRED_R2V_MODELS: tuple[str, ...] = ("minimax/minimax-h3-ref2va",)
+
+
+async def _seed_reference_video_bucket(session, svc, repo, *, provider_id: int, pid: str) -> str | None:
+    """默认视频模型做不了参考生视频时，给参考生视频桶配一个能做的。
+
+    只在桶为空、且默认视频模型缺参考图能力时写入：默认模型本身能兼顾两条路线（如
+    Seedance）的租户不受影响，用户手动选过的桶也不会被覆盖。
+    """
+    from lib.custom_provider import parse_provider_id
+    from lib.custom_provider.capabilities import system_video_capabilities
+
+    if (await svc.get_setting("default_video_backend_r2v", "")).strip():
+        return None
+    default = (await svc.get_setting("default_video_backend", "")).strip()
+    if not default or "/" not in default:
+        return None
+    default_pid, default_model = default.split("/", 1)
+    try:
+        default_db_id = parse_provider_id(default_pid)
+    except ValueError:
+        return None
+    enabled = {m.model_id: m for m in await repo.list_models(provider_id) if m.is_enabled}
+    if default_db_id == provider_id and default_model in enabled:
+        caps = system_video_capabilities(endpoint=enabled[default_model].endpoint, model_id=default_model)
+        if caps.max_reference_images > 0:
+            return None
+    preferred = next((m for m in _PREFERRED_R2V_MODELS if m in enabled), None)
+    if preferred is None:
+        return None
+    option = f"{pid}/{preferred}"
+    await svc.set_setting("default_video_backend_r2v", option)
+    return option
 
 
 # matrix 下发的长期只读余额凭据。存服务端而不是塞进 cookie：cookie 只做了签名

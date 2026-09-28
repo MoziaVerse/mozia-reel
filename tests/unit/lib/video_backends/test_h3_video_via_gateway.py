@@ -20,10 +20,10 @@ from lib.video_backends.openai import (
 class TestH3Detection:
     @pytest.mark.parametrize(
         "model",
-        ["minimax/minimax-h3-ref2va", "minimax/minimax-h3-fl2va", "MiniMax-H3-ref2va-lora"],
+        ["minimax/minimax-h3-ref2va", "minimax/minimax-h3-fl2va", "minimax/minimax-h3-t2va"],
     )
     def test_recognises_real_gateway_model_ids(self, model):
-        """这几个 id 取自生产网关的 type=204 channel，不是构造的。"""
+        """取自平台模型目录的对外型号名。"""
         assert _is_minimax_h3(model)
 
     @pytest.mark.parametrize("model", ["sora-2", "sora-2-pro", "", "gpt-4o"])
@@ -31,46 +31,58 @@ class TestH3Detection:
         assert not _is_minimax_h3(model)
 
 
-class TestReferenceImageCaps:
-    def test_h3_gets_nine(self):
-        """H3 服务端 request_images 的上限就是 9。"""
-        caps = OpenAIVideoBackend.video_capabilities_for_model("minimax/minimax-h3-ref2va")
-        assert caps.max_reference_images == 9
+class TestPerModelMaterialContract:
+    """三档 H3 型号的素材规则互斥：t2va 纯文本、fl2va 仅首帧、ref2va 必须带参考图。
 
-    def test_sora_stays_at_one(self):
-        """同一 endpoint 上的 Sora 不能被 H3 的上限带偏 —— 它只有一个首帧槽位。"""
-        caps = OpenAIVideoBackend.video_capabilities_for_model("sora-2")
-        assert caps.max_reference_images == 1
-
-
-class TestTextToVideoCapability:
-    """纯文生只对 ref2va 关闭。
-
-    取值来自生产网关实测（不带 images 提交 /v1/videos）：
-    ref2va 返回 400 ``MoziaH3 ref2va task requires reference material``，
-    t2va / fl2va 直接受理，2k 受理但要求显式 ratio。按 "minimax-h3" 前缀一刀切
-    会把三个能纯文生的型号一并封在提交之前。
+    fl2va 若声明可收参考图，参考生视频会被路由到它，而旧接口 ``images`` 在 fl2va 里按
+    首帧、尾帧解释——参考图被当成首尾帧，超过两张直接 400 ``conditions allows at most 2``。
     """
 
-    @pytest.mark.parametrize("model", ["minimax/minimax-h3-t2va", "minimax/minimax-h3-fl2va", "minimax/minimax-h3-2k"])
-    def test_other_h3_models_keep_text_to_video(self, model):
-        assert OpenAIVideoBackend.video_capabilities_for_model(model).text_to_video
-
-    def test_ref2va_declares_no_text_to_video(self):
+    def test_ref2va_takes_up_to_nine_references_and_no_first_frame(self):
         caps = OpenAIVideoBackend.video_capabilities_for_model("minimax/minimax-h3-ref2va")
+        assert caps.max_reference_images == 9
+        assert not caps.first_frame
         assert not caps.text_to_video
 
-    def test_sora_keeps_text_to_video(self):
-        assert OpenAIVideoBackend.video_capabilities_for_model("sora-2").text_to_video
+    @pytest.mark.parametrize(
+        "model", ["minimax/minimax-h3-fl2va", "minimax/minimax-h3-fl2va-vdn", "minimax/minimax-h3-2k"]
+    )
+    def test_first_frame_models_take_no_references(self, model):
+        caps = OpenAIVideoBackend.video_capabilities_for_model(model)
+        assert caps.first_frame
+        assert caps.text_to_video
+        assert caps.max_reference_images == 0
+
+    def test_t2va_takes_no_material(self):
+        caps = OpenAIVideoBackend.video_capabilities_for_model("minimax/minimax-h3-t2va")
+        assert caps.text_to_video
+        assert not caps.first_frame
+        assert caps.max_reference_images == 0
+
+    def test_sora_stays_at_one(self):
+        """同一 endpoint 上的 Sora 不能被 H3 的规则带偏 —— 它只有一个首帧槽位。"""
+        caps = OpenAIVideoBackend.video_capabilities_for_model("sora-2")
+        assert caps.max_reference_images == 1
+        assert caps.text_to_video
 
 
 class TestSizeResolution:
+    """H3 只识别五档 size；未登记的值不报错，而是静默回落到 16:9。"""
+
     @pytest.mark.parametrize(
-        "raw,expected",
-        [("704x1280", "704x1280"), ("1280×704", "1280x704"), (" 640 x 640 ", "640x640")],
+        "aspect,expected",
+        [("16:9", "1344x768"), ("9:16", "768x1344"), ("1:1", "768x768"), ("4:3", "1024x768"), ("3:4", "768x1024")],
     )
-    def test_explicit_pixels_pass_through(self, raw, expected):
-        """H3 的 parse_size 接受 32 的倍数、面积 ≤1344×768，档位吸附会改掉用户指定值。"""
+    def test_each_ratio_maps_to_its_documented_size(self, aspect, expected):
+        assert _resolve_size("minimax/minimax-h3-ref2va", None, aspect) == expected
+
+    def test_unlisted_ratio_snaps_to_nearest_documented_size(self):
+        assert _resolve_size("minimax/minimax-h3-fl2va", None, "21:9") == "1344x768"
+
+    @pytest.mark.parametrize(
+        "raw,expected", [("704x1280", "768x1344"), ("1280×704", "1344x768"), (" 640 x 640 ", "768x768")]
+    )
+    def test_explicit_pixels_keep_only_their_ratio(self, raw, expected):
         assert _resolve_size("minimax/minimax-h3-ref2va", raw, "9:16") == expected
 
     def test_sora_still_snaps_to_legal_tier(self):
@@ -222,14 +234,14 @@ class TestPollingTimeout:
         assert h3_interval > VIDEO_POLL_INTERVAL_SECONDS
 
 
-class TestH3SizeConstraints:
-    """H3 的 parse_size 只认 32 的倍数、面积 ≤1344×768。
+class TestH3TwoKSizeConstraints:
+    """2k 型号不在五档 size 表内，沿用 32 的倍数、面积 ≤1344×768 的吸附规则。
 
-    Sora 的 9:16 720P 档算出来是 720x1280 —— 720 不是 32 的倍数，H3 直接 400
-    (invalid_size: must use width/height multiples of 32)。所以 H3 的尺寸必须
-    自己算，不能借用 Sora 的固定档。这几条尺寸都在生产网关上实测过。
+    Sora 的 9:16 720P 档算出来是 720x1280 —— 720 不是 32 的倍数，会被拒
+    (invalid_size: must use width/height multiples of 32)。
     """
 
+    MODEL = "minimax/minimax-h3-2k"
     MAX_AREA = 1344 * 768
 
     def _check(self, size: str) -> tuple[int, int]:
@@ -240,20 +252,10 @@ class TestH3SizeConstraints:
 
     @pytest.mark.parametrize("aspect", ["9:16", "16:9", "1:1", "4:3"])
     def test_derived_size_is_always_legal(self, aspect):
-        self._check(_resolve_size("minimax/minimax-h3-ref2va", None, aspect))
-
-    def test_portrait_matches_probed_value(self):
-        """9:16 应得到实测可用的 768x1344。"""
-        assert _resolve_size("minimax/minimax-h3-ref2va", None, "9:16") == "768x1344"
+        self._check(_resolve_size(self.MODEL, None, aspect))
 
     def test_illegal_explicit_size_is_snapped(self):
-        """用户给的 720x1280 含非法的 720，要吸附成合法值而不是原样下发。"""
-        assert _resolve_size("minimax/minimax-h3-ref2va", "720x1280", "9:16") == "704x1280"
+        assert _resolve_size(self.MODEL, "720x1280", "9:16") == "704x1280"
 
     def test_oversized_request_is_scaled_down(self):
-        self._check(_resolve_size("minimax/minimax-h3-ref2va", "4096x4096", "1:1"))
-
-    def test_sora_still_uses_its_own_tiers(self):
-        from lib.video_backends.openai import _SORA_LEGAL_SIZES
-
-        assert _resolve_size("sora-2", None, "9:16") in _SORA_LEGAL_SIZES
+        self._check(_resolve_size(self.MODEL, "4096x4096", "1:1"))
