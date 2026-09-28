@@ -464,3 +464,62 @@ class TestManagedAgentModelSelection:
         assert {cred.model, cred.haiku_model, cred.sonnet_model, cred.opus_model, cred.subagent_model} == {
             "deepseek/deepseek-v4-flash-w8a8"
         }
+
+
+class TestReferenceVideoBucketSeeding:
+    """默认视频模型做不了参考生视频时，参考生视频桶要配一个能做的。
+
+    H3 默认模型 fl2va 只收首帧：参考生视频回落到它时，参考图会被当成首尾帧，
+    超过两张直接被拒。
+    """
+
+    async def test_fills_ref2va_when_default_is_first_frame_only(self, db_session):
+        pid = await _make_provider(
+            db_session,
+            [("minimax/minimax-h3-fl2va", "openai-video"), ("minimax/minimax-h3-ref2va", "openai-video")],
+        )
+        applied = await seed_default_backends(db_session, provider_id=pid)
+
+        svc = ConfigService(db_session)
+        assert await svc.get_setting("default_video_backend") == f"custom-{pid}/minimax/minimax-h3-fl2va"
+        assert await svc.get_setting("default_video_backend_r2v") == f"custom-{pid}/minimax/minimax-h3-ref2va"
+        assert applied["video_r2v"] == f"custom-{pid}/minimax/minimax-h3-ref2va"
+
+    async def test_existing_tenant_gets_bucket_on_next_handshake(self, db_session):
+        """存量租户默认模型早已写入，下次握手时照样补上参考生视频桶。"""
+        pid = await _make_provider(
+            db_session,
+            [("minimax/minimax-h3-fl2va", "openai-video"), ("minimax/minimax-h3-ref2va", "openai-video")],
+        )
+        svc = ConfigService(db_session)
+        await svc.set_setting("default_video_backend", f"custom-{pid}/minimax/minimax-h3-fl2va")
+        await db_session.commit()
+
+        await seed_default_backends(db_session, provider_id=pid)
+        assert await svc.get_setting("default_video_backend_r2v") == f"custom-{pid}/minimax/minimax-h3-ref2va"
+
+    async def test_leaves_bucket_empty_when_default_handles_references(self, db_session):
+        pid = await _make_provider(
+            db_session,
+            [("minimax/minimax-h3-ref2va", "openai-video"), ("doubao/seedance-2.0-fast", "ark-seedance")],
+        )
+        svc = ConfigService(db_session)
+        await svc.set_setting("default_video_backend", f"custom-{pid}/doubao/seedance-2.0-fast")
+        await db_session.commit()
+
+        applied = await seed_default_backends(db_session, provider_id=pid)
+        assert "video_r2v" not in applied
+        assert await svc.get_setting("default_video_backend_r2v", "") == ""
+
+    async def test_does_not_overwrite_user_bucket_choice(self, db_session):
+        pid = await _make_provider(
+            db_session,
+            [("minimax/minimax-h3-fl2va", "openai-video"), ("minimax/minimax-h3-ref2va", "openai-video")],
+        )
+        svc = ConfigService(db_session)
+        await svc.set_setting("default_video_backend_r2v", "custom-9/other/model")
+        await db_session.commit()
+
+        applied = await seed_default_backends(db_session, provider_id=pid)
+        assert "video_r2v" not in applied
+        assert await svc.get_setting("default_video_backend_r2v") == "custom-9/other/model"
