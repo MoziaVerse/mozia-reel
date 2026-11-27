@@ -1,7 +1,9 @@
 name: project-status-sync
 
 # 同步 org Project 看板的 Status 字段：由 triage 标签、assignee、关联 PR、开闭状态单向派生。
-# issue/PR 事件触发单 issue 同步，每日定时全量对账；规则实现在 scripts/project_status_sync.py。
+# issue/PR 事件触发单 issue 同步；原有每日定时全量对账已暂停——
+# 项目当前处于闲置期，定时对账连续失败只会每天骚扰仓库维护者。
+# 规则实现在 scripts/project_status_sync.py；需要全量对账时用 workflow_dispatch 手动跑。
 on:
   issues:
     types: [opened, reopened, closed, labeled, unlabeled, assigned, unassigned]
@@ -9,8 +11,6 @@ on:
   # PR 分支的代码接触不到 PROJECT_STATUS_SYNC_TOKEN
   pull_request_target:
     types: [opened, closed, reopened, ready_for_review, converted_to_draft, edited]
-  schedule:
-    - cron: "30 21 * * *" # 北京时间 05:30 全量对账
   workflow_dispatch:
 
 concurrency:
