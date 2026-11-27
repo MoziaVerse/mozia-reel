@@ -2,10 +2,12 @@ name: Nightly Full CI
 
 # 每日全量测试，不应用路径裁剪，兜底按域裁剪可能漏掉的跨域回归
 # （例如后端改动破坏镜像构建、依赖升级破坏 PG 方言测试）。
+#
+# 项目当前处于闲置期（无人开发），定时任务连续失败只会每天骚扰仓库维护者，
+# 已暂停 schedule 触发，保留 workflow_dispatch 供需要时手动跑。
+# 恢复开发时记得把 cron 加回来。
 
 on:
-  schedule:
-    - cron: "0 20 * * *" # 北京时间 04:00
   workflow_dispatch:
 
 # report job 读改 issue 无法并发幂等，串行整个工作流
